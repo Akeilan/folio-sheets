@@ -1355,6 +1355,35 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.sheet_changed()
         self.update_title()
 
+    # ------------------------------------------------------------ find
+    def act_find(self):
+        from . import find_ui
+        find_ui.open_find(self, False)
+
+    def act_replace(self):
+        from . import find_ui
+        find_ui.open_find(self, True)
+
+    def act_goto_special(self):
+        from . import find_ui
+        find_ui.goto_special(self)
+
+    def act_select_constants(self):
+        from . import find_ui
+        find_ui.goto_special(self, "constants")
+
+    def act_select_formulas(self):
+        from . import find_ui
+        find_ui.goto_special(self, "formulas")
+
+    def act_select_cf(self):
+        from . import find_ui
+        find_ui.goto_special(self, "cf")
+
+    def act_select_validation(self):
+        from . import find_ui
+        find_ui.goto_special(self, "validation")
+
     # ------------------------------------------------------------ sort & filter
     def act_sort_asc(self):
         from . import data_ui
@@ -1789,6 +1818,16 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return True
         if alt and kv == Gdk.KEY_equal and not ctrl:
             self.run("autosum")
+            return True
+        if kv == Gdk.KEY_F5 and shift and not g.editing():
+            self.run("find")
+            return True
+        if kv == Gdk.KEY_F4 and shift and not ctrl and not g.editing():
+            fd = getattr(self, "find_dialog", None)
+            if fd is not None and fd.what.get_text():
+                fd.find_next()
+            else:
+                self.run("find")
             return True
         if kv == Gdk.KEY_F5 and not g.editing():
             self.run("goto")
