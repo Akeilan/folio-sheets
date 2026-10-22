@@ -258,6 +258,7 @@ impl Book {
                             sh.error = Some(e);
                             sh.raw_part = Some(d.clone());
                         } else {
+                            sh.fit_to_page = sh.raw_sheetpr.as_ref().and_then(|e| e.child("pageSetUpPr")).map(|p| matches!(p.attr("fitToPage"), Some("1") | Some("true"))).unwrap_or(false);
                             load_drawing(&mut sh, &parts, &b.styles.theme);
                             load_tables(&mut sh, &parts);
                             load_comments(&mut sh, &parts, &persons);
@@ -1795,12 +1796,26 @@ impl Book {
         let mut e = match &sh.raw_sheetpr {
             Some(e) => e.clone(),
             None => {
-                if sh.tab_color.is_none() {
+                if sh.tab_color.is_none() && !sh.fit_to_page {
                     return;
                 }
                 Element::new(&format!("{}sheetPr", pfx))
             }
         };
+        // fit to pages
+        let had_fit = e.child("pageSetUpPr").map(|p| matches!(p.attr("fitToPage"), Some("1") | Some("true"))).unwrap_or(false);
+        if had_fit != sh.fit_to_page {
+            match e.child_mut("pageSetUpPr") {
+                Some(p) => {
+                    if sh.fit_to_page { p.set_attr("fitToPage", "1") } else { p.remove_attr("fitToPage") }
+                }
+                None => {
+                    let p = Element::with_attrs(&format!("{}pageSetUpPr", pfx), &[("fitToPage", "1")]);
+                    e.insert_ordered(p, &["tabColor", "outlinePr", "pageSetUpPr"]);
+                }
+            }
+            e.children.retain(|n| !matches!(n, Node::Elem(x) if x.local() == "pageSetUpPr" && x.attrs.is_empty() && x.children.is_empty()));
+        }
         let had = e.child("tabColor").map(|t| crate::styles::Color::from_el(t));
         let same = match (had, sh.tab_color) {
             (None, None) => true,

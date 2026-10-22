@@ -628,3 +628,59 @@ fn notes_and_comments() {
     p.hover_note = Some((4, 4));
     crate::render::render_png(&b, 0, &p, "/tmp/notes_test.png").unwrap();
 }
+
+#[test]
+fn page_setup_and_pages() {
+    let mut b = blank();
+    for r in 0..120 {
+        for c in 0..14 {
+            b.set_input(0, r, c, &format!("{}", r * 100 + c)).unwrap();
+        }
+    }
+    let mut p = b.page_setup(0);
+    assert_eq!(p.paper, 1);
+    let pages = b.pages(0);
+    // 14 columns of 64 px (48 pt) at 100 %: Letter is 7.1 in wide inside the margins
+    assert!(pages.len() >= 4, "{}", pages.len());
+    assert_eq!(pages[0].rows.0, 0);
+    assert_eq!(pages[0].cols.0, 0);
+    // fit to one page wide
+    p.fit = Some((1, 0));
+    p.landscape = true;
+    p.title_rows = Some((0, 0));
+    p.header = "&CQuarterly&R&P of &N".into();
+    p.row_breaks = vec![60];
+    b.set_page_setup(0, &p, "Page Setup").unwrap();
+    let p2 = b.page_setup(0);
+    assert_eq!(p2.fit, Some((1, 0)));
+    assert!(p2.landscape);
+    assert_eq!(p2.title_rows, Some((0, 0)));
+    let pages = b.pages(0);
+    assert!(pages.iter().all(|pg| pg.cols == (0, 13)), "one page wide: {:?}", pages);
+    assert!(pages.iter().any(|pg| pg.rows.0 == 60), "the manual break: {:?}", pages);
+    // saved and read back
+    let b2 = Book::from_bytes(&b.to_bytes().unwrap()).unwrap();
+    let p3 = b2.page_setup(0);
+    assert_eq!(p3.fit, Some((1, 0)));
+    assert_eq!(p3.header, "&CQuarterly&R&P of &N");
+    assert_eq!(p3.row_breaks, vec![60]);
+    assert_eq!(p3.title_rows, Some((0, 0)));
+    // rows inserted above the break move it
+    b.insert_rows(0, 10, 2).unwrap();
+    assert_eq!(b.page_setup(0).row_breaks, vec![62]);
+    b.undo();
+    // a page drawn
+    unsafe {
+        use crate::ffi::*;
+        let (w, h) = p2.paper_size();
+        let surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w as i32, h as i32);
+        let cr = cairo_create(surf);
+        b.render_page(0, 1, cr, "test.xlsx").unwrap();
+        cairo_destroy(cr);
+        let path = cstr("/tmp/page_test.png");
+        cairo_surface_write_to_png(surf, path.as_ptr());
+        cairo_surface_destroy(surf);
+    }
+    b.undo();
+    assert_eq!(b.page_setup(0).fit, None);
+}

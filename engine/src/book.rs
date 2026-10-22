@@ -104,6 +104,7 @@ pub enum Delta {
     Tables(usize, Vec<crate::tables::Table>),
     Notes(usize, BTreeMap<(u32, u32), crate::notes::Note>),
     Threads(usize, BTreeMap<(u32, u32), crate::notes::Thread>),
+    Fit(usize, bool),
 }
 
 #[derive(Clone, Debug)]
@@ -457,6 +458,10 @@ impl Book {
             Delta::Calc(c) => {
                 let old = std::mem::replace(&mut self.calc, c);
                 Delta::Calc(old)
+            }
+            Delta::Fit(s, on) => {
+                let old = std::mem::replace(&mut self.sheets[s].fit_to_page, on);
+                Delta::Fit(s, old)
             }
             Delta::Notes(s, n) => {
                 let old = std::mem::replace(&mut self.sheets[s].notes, n);

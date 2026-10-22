@@ -20,6 +20,7 @@ ref_spans = _c.ref_spans
 function_names = _c.function_names
 check_formula = _c.check_formula
 draw_cf_icon = _c.draw_cf_icon
+papers = _c.papers
 MAX_ROWS = _c.MAX_ROWS
 MAX_COLS = _c.MAX_COLS
 

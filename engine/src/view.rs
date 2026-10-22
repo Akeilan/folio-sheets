@@ -36,6 +36,10 @@ pub struct ViewParams {
     /// the note shown while the pointer is over its cell, and one being edited (not drawn)
     pub hover_note: Option<(u32, u32)>,
     pub edit_note: Option<(u32, u32)>,
+    /// drawing for paper: no selection, buttons or markers
+    pub print: bool,
+    /// page break preview: the print area and page breaks over the cells
+    pub page_breaks: bool,
 }
 
 impl Default for ViewParams {
@@ -64,6 +68,8 @@ impl Default for ViewParams {
             obj_preview: None,
             hover_note: None,
             edit_note: None,
+            print: false,
+            page_breaks: false,
         }
     }
 }
