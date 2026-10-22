@@ -143,9 +143,14 @@ impl Book {
                 cairo_rectangle(cr, *x0, *y0, x1 - x0, y1 - y0);
                 cairo_clip(cr);
                 self.paint_cells(s, cr, p, &g, &bands, &rows, &cols, &mut pen);
-                self.paint_filter_buttons(s, cr, p, &rows, &cols);
-                self.paint_overlays(s, cr, p, &g, &rows, &cols);
-                self.paint_totals_button(s, cr, p, &rows, &cols);
+                if !p.print {
+                    self.paint_filter_buttons(s, cr, p, &rows, &cols);
+                    if p.page_breaks {
+                        self.paint_page_breaks(s, cr, p, &g, &rows, &cols, &mut pen);
+                    }
+                    self.paint_overlays(s, cr, p, &g, &rows, &cols);
+                    self.paint_totals_button(s, cr, p, &rows, &cols);
+                }
                 self.paint_objects(s, cr, p, &g, &mut pen);
                 cairo_restore(cr);
             }
@@ -159,12 +164,65 @@ impl Book {
             rgb(cr, 0x9A9A9A);
             rect(cr, g.col_spans[0].1 - 1.0, g.hh, 1.0, p.height - g.hh);
         }
-        self.paint_notes(s, cr, p, &g, &mut pen);
-        self.paint_object_selection(s, cr, p, &g);
+        if !p.print {
+            self.paint_notes(s, cr, p, &g, &mut pen);
+            self.paint_object_selection(s, cr, p, &g);
+        }
         if p.show_headers {
             self.paint_headers(s, cr, p, &g, &mut pen);
         }
         cairo_restore(cr);
+    }
+
+    /// Page Break Preview: gray outside what prints, blue lines between pages, page numbers.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn paint_page_breaks(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, rows: &[(u32, f64, f64)], cols: &[(u32, f64, f64)], pen: &mut Pen) {
+        let pages = self.pages(s);
+        let ps = self.page_setup(s);
+        let z = p.zoom;
+        let inside = |r: u32, c: u32| pages.iter().any(|pg| r >= pg.rows.0 && r <= pg.rows.1 && c >= pg.cols.0 && c <= pg.cols.1);
+        for &(r, y, h) in rows {
+            for &(c, x, w) in cols {
+                if !inside(r, c) {
+                    rgba(cr, 0x808080, 0.35);
+                    rect(cr, x, y, w, h);
+                }
+            }
+        }
+        let f = FontSpec { family: self.styles.theme_fonts.1.clone(), size: 36.0, bold: false, italic: false, underline: 0, strike: false, vert: 0, color: 0 };
+        for pg in &pages {
+            let x1 = self.screen_x(s, p, g, pg.cols.0);
+            let x2 = self.screen_x(s, p, g, pg.cols.1 + 1);
+            let y1 = self.screen_y(s, p, g, pg.rows.0);
+            let y2 = self.screen_y(s, p, g, pg.rows.1 + 1);
+            if x2 < g.hw || y2 < g.hh || x1 > p.width || y1 > p.height {
+                continue;
+            }
+            // the page number, faint, in the middle of the page
+            let label = format!("Page {}", pg.number);
+            let (tw, th) = pen.set(&label, &f, z, None);
+            rgba(cr, 0x7F7F7F, 0.35);
+            pen.show(cr, (x1 + x2 - tw) / 2.0, (y1 + y2 - th) / 2.0);
+            // manual breaks solid, automatic dashed
+            let manual_r = ps.row_breaks.contains(&pg.rows.0) || ps.row_breaks.contains(&(pg.rows.1 + 1));
+            let manual_c = ps.col_breaks.contains(&pg.cols.0) || ps.col_breaks.contains(&(pg.cols.1 + 1));
+            rgb(cr, 0x2F6DB5);
+            cairo_set_line_width(cr, 2.0 * z.max(0.5));
+            let dash = [6.0f64, 3.0];
+            cairo_set_dash(cr, dash.as_ptr(), if manual_c { 0 } else { 2 }, 0.0);
+            cairo_move_to(cr, x1, y1);
+            cairo_line_to(cr, x1, y2);
+            cairo_move_to(cr, x2, y1);
+            cairo_line_to(cr, x2, y2);
+            cairo_stroke(cr);
+            cairo_set_dash(cr, dash.as_ptr(), if manual_r { 0 } else { 2 }, 0.0);
+            cairo_move_to(cr, x1, y1);
+            cairo_line_to(cr, x2, y1);
+            cairo_move_to(cr, x1, y2);
+            cairo_line_to(cr, x2, y2);
+            cairo_stroke(cr);
+            cairo_set_dash(cr, dash.as_ptr(), 0, 0.0);
+        }
     }
 
     /// Where a note's box goes on screen (x, y, w, h), beside its cell.

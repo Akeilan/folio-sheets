@@ -18,6 +18,7 @@ class SheetState:
         self.freeze_cols = info.get("freeze_cols", 0)
         self.show_grid = info.get("show_grid", True)
         self.show_headers = info.get("show_headers", True)
+        self.view_mode = info.get("view") or "normal"
         sel = info.get("sel") or []
         act = tuple(info.get("active", (0, 0)))
         self.sel = Selection([tuple(s) for s in sel], act)
@@ -187,6 +188,7 @@ class GridView(Gtk.Box):
             "sel_objects": [i for i in self.sel_objects if i < self._object_count()],
             "obj_preview": self.obj_preview,
             "hover_note": self.hover_note,
+            "page_breaks": st.view_mode == "pageBreakPreview",
             "edit_note": self.edit_note,
         }
         if extra:

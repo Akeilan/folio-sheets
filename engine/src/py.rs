@@ -86,6 +86,8 @@ fn view_params(d: &Bound<'_, PyDict>) -> ViewParams {
     p.obj_preview = get(d, "obj_preview");
     p.hover_note = get(d, "hover_note");
     p.edit_note = get(d, "edit_note");
+    p.print = get(d, "print").unwrap_or(false);
+    p.page_breaks = get(d, "page_breaks").unwrap_or(false);
     p
 }
 
@@ -811,6 +813,73 @@ impl PyBook {
         })
     }
 
+    // ---- page layout and printing
+    fn page_setup<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Bound<'py, PyDict>> {
+        self.sheet(s)?;
+        let p = self.b.page_setup(s);
+        let d = PyDict::new_bound(py);
+        d.set_item("paper", p.paper)?;
+        d.set_item("landscape", p.landscape)?;
+        d.set_item("scale", p.scale)?;
+        d.set_item("fit", p.fit)?;
+        d.set_item("margins", p.margins.to_vec())?;
+        d.set_item("center_h", p.center_h)?;
+        d.set_item("center_v", p.center_v)?;
+        d.set_item("gridlines", p.gridlines)?;
+        d.set_item("headings", p.headings)?;
+        d.set_item("first_page", p.first_page)?;
+        d.set_item("over_then_down", p.over_then_down)?;
+        d.set_item("header", &p.header)?;
+        d.set_item("footer", &p.footer)?;
+        d.set_item("row_breaks", p.row_breaks.clone())?;
+        d.set_item("col_breaks", p.col_breaks.clone())?;
+        d.set_item("print_area", p.print_area.iter().map(tup).collect::<Vec<_>>())?;
+        d.set_item("title_rows", p.title_rows)?;
+        d.set_item("title_cols", p.title_cols)?;
+        d.set_item("paper_size", p.paper_size())?;
+        d.set_item("print_scale", self.b.print_scale(s, &p))?;
+        Ok(d)
+    }
+    #[pyo3(signature = (s, spec, label="Page Setup"))]
+    fn set_page_setup(&mut self, s: usize, spec: &Bound<'_, PyDict>, label: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let mut p = self.b.page_setup(s);
+        if let Some(v) = get(spec, "paper") { p.paper = v }
+        if let Some(v) = get(spec, "landscape") { p.landscape = v }
+        if let Some(v) = get(spec, "scale") { p.scale = v }
+        if has(spec, "fit") { p.fit = get(spec, "fit") }
+        if let Some(v) = get::<Vec<f64>>(spec, "margins") {
+            if v.len() == 6 {
+                p.margins.copy_from_slice(&v);
+            }
+        }
+        if let Some(v) = get(spec, "center_h") { p.center_h = v }
+        if let Some(v) = get(spec, "center_v") { p.center_v = v }
+        if let Some(v) = get(spec, "gridlines") { p.gridlines = v }
+        if let Some(v) = get(spec, "headings") { p.headings = v }
+        if has(spec, "first_page") { p.first_page = get(spec, "first_page") }
+        if let Some(v) = get(spec, "over_then_down") { p.over_then_down = v }
+        if let Some(v) = get(spec, "header") { p.header = v }
+        if let Some(v) = get(spec, "footer") { p.footer = v }
+        if let Some(v) = get(spec, "row_breaks") { p.row_breaks = v }
+        if let Some(v) = get(spec, "col_breaks") { p.col_breaks = v }
+        if let Some(v) = get::<Vec<R4>>(spec, "print_area") { p.print_area = rects(v) }
+        if has(spec, "title_rows") { p.title_rows = get(spec, "title_rows") }
+        if has(spec, "title_cols") { p.title_cols = get(spec, "title_cols") }
+        self.b.set_page_setup(s, &p, label).map_err(verr)
+    }
+    fn pages(&self, s: usize) -> PyResult<Vec<((u32, u32), (u32, u32), u32)>> {
+        self.sheet(s)?;
+        Ok(self.b.pages(s).into_iter().map(|p| (p.rows, p.cols, p.number)).collect())
+    }
+    /// Draw page k into a cairo context in points.
+    #[pyo3(signature = (s, k, cr, file_name=""))]
+    fn render_page(&self, s: usize, k: usize, cr: &Bound<'_, PyAny>, file_name: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let ctx = cairo_ptr(cr)?;
+        unsafe { self.b.render_page(s, k, ctx, file_name) }.map_err(verr)
+    }
+
     // ---- notes and comments
     fn notes<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Vec<Bound<'py, PyDict>>> {
         self.sheet(s)?;
@@ -1478,6 +1547,12 @@ fn draw_cf_icon(cr: &Bound<'_, PyAny>, set: &str, i: u32, x: f64, y: f64, size: 
     Ok(())
 }
 
+/// The paper sizes: (code, name, width, height in points).
+#[pyfunction]
+fn papers() -> Vec<(u32, &'static str, f64, f64)> {
+    crate::pagelayout::PAPERS.to_vec()
+}
+
 #[pyfunction]
 fn col_name(c: u32) -> String {
     crate::cellref::col_name(c)
@@ -1509,6 +1584,7 @@ fn folio_sheets_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBook>()?;
     m.add_function(wrap_pyfunction!(check_formula, m)?)?;
     m.add_function(wrap_pyfunction!(draw_cf_icon, m)?)?;
+    m.add_function(wrap_pyfunction!(papers, m)?)?;
     m.add_function(wrap_pyfunction!(col_name, m)?)?;
     m.add_function(wrap_pyfunction!(format_number_fn, m)?)?;
     m.add_function(wrap_pyfunction!(function_names, m)?)?;

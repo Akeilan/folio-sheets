@@ -34,6 +34,7 @@ pub mod cf;
 pub mod cf_icons;
 pub mod tables;
 pub mod notes;
+pub mod pagelayout;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

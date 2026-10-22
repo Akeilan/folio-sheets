@@ -292,6 +292,9 @@ impl Book {
         }
         let merges: Vec<Rect> = sheet.merges.iter().filter_map(|m| sh.rect(m)).filter(|m| m.count() > 1).collect();
         let pieces: Vec<Piece> = sheet.pieces.iter().map(|p| match p {
+            Piece::Raw(tag, x) if (tag == "rowBreaks" && sh.rows || tag == "colBreaks" && !sh.rows) && sh.span.is_none() => {
+                Piece::Raw(tag.clone(), adjust_breaks(x, sh.at, sh.n))
+            }
             Piece::Raw(tag, x) if matches!(tag.as_str(), "conditionalFormatting" | "dataValidations" | "hyperlinks" | "ignoredErrors" | "autoFilter" | "protectedRanges" | "rowBreaks" | "colBreaks") => {
                 Piece::Raw(tag.clone(), adjust_piece(x, &sh, &how, &name))
             }
@@ -328,6 +331,39 @@ impl Book {
         self.commit();
         Ok(())
     }
+}
+
+/// Manual page breaks after lines are inserted or deleted.
+fn adjust_breaks(xml: &str, at: u32, n: i64) -> String {
+    let (_, mut e) = match crate::xml::parse(xml) {
+        Ok(x) => x,
+        Err(_) => return xml.to_string(),
+    };
+    let mut kept = Vec::new();
+    for c in e.children.drain(..) {
+        if let crate::xml::Node::Elem(mut b) = c {
+            if let Some(id) = b.attr("id").and_then(|v| v.parse::<i64>().ok()) {
+                let nid = if id >= at as i64 { id + n } else { id };
+                if n < 0 && id >= at as i64 && id < at as i64 - n {
+                    continue;
+                }
+                if nid <= 0 {
+                    continue;
+                }
+                b.set_attr("id", &nid.to_string());
+            }
+            kept.push(crate::xml::Node::Elem(b));
+        } else {
+            kept.push(c);
+        }
+    }
+    let count = kept.iter().filter(|n| matches!(n, crate::xml::Node::Elem(_))).count();
+    e.children = kept;
+    e.set_attr("count", &count.to_string());
+    if e.attr("manualBreakCount").is_some() {
+        e.set_attr("manualBreakCount", &count.to_string());
+    }
+    e.to_string()
 }
 
 /// Ranges (sqref/ref attributes) and formulas inside a kept worksheet element.

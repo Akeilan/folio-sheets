@@ -551,6 +551,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                     "freeze_rows": st.freeze_rows, "freeze_cols": st.freeze_cols,
                     "show_grid": st.show_grid, "show_headers": st.show_headers,
                     "active": st.sel.active, "sel": st.sel.ranges, "selected": i == self.grid.sheet,
+                    "view": getattr(st, "view_mode", "normal"),
                 })
             except AttributeError:
                 pass
@@ -1023,7 +1024,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.sync_checks()
 
     def act_view_normal(self):
-        pass                      # the only view so far
+        self.grid.state().view_mode = "normal"
+        self.grid.refresh()
 
     def _freeze(self, rows, cols):
         g = self.grid
@@ -1413,6 +1415,77 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g.refresh()
         self.update_title()
 
+    # ------------------------------------------------------------ page layout and printing
+    def act_print(self):
+        self.show_backstage("print")
+
+    def act_export_pdf(self):
+        from . import print_ui
+        print_ui.export_pdf(self)
+
+    def act_margins(self, name=None):
+        from . import print_ui
+        if name in print_ui.MARGINS:
+            print_ui.margins(self, name)
+        else:
+            print_ui.page_setup_dialog(self, "margins")
+
+    def act_page_orientation(self, which=None):
+        from . import print_ui
+        print_ui.orientation(self, which or "portrait")
+
+    def act_page_size(self, name=None):
+        from . import print_ui
+        if name:
+            print_ui.size(self, name)
+        else:
+            print_ui.page_setup_dialog(self, "page")
+
+    def act_print_area(self, how=None):
+        from . import print_ui
+        print_ui.print_area(self, how or "set")
+
+    def act_breaks(self, how=None):
+        from . import print_ui
+        print_ui.breaks(self, how or "insert")
+
+    def act_print_titles(self):
+        from . import print_ui
+        print_ui.page_setup_dialog(self, "sheet")
+
+    def act_scale_width(self, n=None):
+        from . import print_ui
+        print_ui.scale_fit(self, "width", int(n or 0))
+
+    def act_scale_height(self, n=None):
+        from . import print_ui
+        print_ui.scale_fit(self, "height", int(n or 0))
+
+    def act_scale(self):
+        from . import print_ui
+        print_ui.page_setup_dialog(self, "page")
+
+    def act_print_gridlines(self):
+        from . import print_ui
+        print_ui.toggle_print_option(self, "gridlines")
+
+    def act_print_headings(self):
+        from . import print_ui
+        print_ui.toggle_print_option(self, "headings")
+
+    def act_header_footer(self):
+        from . import print_ui
+        print_ui.page_setup_dialog(self, "header")
+
+    def act_page_setup_dialog(self):
+        from . import print_ui
+        print_ui.page_setup_dialog(self)
+
+    def act_view_page_break(self):
+        st = self.grid.state()
+        st.view_mode = "normal" if st.view_mode == "pageBreakPreview" else "pageBreakPreview"
+        self.grid.refresh()
+
     # ------------------------------------------------------------ notes and comments
     def act_new_note(self):
         from . import notes_ui
@@ -1429,6 +1502,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def act_show_hide_note(self):
         from . import notes_ui
         notes_ui.show_hide(self)
+
+    def act_notes(self):
+        self.act_new_note()
 
     def act_show_all_notes(self):
         from . import notes_ui

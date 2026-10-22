@@ -164,6 +164,8 @@ pub struct Sheet {
     pub threads: BTreeMap<(u32, u32), crate::notes::Thread>,
     /// the comment parts as read, and the notes and threads they held
     pub comments_file: Option<crate::notes::CommentsFile>,
+    /// Fit to pages (sheetPr/pageSetUpPr fitToPage)
+    pub fit_to_page: bool,
     /// the drawing part as read (None when the sheet had none, or it couldn't be read)
     pub drawing: Option<crate::drawing::DrawingFile>,
     // ---- file
@@ -209,6 +211,7 @@ impl Sheet {
             notes: BTreeMap::new(),
             threads: BTreeMap::new(),
             comments_file: None,
+            fit_to_page: false,
             drawing: None,
             part: String::new(),
             prolog: String::new(),

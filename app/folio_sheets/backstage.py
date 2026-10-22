@@ -305,18 +305,14 @@ class Backstage(Gtk.Box):
 
     def page_print(self):
         box = self._page("Print")
-        lab = Gtk.Label(label="Printing and print preview arrive with the page layout stage.", xalign=0)
-        lab.get_style_context().add_class("dim-label")
-        box.pack_start(lab, False, False, 0)
-        b = Gtk.Button(label="Print")
-        b.set_halign(Gtk.Align.START)
-        b.connect("clicked", lambda *_: self.win.run("print"))
-        box.pack_start(b, False, False, 0)
+        from .print_ui import preview_widget
+        self.print_view = preview_widget(self.win)
+        box.pack_start(self.print_view, True, True, 0)
         return box
 
     def page_export(self):
         box = self._page("Export")
-        for label, cmd in (("Create PDF/XPS Document", "export-pdf"),
+        for label, cmd in (("Create PDF Document", "export-pdf"),
                            ("Change File Type: CSV (Comma delimited)", "save-as:csv")):
             b = Gtk.Button(label=label)
             b.set_halign(Gtk.Align.START)
