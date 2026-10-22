@@ -603,6 +603,91 @@ impl PyBook {
         self.b.delete_cells(s, rect(rg), up).map_err(verr)
     }
 
+    // ---- data
+    #[pyo3(signature = (s, rg, keys, header, by_cols=false))]
+    fn sort_range(&mut self, s: usize, rg: R4, keys: Vec<(u32, bool)>, header: bool, by_cols: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        let keys: Vec<crate::book_data::SortKey> = keys.into_iter().map(|(line, ascending)| crate::book_data::SortKey { line, ascending }).collect();
+        self.b.sort_range(s, rect(rg), &keys, header, by_cols).map_err(verr)
+    }
+    fn guess_header(&self, s: usize, rg: R4) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.guess_header(s, rect(rg)))
+    }
+    fn remove_duplicates(&mut self, s: usize, rg: R4, cols: Vec<u32>, header: bool) -> PyResult<(usize, usize)> {
+        self.sheet(s)?;
+        self.b.remove_duplicates(s, rect(rg), &cols, header).map_err(verr)
+    }
+    fn autofilter<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let af = match &self.b.sheets[s].autofilter {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+        let d = PyDict::new_bound(py);
+        d.set_item("ref", tup(&af.rect))?;
+        let cols = PyDict::new_bound(py);
+        for fc in &af.cols {
+            let f = PyDict::new_bound(py);
+            match &fc.kind {
+                crate::book_data::FilterKind::Values { values, blank } => {
+                    f.set_item("values", values.clone())?;
+                    f.set_item("blank", *blank)?;
+                }
+                crate::book_data::FilterKind::Custom { and, conds } => {
+                    f.set_item("custom", conds.clone())?;
+                    f.set_item("and", *and)?;
+                }
+                crate::book_data::FilterKind::Top10 { top, percent, val } => {
+                    f.set_item("top10", (*top, *percent, *val))?;
+                }
+                crate::book_data::FilterKind::Raw(_) => {
+                    f.set_item("other", true)?;
+                }
+            }
+            cols.set_item(fc.col, f)?;
+        }
+        d.set_item("columns", cols)?;
+        Ok(Some(d))
+    }
+    #[pyo3(signature = (s, rg=None))]
+    fn set_autofilter(&mut self, s: usize, rg: Option<R4>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_autofilter(s, rg.map(rect)).map_err(verr)
+    }
+    /// Filter one column (offset in the range): {"values": [...], "blank": bool} |
+    /// {"custom": [(op, val)...], "and": bool} | {"top10": (top, percent, n)} | None to clear.
+    fn filter_column(&mut self, s: usize, col: u32, spec: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        self.sheet(s)?;
+        let kind = match spec {
+            None => None,
+            Some(d) => {
+                if let Some(v) = get::<Vec<String>>(d, "values") {
+                    Some(crate::book_data::FilterKind::Values { values: v, blank: get(d, "blank").unwrap_or(false) })
+                } else if let Some(c) = get::<Vec<(String, String)>>(d, "custom") {
+                    Some(crate::book_data::FilterKind::Custom { and: get(d, "and").unwrap_or(true), conds: c })
+                } else if let Some((top, percent, val)) = get::<(bool, bool, f64)>(d, "top10") {
+                    Some(crate::book_data::FilterKind::Top10 { top, percent, val })
+                } else {
+                    return Err(PyValueError::new_err("unknown filter"));
+                }
+            }
+        };
+        self.b.filter_column(s, col, kind).map_err(verr)
+    }
+    fn clear_filters(&mut self, s: usize) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.clear_filters(s).map_err(verr)
+    }
+    fn reapply_filter(&mut self, s: usize) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.reapply_filter(s).map_err(verr)
+    }
+    fn filter_values(&self, s: usize, col: u32) -> PyResult<(Vec<String>, bool)> {
+        self.sheet(s)?;
+        Ok(self.b.filter_values(s, col))
+    }
+
     // ---- calculation
     #[pyo3(signature = (full=false, sheet=None))]
     fn calculate(&mut self, full: bool, sheet: Option<usize>) -> usize {

@@ -80,6 +80,7 @@ pub struct Body {
     pub rows: std::collections::BTreeMap<u32, RowInfo>,
     pub cols: Vec<ColSpan>,
     pub merges: Vec<Rect>,
+    pub autofilter: Option<crate::book_data::AutoFilter>,
 }
 
 /// One reversible change. Applying a delta returns the delta that undoes it.
@@ -96,6 +97,7 @@ pub enum Delta {
     MoveSheet(usize, usize),
     Body(usize, Box<Body>),
     Calc(CalcSettings),
+    Filter(usize, Option<crate::book_data::AutoFilter>),
 }
 
 #[derive(Clone, Debug)]
@@ -428,6 +430,7 @@ impl Book {
                     rows: std::mem::replace(&mut sh.rows, b.rows),
                     cols: std::mem::replace(&mut sh.cols, b.cols),
                     merges: std::mem::replace(&mut sh.merges, b.merges),
+                    autofilter: std::mem::replace(&mut sh.autofilter, b.autofilter),
                 };
                 sh.colidx = sh.cells.keys().map(|(r, c)| (*c, *r)).collect();
                 sh.spills.clear();
@@ -444,6 +447,10 @@ impl Book {
             Delta::Calc(c) => {
                 let old = std::mem::replace(&mut self.calc, c);
                 Delta::Calc(old)
+            }
+            Delta::Filter(s, f) => {
+                let old = std::mem::replace(&mut self.sheets[s].autofilter, f);
+                Delta::Filter(s, old)
             }
         }
     }

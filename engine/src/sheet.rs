@@ -153,6 +153,8 @@ pub struct Sheet {
     pub ghosts: BTreeMap<(u32, u32), Value>,
     /// legacy array formulas: anchor -> range
     pub arrays: HashMap<(u32, u32), Rect>,
+    /// the AutoFilter range and its column filters
+    pub autofilter: Option<crate::book_data::AutoFilter>,
     // ---- file
     pub part: String,
     pub prolog: String,
@@ -190,6 +192,7 @@ impl Sheet {
             blocked: HashMap::new(),
             ghosts: BTreeMap::new(),
             arrays: HashMap::new(),
+            autofilter: None,
             part: String::new(),
             prolog: String::new(),
             root_open: String::new(),

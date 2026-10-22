@@ -174,3 +174,44 @@ fn ref_error_with_sheet() {
     b.set_input(0, 0, 0, "=Sheet1!#REF!").unwrap();
     assert_eq!(b.value(0, 0, 0), Value::Err(XlErr::Ref));
 }
+
+#[test]
+fn sort_filter_dedupe() {
+    let mut b = blank();
+    let data = [("Name", "Qty"), ("pear", "7"), ("apple", "12"), ("fig", "3"), ("apple", "12"), ("kiwi", "")];
+    for (r, (a, q)) in data.iter().enumerate() {
+        b.set_input(0, r as u32, 0, a).unwrap();
+        if !q.is_empty() {
+            b.set_input(0, r as u32, 1, q).unwrap();
+        }
+        b.set_input(0, r as u32, 2, &format!("=B{}*2", r + 1)).unwrap();
+    }
+    let rc = Rect::new(0, 0, 5, 2);
+    assert!(b.guess_header(0, rc));
+    b.sort_range(0, rc, &[crate::book_data::SortKey { line: 1, ascending: true }], true, false).unwrap();
+    assert_eq!(b.value(0, 1, 0), Value::str("fig"));
+    assert_eq!(b.value(0, 5, 0), Value::str("kiwi")); // blank last
+    assert_eq!(b.input(0, 1, 2), "=B2*2");
+    assert_eq!(n(&b, 1, 2), 6.0);
+    b.sort_range(0, rc, &[crate::book_data::SortKey { line: 0, ascending: false }], true, false).unwrap();
+    assert_eq!(b.value(0, 1, 0), Value::str("pear"));
+    // filter
+    b.set_autofilter(0, Some(rc)).unwrap();
+    b.filter_column(0, 0, Some(crate::book_data::FilterKind::Values { values: vec!["apple".into()], blank: false })).unwrap();
+    let hidden: Vec<u32> = (1..6).filter(|r| b.row_px(0, *r) == 0.0).collect();
+    assert_eq!(hidden.len(), 3);
+    let (vals, blank) = b.filter_values(0, 0);
+    assert_eq!(vals, vec!["apple", "fig", "kiwi", "pear"]);
+    assert!(!blank);
+    b.filter_column(0, 1, Some(crate::book_data::FilterKind::Custom { and: true, conds: vec![("greaterThan".into(), "5".into())] })).unwrap();
+    let data = b.to_bytes().unwrap();
+    let c = Book::from_bytes(&data).unwrap();
+    assert_eq!(c.sheets[0].autofilter, b.sheets[0].autofilter);
+    b.clear_filters(0).unwrap();
+    assert!((1..6).all(|r| b.row_px(0, r) > 0.0));
+    b.set_autofilter(0, None).unwrap();
+    // remove duplicates
+    let (removed, left) = b.remove_duplicates(0, rc, &[0, 1], true).unwrap();
+    assert_eq!((removed, left), (1, 4));
+    assert_eq!(b.value(0, 5, 0), Value::Empty);
+}

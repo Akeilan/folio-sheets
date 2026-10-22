@@ -19,6 +19,9 @@ if path:
 for cmd in os.environ.get("SHOT_CMDS", "").split(";"):
     if cmd:
         win.run(cmd)
+code = os.environ.get("SHOT_PY")
+if code:
+    exec(open(code).read())
 pump(0.8)
 gw = win.get_window()
 img = cairo.ImageSurface(cairo.FORMAT_ARGB32, gw.get_width(), gw.get_height())

@@ -143,6 +143,7 @@ impl Book {
                 cairo_rectangle(cr, *x0, *y0, x1 - x0, y1 - y0);
                 cairo_clip(cr);
                 self.paint_cells(s, cr, p, &g, &bands, &rows, &cols, &mut pen);
+                self.paint_filter_buttons(s, cr, p, &rows, &cols);
                 self.paint_overlays(s, cr, p, &g, &rows, &cols);
                 cairo_restore(cr);
             }
@@ -370,6 +371,55 @@ impl Book {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// The AutoFilter drop-down buttons in the header row.
+    unsafe fn paint_filter_buttons(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, rows: &[(u32, f64, f64)], cols: &[(u32, f64, f64)]) {
+        let af = match &self.sheets[s].autofilter {
+            Some(a) => a,
+            None => return,
+        };
+        let row = match rows.iter().find(|(r, _, _)| *r == af.rect.r1) {
+            Some(x) => *x,
+            None => return,
+        };
+        for &(c, x, w) in cols {
+            if c < af.rect.c1 || c > af.rect.c2 {
+                continue;
+            }
+            let (bx, by, bs) = filter_button(x, row.1, w, row.2, p.zoom);
+            let filtered = af.cols.iter().any(|f| f.col == c - af.rect.c1);
+            rgb(cr, 0xFFFFFF);
+            rect(cr, bx, by, bs, bs);
+            rgb(cr, 0xA0A0A0);
+            cairo_set_line_width(cr, 1.0);
+            cairo_rectangle(cr, bx + 0.5, by + 0.5, bs - 1.0, bs - 1.0);
+            cairo_stroke(cr);
+            rgb(cr, 0x444444);
+            let (cx, cy) = (bx + bs / 2.0, by + bs / 2.0);
+            if filtered {
+                // a funnel and a small arrow
+                cairo_move_to(cr, cx - bs * 0.32, cy - bs * 0.28);
+                cairo_line_to(cr, cx + bs * 0.12, cy - bs * 0.28);
+                cairo_line_to(cr, cx - 0.5, cy + 0.0);
+                cairo_line_to(cr, cx - 0.5, cy + bs * 0.3);
+                cairo_line_to(cr, cx - bs * 0.2, cy + bs * 0.2);
+                cairo_line_to(cr, cx - bs * 0.2, cy);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+                cairo_move_to(cr, cx + bs * 0.12, cy + bs * 0.05);
+                cairo_line_to(cr, cx + bs * 0.36, cy + bs * 0.05);
+                cairo_line_to(cr, cx + bs * 0.24, cy + bs * 0.2);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            } else {
+                cairo_move_to(cr, cx - bs * 0.25, cy - bs * 0.1);
+                cairo_line_to(cr, cx + bs * 0.25, cy - bs * 0.1);
+                cairo_line_to(cr, cx, cy + bs * 0.18);
+                cairo_close_path(cr);
+                cairo_fill(cr);
             }
         }
     }
@@ -881,4 +931,10 @@ pub fn render_png(book: &Book, s: usize, p: &ViewParams, path: &str) -> Result<(
     }
     let _ = family_list("");
     Ok(())
+}
+
+/// Where a cell's filter button goes: (x, y, size).
+pub fn filter_button(x: f64, y: f64, w: f64, h: f64, z: f64) -> (f64, f64, f64) {
+    let bs = (16.0 * z).round().min(h - 2.0).min(w - 2.0).max(6.0);
+    (x + w - bs - 2.0, y + h - bs - 2.0, bs)
 }
