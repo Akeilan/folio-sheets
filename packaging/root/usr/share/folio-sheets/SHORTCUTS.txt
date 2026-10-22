@@ -36,6 +36,10 @@ Editing
   Ctrl+C / Ctrl+X / Ctrl+V   Copy / cut / paste (values and formulas)
   Ctrl+Z / Ctrl+Y         Undo / redo
 
+Notes and comments
+  Shift+F2                New note, or edit the cell's note
+  Ctrl+Enter              Post a comment from its card
+
 Charts
   Alt+F1                  Insert a column chart of the data around the cell
   Drag / handles          Move / size the selected chart (arrow keys nudge it; Alt+arrow by a pixel)

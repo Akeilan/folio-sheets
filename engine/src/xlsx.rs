@@ -55,6 +55,8 @@ pub struct FileParts {
     pub dyn_cm: Option<u32>,
     /// worksheet part -> relationship id
     pub sheet_rids: HashMap<String, String>,
+    /// the persons part (threaded comments' authors)
+    pub persons_part: Option<String>,
 }
 
 fn rels_name(part: &str) -> String {
@@ -231,6 +233,10 @@ impl Book {
                 b.calc.delta = d;
             }
         }
+        // the people who wrote threaded comments
+        let persons = find_type("/person").and_then(|p| get(&p).map(|d| xml::decode(d).unwrap_or_default()))
+            .map(|t| crate::notes::read_persons(&t)).unwrap_or_default();
+        b.file.persons_part = find_type("/person");
         let active_tab: usize = wb.child("bookViews").and_then(|v| v.elems().next()).and_then(|v| v.attr("activeTab")).and_then(|v| v.parse().ok()).unwrap_or(0);
         // sheets
         let sheets_el = wb.child("sheets").cloned().unwrap_or_else(|| Element::new("sheets"));
@@ -254,6 +260,7 @@ impl Book {
                         } else {
                             load_drawing(&mut sh, &parts, &b.styles.theme);
                             load_tables(&mut sh, &parts);
+                            load_comments(&mut sh, &parts, &persons);
                         }
                     }
                     None => sh.error = Some("the sheet's part is missing".into()),
@@ -328,6 +335,36 @@ fn read_rels(part: &str, parts: &[(String, Vec<u8>)]) -> Vec<(String, String, St
         }
     }
     out
+}
+
+/// Notes and threaded comments of a sheet.
+fn load_comments(sh: &mut Sheet, parts: &[(String, Vec<u8>)], persons: &HashMap<String, String>) {
+    let rels = read_rels(&sh.part, parts);
+    let comments = rels.iter().find(|r| r.1.ends_with("/comments") && !r.3).map(|r| r.2.clone());
+    let threads = rels.iter().find(|r| r.1.ends_with("/threadedComment") && !r.3).map(|r| r.2.clone());
+    let vml = rels.iter().find(|r| r.1.ends_with("/vmlDrawing") && !r.3).map(|r| r.2.clone());
+    if comments.is_none() && threads.is_none() {
+        return;
+    }
+    let text = |p: &Option<String>| p.as_ref().and_then(|p| find_part(parts, p)).and_then(|d| xml::decode(d).ok());
+    let vml_text = text(&vml);
+    let mut cf = crate::notes::CommentsFile { comments: comments.clone(), vml: vml.clone(), vml_text: vml_text.clone(), threads: threads.clone(), ..Default::default() };
+    if let Some(t) = text(&comments) {
+        match crate::notes::read_comments(&t, vml_text.as_deref()) {
+            Some((n, _)) => sh.notes = n,
+            None => return,
+        }
+    }
+    if let Some(t) = text(&threads) {
+        sh.threads = crate::notes::read_threads(&t, persons);
+        // a cell with a thread has only the thread
+        for k in sh.threads.keys() {
+            sh.notes.remove(k);
+        }
+    }
+    cf.notes = sh.notes.clone();
+    cf.thread_map = sh.threads.clone();
+    sh.comments_file = Some(cf);
 }
 
 /// The sheet's tables, from its table parts (kept as read when one can't be read).
@@ -1085,13 +1122,18 @@ impl Book {
         let base = if dir.is_empty() { "xl".to_string() } else { dir.clone() };
         let mut drawing_rids: Vec<Option<String>> = vec![None; self.sheets.len()];
         let mut table_rids: Vec<Vec<String>> = vec![vec![]; self.sheets.len()];
+        let mut legacy_rids: Vec<Option<Option<String>>> = vec![None; self.sheets.len()];
         for (i, sh) in self.sheets.iter().enumerate() {
             if sh.raw_part.is_some() {
                 continue;
             }
             let has_d = !(sh.objects.is_empty() && sh.drawing.is_none());
             let has_t = !sh.tables.is_empty() || sh.pieces.iter().any(|p| matches!(p, Piece::Known(t) if t == "tableParts"));
-            if !has_d && !has_t {
+            let has_c = match &sh.comments_file {
+                Some(f) => f.notes != sh.notes || f.thread_map != sh.threads,
+                None => !sh.notes.is_empty() || !sh.threads.is_empty(),
+            };
+            if !has_d && !has_t && !has_c {
                 continue;
             }
             let (part, _) = &sheet_parts[i];
@@ -1105,8 +1147,21 @@ impl Book {
             if has_t {
                 table_rids[i] = self.write_table_parts(sh, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut used_parts, &mut srels);
             }
+            if has_c {
+                legacy_rids[i] = Some(self.write_comment_parts(i, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut srels));
+            }
             if srels.to_string() != before {
                 out.push((srels_name, xml::document(&srels_pro, &srels).into_bytes()));
+            }
+        }
+        // the authors of threaded comments
+        if let Some(px) = crate::notes::write_persons(self) {
+            let pp = self.file.persons_part.clone().unwrap_or_else(|| format!("{}/persons/person.xml", base));
+            out.push((pp.clone(), px.into_bytes()));
+            set_override(&mut ct, &pp, "application/vnd.ms-excel.person+xml");
+            if !rels.elems().any(|e| e.attr("Type").map(|t| t.ends_with("/person")).unwrap_or(false)) {
+                let id = new_rid(&mut used_rids);
+                rels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", "http://schemas.microsoft.com/office/2017/10/relationships/person"), ("Target", &relative(&wb_part, &pp))]));
             }
         }
         // worksheets
@@ -1116,7 +1171,7 @@ impl Book {
                 out.push((part.clone(), raw.clone()));
                 continue;
             }
-            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref(), &table_rids[i]);
+            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref(), &table_rids[i], legacy_rids[i].as_ref());
             out.push((part.clone(), x.into_bytes()));
         }
         // shared strings
@@ -1187,6 +1242,82 @@ impl Book {
             z.add(n, d, d.len() > 64);
         }
         Ok(z.finish())
+    }
+
+    /// Write a sheet's notes and threaded comments (comments part, VML drawing, threaded
+    /// comments part); the id of the legacyDrawing relationship, if any.
+    #[allow(clippy::too_many_arguments)]
+    fn write_comment_parts(&self, i: usize, sheet_part: &str, base: &str, out: &mut Vec<(String, Vec<u8>)>, dropped: &mut Vec<String>,
+                           ct: &mut Element, taken: &mut std::collections::HashSet<String>, srels: &mut Element) -> Option<String> {
+        let sh = &self.sheets[i];
+        let old = sh.comments_file.clone().unwrap_or_default();
+        let is = |e: &Element, suffix: &str| e.attr("Type").map(|t| t.ends_with(suffix)).unwrap_or(false);
+        srels.children.retain(|n| !matches!(n, Node::Elem(e) if is(e, "/comments") || is(e, "/vmlDrawing") || is(e, "/threadedComment")));
+        let fresh = |stem: &str, ext: &str, taken: &mut std::collections::HashSet<String>| -> String {
+            let mut k = 1;
+            loop {
+                let p = format!("{}/{}{}.{}", base, stem, k, ext);
+                if !taken.contains(&p) {
+                    taken.insert(p.clone());
+                    return p;
+                }
+                k += 1;
+            }
+        };
+        let mut ids: Vec<String> = srels.elems().filter_map(|e| e.attr("Id").map(|s| s.to_string())).collect();
+        let mut rid = |ids: &mut Vec<String>| -> String {
+            let mut k = 1;
+            loop {
+                let id = format!("rId{}", k);
+                if !ids.contains(&id) {
+                    ids.push(id.clone());
+                    return id;
+                }
+                k += 1;
+            }
+        };
+        let empty = sh.notes.is_empty() && sh.threads.is_empty();
+        let others = old.vml_text.as_deref().map(|v| {
+            let n_shapes = v.matches("<v:shape ").count();
+            let n_notes = v.matches("ObjectType=\"Note\"").count();
+            n_shapes > n_notes
+        }).unwrap_or(false);
+        // the comments part
+        if !empty {
+            let cp = old.comments.clone().unwrap_or_else(|| fresh("comments", "xml", taken));
+            out.push((cp.clone(), crate::notes::write_comments(&sh.notes, &sh.threads).into_bytes()));
+            set_override(ct, &cp, "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml");
+            let id = rid(&mut ids);
+            srels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"), ("Target", &relative(sheet_part, &cp))]));
+        } else if let Some(cp) = &old.comments {
+            dropped.push(cp.clone());
+            remove_override(ct, cp);
+        }
+        // threaded comments
+        if !sh.threads.is_empty() {
+            let tp = old.threads.clone().unwrap_or_else(|| fresh("threadedComments/threadedComment", "xml", taken));
+            out.push((tp.clone(), crate::notes::write_threads(&sh.threads).into_bytes()));
+            set_override(ct, &tp, "application/vnd.ms-excel.threadedcomments+xml");
+            let id = rid(&mut ids);
+            srels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", "http://schemas.microsoft.com/office/2017/10/relationships/threadedComment"), ("Target", &relative(sheet_part, &tp))]));
+        } else if let Some(tp) = &old.threads {
+            dropped.push(tp.clone());
+            remove_override(ct, tp);
+        }
+        // the drawing that shows them
+        if empty && !others {
+            if let Some(vp) = &old.vml {
+                dropped.push(vp.clone());
+                dropped.push(rels_name(vp));
+            }
+            return None;
+        }
+        let vp = old.vml.clone().unwrap_or_else(|| fresh("drawings/vmlDrawing", "vml", taken));
+        out.push((vp.clone(), crate::notes::write_vml(self, i, i + 1, old.vml_text.as_deref()).into_bytes()));
+        set_default(ct, "vml", "application/vnd.openxmlformats-officedocument.vmlDrawing");
+        let id = rid(&mut ids);
+        srels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing"), ("Target", &relative(sheet_part, &vp))]));
+        Some(id)
     }
 
     /// Write a sheet's table parts and their relationships; the ids the worksheet names.
@@ -1516,7 +1647,7 @@ impl Book {
         xml::document(&pro, &wb)
     }
 
-    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>, table_rids: &[String]) -> String {
+    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>, table_rids: &[String], legacy: Option<&Option<String>>) -> String {
         let sh = &self.sheets[i];
         let mut out = String::with_capacity(4096 + sh.cells.len() * 40);
         if sh.root_open.is_empty() {
@@ -1547,6 +1678,11 @@ impl Book {
         }
         if !table_rids.is_empty() && !pieces.iter().any(|x| matches!(x, Piece::Known(t) | Piece::Raw(t, _) if t == "tableParts")) {
             pieces.push(Piece::Known("tableParts".into()));
+        }
+        if legacy.is_some() {
+            // the notes' drawing is written anew (or goes)
+            pieces.retain(|x| !matches!(x, Piece::Known(t) | Piece::Raw(t, _) if t == "legacyDrawing"));
+            pieces.push(Piece::Known("legacyDrawing".into()));
         }
         let rank = |p: &Piece| -> usize {
             let t = match p {
@@ -1617,6 +1753,11 @@ impl Book {
                     "autoFilter" => {
                         if let Some(af) = &sh.autofilter {
                             crate::book_data::write_autofilter(af, &pfx, &mut out);
+                        }
+                    }
+                    "legacyDrawing" => {
+                        if let Some(Some(rid)) = legacy {
+                            out.push_str(&format!("<{}legacyDrawing r:id=\"{}\"/>", pfx, esc_attr(rid)));
                         }
                     }
                     "tableParts" => {
@@ -1947,6 +2088,13 @@ impl Book {
 
 fn default_content_types() -> (String, Element) {
     xml::parse("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/></Types>").unwrap()
+}
+
+fn set_default(ct: &mut Element, ext: &str, typ: &str) {
+    if ct.elems().any(|e| e.local() == "Default" && e.attr("Extension").map(|x| x.eq_ignore_ascii_case(ext)).unwrap_or(false)) {
+        return;
+    }
+    ct.children.insert(0, Node::Elem(Element::with_attrs("Default", &[("Extension", ext), ("ContentType", typ)])));
 }
 
 fn set_override(ct: &mut Element, part: &str, typ: &str) {

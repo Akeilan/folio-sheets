@@ -172,6 +172,9 @@ impl Book {
                 let mut c = out.c1;
                 while c <= out.c2 {
                     self.copy_cf(src_s, src, dst_s, Rect::new(r, c, r + h - 1, c + w - 1));
+                    if matches!(o.what, What::All | What::AllWidths | What::NoBorders) {
+                        self.copy_notes(src_s, src, Rect::new(r, c, r + h - 1, c + w - 1));
+                    }
                     c += w;
                 }
                 r += h;
@@ -479,6 +482,16 @@ impl Book {
         if merges != self.sheets[s].merges {
             self.record(Delta::Merges(s, merges));
         }
+        // notes and comments go with their cells
+        self.shift_notes(s, &|rr, cc| {
+            if src.contains(rr, cc) {
+                Some(((rr as i64 + dr) as u32, (cc as i64 + dc) as u32))
+            } else if dst.contains(rr, cc) {
+                None
+            } else {
+                Some((rr, cc))
+            }
+        });
         self.commit();
         Ok(dst)
     }

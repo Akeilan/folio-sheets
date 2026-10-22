@@ -576,3 +576,55 @@ fn tables_commands() {
     p.height = 200.0;
     crate::render::render_png(&b, 0, &p, "/tmp/table_test.png").unwrap();
 }
+
+#[test]
+fn notes_and_comments() {
+    let mut b = Book::open("testdata/notes.xlsx").unwrap();
+    let n = b.note(0, 0, 0).unwrap().clone();
+    assert_eq!(n.author, "Ron");
+    assert_eq!(n.text, "Ron:\nCheck this value");
+    assert!(!n.visible);
+    let n2 = b.note(0, 2, 1).unwrap().clone();
+    assert!(n2.visible && n2.w > crate::notes::NOTE_W, "{:?}", n2);
+    // unchanged: the parts are written back as they were (the button too)
+    let bytes = b.to_bytes().unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let ob = std::fs::read("testdata/notes.xlsx").unwrap();
+    let zo = crate::zip::ZipReader::open(&ob).unwrap();
+    assert_eq!(z.read("xl/drawings/vmlDrawing1.vml").unwrap(), zo.read("xl/drawings/vmlDrawing1.vml").unwrap());
+    // edits
+    b.set_note(0, 4, 4, "Ron", Some("Ron:\nNew one")).unwrap();
+    b.set_note(0, 0, 0, "Ron", None).unwrap();
+    b.add_comment(0, 6, 0, "Ron", "Is this right?").unwrap();
+    b.add_comment(0, 6, 0, "Ana", "Yes").unwrap();
+    assert!(b.add_comment(0, 4, 4, "Ron", "x").is_err(), "a note and a comment can't share a cell");
+    assert_eq!(b.thread(0, 6, 0).unwrap().entries.len(), 2);
+    let bytes = b.to_bytes().unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let vml = String::from_utf8(z.read("xl/drawings/vmlDrawing1.vml").unwrap()).unwrap();
+    assert!(vml.contains("Press") || vml.contains("Button"), "the button stays");
+    assert!(z.names().iter().any(|n| n.starts_with("xl/threadedComments/")), "{:?}", z.names());
+    assert!(z.names().iter().any(|n| n == "xl/persons/person.xml"));
+    let b2 = Book::from_bytes(&bytes).unwrap();
+    assert!(b2.note(0, 0, 0).is_none());
+    assert_eq!(b2.note(0, 4, 4).unwrap().text, "Ron:\nNew one");
+    let t = b2.thread(0, 6, 0).unwrap();
+    assert_eq!(t.entries.len(), 2);
+    assert_eq!(t.entries[1].author, "Ana");
+    assert_eq!(t.entries[0].text, "Is this right?");
+    // rows inserted above move them
+    b.insert_rows(0, 0, 2).unwrap();
+    assert!(b.note(0, 6, 4).is_some() && b.thread(0, 8, 0).is_some());
+    b.undo();
+    // notes to comments
+    assert_eq!(b.notes_to_comments(0).unwrap(), 2);
+    assert!(b.sheets[0].notes.is_empty());
+    assert_eq!(b.thread(0, 4, 4).unwrap().entries[0].text, "New one");
+    // the picture
+    let mut p = crate::view::ViewParams::default();
+    p.width = 600.0;
+    p.height = 260.0;
+    b.undo();
+    p.hover_note = Some((4, 4));
+    crate::render::render_png(&b, 0, &p, "/tmp/notes_test.png").unwrap();
+}

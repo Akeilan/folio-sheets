@@ -8,7 +8,7 @@ use crate::recalc::Deps;
 use crate::sheet::{Cell, ColSpan, FKind, Formula, RowInfo, Sheet};
 use crate::styles::Styles;
 use crate::value::{Value, XlErr};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 pub type Key = (usize, u32, u32);
@@ -102,6 +102,8 @@ pub enum Delta {
     /// the worksheet's kept elements (conditional formats...)
     Pieces(usize, Vec<crate::sheet::Piece>),
     Tables(usize, Vec<crate::tables::Table>),
+    Notes(usize, BTreeMap<(u32, u32), crate::notes::Note>),
+    Threads(usize, BTreeMap<(u32, u32), crate::notes::Thread>),
 }
 
 #[derive(Clone, Debug)]
@@ -456,6 +458,14 @@ impl Book {
                 let old = std::mem::replace(&mut self.calc, c);
                 Delta::Calc(old)
             }
+            Delta::Notes(s, n) => {
+                let old = std::mem::replace(&mut self.sheets[s].notes, n);
+                Delta::Notes(s, old)
+            }
+            Delta::Threads(s, n) => {
+                let old = std::mem::replace(&mut self.sheets[s].threads, n);
+                Delta::Threads(s, old)
+            }
             Delta::Tables(s, tables) => {
                 let old = std::mem::replace(&mut self.sheets[s].tables, tables);
                 // structured references read the tables: work the formulas out again
@@ -760,7 +770,7 @@ impl Book {
         Ok(())
     }
 
-    fn check_cell(&self, s: usize, r: u32, c: u32) -> Result<(), String> {
+    pub(crate) fn check_cell(&self, s: usize, r: u32, c: u32) -> Result<(), String> {
         if s >= self.sheets.len() || r >= MAX_ROWS || c >= MAX_COLS {
             return Err("no such cell".into());
         }

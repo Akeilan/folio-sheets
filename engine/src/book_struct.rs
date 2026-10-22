@@ -309,6 +309,8 @@ impl Book {
             self.shift_objects(s, sh.rows, sh.at, sh.n);
         }
         self.shift_tables(s, sh.rows, sh.at, sh.n, sh.span);
+        let shc = sh;
+        self.shift_notes(s, &|r, c| shc.map(r, c));
         // ---- defined names
         let mut names = self.names.clone();
         let mut changed = false;
