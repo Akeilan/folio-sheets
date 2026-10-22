@@ -478,7 +478,9 @@ pub fn split_sheet(text: &str) -> (Option<String>, Option<String>, &str) {
         };
         return (Some(s1), s2, rest);
     }
-    match text.rfind('!') {
+    // the body #REF! has its own '!'
+    let search = if text.len() > 5 && text[text.len() - 5..].eq_ignore_ascii_case("#REF!") { &text[..text.len() - 5] } else { text };
+    match search.rfind('!') {
         Some(i) => {
             let pre = &text[..i];
             let (s1, s2) = match pre.find(':') {
@@ -918,6 +920,10 @@ pub enum Adjust<'a> {
     /// `here` is the sheet the formula lives on
     Rows { sheet: &'a str, here: &'a str, at: u32, n: i64 },
     Cols { sheet: &'a str, here: &'a str, at: u32, n: i64 },
+    /// cells inserted/deleted in columns c1..=c2 only (Insert Cells, Shift cells down)
+    RowsIn { sheet: &'a str, here: &'a str, at: u32, n: i64, c1: u32, c2: u32 },
+    /// cells inserted/deleted in rows r1..=r2 only (Shift cells right)
+    ColsIn { sheet: &'a str, here: &'a str, at: u32, n: i64, r1: u32, r2: u32 },
     /// a sheet renamed
     RenameSheet(&'a str, &'a str),
     /// a sheet deleted: references to it become #REF!
@@ -1025,6 +1031,20 @@ pub fn adjust_ref(mut r: RefTok, how: &Adjust) -> String {
                     r.write()
                 }
             }
+        }
+        Adjust::RowsIn { sheet, here, at, n, c1, c2 } => {
+            if !same(r.sheet.as_ref(), here, sheet) || r.sheet2.is_some() || r.kind == RefKind::Cols || r.kind == RefKind::Rows
+                || r.c1 < *c1 || r.c2 > *c2 {
+                return r.write();
+            }
+            adjust_ref(r, &Adjust::Rows { sheet, here, at: *at, n: *n })
+        }
+        Adjust::ColsIn { sheet, here, at, n, r1, r2 } => {
+            if !same(r.sheet.as_ref(), here, sheet) || r.sheet2.is_some() || r.kind == RefKind::Cols || r.kind == RefKind::Rows
+                || r.r1 < *r1 || r.r2 > *r2 {
+                return r.write();
+            }
+            adjust_ref(r, &Adjust::Cols { sheet, here, at: *at, n: *n })
         }
         Adjust::Cols { sheet, here, at, n } => {
             if !same(r.sheet.as_ref(), here, sheet) || r.sheet2.is_some() || r.kind == RefKind::Rows {

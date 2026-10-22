@@ -575,6 +575,34 @@ impl PyBook {
         Ok(())
     }
 
+    // ---- structure
+    fn insert_rows(&mut self, s: usize, at: u32, n: u32) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.insert_rows(s, at, n).map_err(verr)
+    }
+    fn delete_rows(&mut self, s: usize, at: u32, n: u32) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.delete_rows(s, at, n).map_err(verr)
+    }
+    fn insert_cols(&mut self, s: usize, at: u32, n: u32) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.insert_cols(s, at, n).map_err(verr)
+    }
+    fn delete_cols(&mut self, s: usize, at: u32, n: u32) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.delete_cols(s, at, n).map_err(verr)
+    }
+    /// Insert Cells: shift the cells at rg down (down=True) or right.
+    fn insert_cells(&mut self, s: usize, rg: R4, down: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.insert_cells(s, rect(rg), down).map_err(verr)
+    }
+    /// Delete Cells: shift the cells below up (up=True) or the cells to the right left.
+    fn delete_cells(&mut self, s: usize, rg: R4, up: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.delete_cells(s, rect(rg), up).map_err(verr)
+    }
+
     // ---- calculation
     #[pyo3(signature = (full=false, sheet=None))]
     fn calculate(&mut self, full: bool, sheet: Option<usize>) -> usize {

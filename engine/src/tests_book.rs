@@ -126,3 +126,51 @@ fn geometry_and_render() {
     let p = crate::view::ViewParams { width: 640.0, height: 330.0, sel: vec![Rect::new(1, 1, 2, 3)], active: (1, 1), ..Default::default() };
     crate::render::render_png(&b, 0, &p, "/tmp/new_main.png").unwrap();
 }
+
+#[test]
+fn insert_delete_rows_cols() {
+    let mut b = blank();
+    for r in 0..5 {
+        b.set_input(0, r, 0, &format!("{}", r + 1)).unwrap();
+    }
+    b.set_input(0, 0, 1, "=SUM(A1:A5)").unwrap();
+    b.set_input(0, 4, 1, "=A5*2").unwrap();
+    b.insert_sheet(1, Some("S2")).unwrap();
+    b.set_input(1, 0, 0, "=Sheet1!A3").unwrap();
+    b.insert_rows(0, 2, 2).unwrap();
+    assert_eq!(b.input(0, 0, 1), "=SUM(A1:A7)");
+    assert_eq!(b.input(0, 6, 1), "=A7*2");
+    assert_eq!(b.input(1, 0, 0), "=Sheet1!A5");
+    assert_eq!(n(&b, 0, 1), 15.0);
+    assert_eq!(b.value(0, 2, 0), Value::Empty);
+    b.delete_rows(0, 4, 1).unwrap(); // the row that held 3
+    assert_eq!(b.input(1, 0, 0), "=Sheet1!#REF!");
+    assert_eq!(n(&b, 0, 1), 12.0);
+    b.undo();
+    assert_eq!(b.input(1, 0, 0), "=Sheet1!A5");
+    b.undo();
+    assert_eq!(b.input(0, 0, 1), "=SUM(A1:A5)");
+    assert_eq!(n(&b, 2, 0), 3.0);
+    b.insert_cols(0, 0, 1).unwrap();
+    assert_eq!(b.input(0, 0, 2), "=SUM(B1:B5)");
+    b.delete_cols(0, 0, 1).unwrap();
+    // cells: shift down only in column A
+    b.insert_cells(0, Rect::new(1, 0, 1, 0), true).unwrap();
+    assert_eq!(b.input(0, 0, 1), "=SUM(A1:A6)");
+    assert_eq!(n(&b, 2, 0), 2.0);
+    assert_eq!(b.input(0, 4, 1), "=A6*2");
+    b.delete_cells(0, Rect::new(1, 0, 1, 0), true).unwrap();
+    assert_eq!(b.input(0, 0, 1), "=SUM(A1:A5)");
+    // merges move; a merge split by a cell shift is refused
+    b.set_merges_cmd(0, vec![Rect::new(10, 0, 10, 1)], "m");
+    b.insert_rows(0, 5, 1).unwrap();
+    assert_eq!(b.sheets[0].merges, vec![Rect::new(11, 0, 11, 1)]);
+    assert!(b.insert_cells(0, Rect::new(11, 0, 11, 0), true).is_err());
+}
+
+#[test]
+fn ref_error_with_sheet() {
+    let mut b = blank();
+    b.set_input(0, 0, 0, "=Sheet1!#REF!").unwrap();
+    assert_eq!(b.value(0, 0, 0), Value::Err(XlErr::Ref));
+}
