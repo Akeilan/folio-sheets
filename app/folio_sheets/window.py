@@ -624,21 +624,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         return Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
 
     def act_copy(self, cut=False):
-        g = self.grid
-        if len(g.sel.ranges) > 1:
-            self.dialogs.message("This action won't work on multiple selections.")
-            return
-        rg = g.sel.ranges[0]
-        ext = self.book.used_extent(g.sheet) or (0, 0)
-        r2, c2 = min(rg[2], ext[0]), min(rg[3], ext[1])
-        lines = []
-        for r in range(rg[0], r2 + 1):
-            lines.append("\t".join(self.book.display(g.sheet, r, c) for c in range(rg[1], c2 + 1)))
-        self._clipboard().set_text("\r\n".join(lines) + "\r\n", -1)
-        self._copied = (g.sheet, rg, cut)
-        g.copy_range = rg
-        self._start_ants()
-        g.refresh()
+        from . import clip_ui
+        clip_ui.copy(self, cut)
 
     def act_cut(self):
         self.act_copy(cut=True)
@@ -658,41 +645,38 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g._ants_id = GLib.timeout_add(120, tick)
 
     def cancel_copy(self):
-        self.grid.copy_range = None
-        self._copied = None
-        self.grid.area.queue_draw()
+        from . import clip_ui
+        clip_ui.cancel(self)
 
     def act_paste(self):
-        g = self.grid
-        copied = getattr(self, "_copied", None)
-        if copied and copied[0] == g.sheet:
-            # within the workbook: what was copied (values and formulas)
-            _s, rg, cut = copied
-            tr, tc = g.sel.active
-            data = [[self.book.input(g.sheet, r, c) for c in range(rg[1], rg[3] + 1)]
-                    for r in range(rg[0], rg[2] + 1)]
-            for i, row in enumerate(data):
-                for j, v in enumerate(row):
-                    if v.startswith("="):
-                        v = "=" + self.book.shift_formula(v[1:], tr - rg[0], tc - rg[1])
-                    self.book.set_input(g.sheet, tr + i, tc + j, v)
-            if cut:
-                self.book.clear_contents(g.sheet, [rg])
-                self.cancel_copy()
-            g.select_range((tr, tc, tr + len(data) - 1, tc + len(data[0]) - 1), (tr, tc))
-            return
-        text = self._clipboard().wait_for_text()
-        if not text:
-            return
-        tr, tc = g.sel.active
-        rows = [ln.split("\t") for ln in text.replace("\r\n", "\n").rstrip("\n").split("\n")]
-        for i, row in enumerate(rows):
-            for j, v in enumerate(row):
-                self.book.set_input(g.sheet, tr + i, tc + j, v)
-        g.select_range((tr, tc, tr + len(rows) - 1, tc + max(len(r) for r in rows) - 1), (tr, tc))
+        from . import clip_ui
+        clip_ui.paste(self)
+
+    def _paste_as(self, **opts):
+        from . import clip_ui
+        clip_ui.paste(self, opts)
 
     def act_paste_values(self):
-        self.act_paste()
+        self._paste_as(what="values")
+
+    def act_paste_formulas(self):
+        self._paste_as(what="formulas")
+
+    def act_paste_keep_widths(self):
+        self._paste_as(what="all_widths")
+
+    def act_paste_link(self):
+        self._paste_as(what="formulas", link=True)
+
+    def act_paste_no_borders(self):
+        self._paste_as(what="noborders")
+
+    def act_paste_transpose(self):
+        self._paste_as(what="all", transpose=True)
+
+    def act_paste_special(self):
+        from . import clip_ui
+        clip_ui.paste_special(self)
 
     # editing
     def act_clear_contents(self):
@@ -1746,6 +1730,12 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         focus = self.get_focus()
         in_grid = focus is g.area
         # global shortcuts
+        if ctrl and alt and not g.editing() and kv in (Gdk.KEY_v, Gdk.KEY_V):
+            self.run("paste-special")
+            return True
+        if ctrl and shift and not alt and not g.editing() and in_grid and kv in (Gdk.KEY_v, Gdk.KEY_V):
+            self.run("paste-values")
+            return True
         if ctrl and not alt:
             ch = chr(Gdk.keyval_to_lower(kv)) if kv < 0x10000 else ""
             table = {"s": "save", "o": "open", "n": "new", "w": "close", "p": "print", "z": "undo",
