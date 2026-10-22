@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Folio Sheets
+GenericName=Spreadsheet
+Comment=Create and edit spreadsheets
+Exec=folio-sheets %F
+Icon=folio-sheets
+Terminal=false
+Categories=Office;Spreadsheet;
+MimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.ms-excel.sheet.macroEnabled.12;application/vnd.ms-excel;application/vnd.oasis.opendocument.spreadsheet;text/csv;
+Keywords=spreadsheet;xlsx;workbook;
+StartupWMClass=org.folio.Sheets

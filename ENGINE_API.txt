@@ -1,0 +1,95 @@
+module folio_sheets_core
+class Book:
+    __new__($type, *args, **kwargs)  # Create and return a new object.  See help(type) for accurate signature.
+    active_sheet
+    adjust_decimals($self, sheet, ranges, row, col, delta)  # Increase/Decrease Decimal from the active cell's format and value.
+    aggregates($self, sheet, ranges)
+    array_range($self, sheet, row, col)  # The array-formula range a cell belongs to (r1, c1, r2, c2), if any.
+    autofit_cols($self, sheet, c1, c2, rows=None)  # Fit columns to their contents (rows: only those rows, as when cells
+    autofit_rows($self, sheet, r1, r2)
+    calc_manual
+    calc_pending  # Cells changed since the last calculation (manual mode).
+    calculate($self, full=False, sheet=None)  # F9 (what changed + volatile), Ctrl+Alt+F9 (full=True), Shift+F9
+    can_redo
+    can_undo
+    cell_rect($self, sheet, row, col, p)  # Screen rectangle of a cell (merge-aware), or None when off screen.
+    cell_style($self, sheet, row, col)  # Font and alignment of a cell, for the in-cell editor.
+    check_sheet_name($self, name, i=None)
+    circular($self)  # Formula cells in circular references after the last calculation.
+    clear_contents($self, sheet, ranges)  # Clear contents (values and formulas, keeping formats) of ranges.
+    col_at($self, sheet, x)
+    col_px($self, sheet, col)
+    col_width($self, sheet, col)  # Column width in characters, as Column Width shows it.
+    col_x($self, sheet, col)
+    ctrl_move($self, sheet, row, col, dr, dc)
+    current_region($self, sheet, row, col)
+    date1904
+    default_col_width($self, sheet)
+    default_row_height($self, sheet)
+    define_name($self, name, refers_to, scope=None, comment=None, old=None)  # Add or change a defined name; old = (name, scope) when renaming.
+    delete_name($self, name, scope=None)
+    delete_sheet($self, i)
+    dependents($self, sheet, row, col)
+    display($self, sheet, row, col)
+    error_cells($self, sheet)  # Formula cells holding error values, row by row: (row, col, error).
+    evaluate($self, sheet, row, col, text, array=False)  # Evaluate formula text (no '=') as if it were in a cell.
+    format_number($self, v, code)  # Format a number the way the cell display would (status bar).
+    from_bytes(data)
+    geometry($self, sheet, p)  # Header sizes and the bands on screen:
+    has_content($self, sheet, row, col)
+    has_data($self, i)  # Whether a sheet holds any data.
+    hit($self, sheet, x, y, p)  # What is under a point: ("cell", r, c) | ("colhdr", c) | ("rowhdr", r)
+    input($self, sheet, row, col)
+    insert_sheet($self, at, name=None)
+    is_formula($self, sheet, row, col)
+    iterate
+    mark_saved($self)
+    mdw($self, sheet)
+    merge_at($self, sheet, row, col)
+    merges($self, sheet)
+    modified
+    move_sheet($self, from, to)
+    name_comment($self, name, scope=None)  # The comment of a defined name, if any.
+    names($self)  # Defined names: (name, refers_to, sheet_index or None, hidden).
+    number_format($self, sheet, row, col)  # The number format code of a cell (or of what an empty cell inherits).
+    open(path)
+    precedents($self, sheet, row, col)
+    px_to_width($self, sheet, px)  # Width in characters for a pixel width (100 % zoom), for the drag tip.
+    redo($self)
+    rename_sheet($self, i, name)
+    render($self, sheet, cr, p)  # Paint the grid onto a pycairo Context.
+    row_at($self, sheet, y)
+    row_height($self, sheet, row)  # Row height in points.
+    row_px($self, sheet, row)
+    row_y($self, sheet, row)
+    save($self, path)
+    set_col_px($self, sheet, c1, c2, px)  # Set a column to a pixel width (100 % zoom) as dragging does.
+    set_col_width($self, sheet, c1, c2, chars)
+    set_cols_hidden($self, sheet, c1, c2, hidden)
+    set_default_col_width($self, sheet, chars)
+    set_input($self, sheet, row, col, text)  # Type a value into a cell (constants; formulas are stored for the
+    set_iterate($self, on, count, delta)
+    set_number_format($self, sheet, ranges, code)  # Apply a number format code to ranges.
+    set_row_height($self, sheet, r1, r2, pt)
+    set_row_px($self, sheet, r1, r2, px)
+    set_rows_hidden($self, sheet, r1, r2, hidden)
+    set_sheet_state($self, i, state)
+    set_tab_color($self, i, rgb=None)
+    set_view($self, sheet, d)  # Store view state from the window into the sheet (written on save,
+    sheet_count
+    sheet_info($self, i)
+    shift_formula($self, text, dr, dc)  # Shift the relative references of formula text (no '=') by dr, dc.
+    structure($self)
+    undo($self)
+    undo_labels($self)
+    used_extent($self, sheet)
+    value($self, sheet, row, col)  # The raw value: None, float, str, bool, or ("error", "#N/A").
+    version
+MAX_COLS  # int([x]) -> integer
+MAX_ROWS  # int([x]) -> integer
+check_formula(text)  # None if formula text (without '=') parses, else a message.
+col_name(c)
+format_number(v, code)
+function_names()  # Every worksheet function the engine knows.
+parse_ref(s)  # Parse "A1", "B2:C5", "A:C", "3:5".
+ref_spans(text)  # References in formula text, for colouring: (start, end, sheet name or

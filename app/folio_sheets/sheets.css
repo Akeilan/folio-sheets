@@ -1,0 +1,49 @@
+/* Folio Sheets — the parts Folio Writer doesn't have. */
+.folio-formulabar {
+  background: #ffffff; border-bottom: 1px solid #d6d6d6; border-top: 1px solid #e6e6e6;
+  padding: 2px 4px; min-height: 26px;
+  font-family: "Segoe UI", "Noto Sans", "Open Sans", "Ubuntu", sans-serif; font-size: 9pt;
+}
+.folio-namebox entry {
+  min-height: 22px; padding: 0 4px; border-radius: 0; border: 1px solid #c6c6c6; box-shadow: none;
+  background: #ffffff; font-size: 9pt;
+}
+.folio-namebox button { min-height: 22px; padding: 0 2px; border-radius: 0; border: 1px solid #c6c6c6;
+  border-left: none; background: #ffffff; box-shadow: none; }
+.folio-fbtn { min-width: 22px; min-height: 22px; padding: 0 4px; color: #444444; }
+.folio-fbtn:disabled { color: #b0b0b0; }
+textview.folio-formula, textview.folio-formula text {
+  font-family: "Calibri", "Carlito", sans-serif; font-size: 11pt; background: #ffffff;
+}
+.folio-formulabar scrolledwindow { border: 1px solid #c6c6c6; border-radius: 0; }
+
+.folio-celleditor, .folio-celleditor text { border: none; padding: 0; }
+
+.folio-sheetbar { background: #f3f3f3; border-top: 1px solid #d6d6d6; min-height: 26px;
+  font-family: "Segoe UI", "Noto Sans", "Open Sans", "Ubuntu", sans-serif; font-size: 9pt; }
+.folio-sheetbar scrollbar { min-height: 14px; }
+.folio-tabnav, .folio-tabadd { min-width: 22px; min-height: 22px; padding: 0 4px; color: #555555;
+  border-radius: 0; }
+.folio-tabadd { font-size: 12pt; }
+button.folio-sheettab {
+  background: transparent; border: none; border-radius: 0; box-shadow: none;
+  border-right: 1px solid #d0d0d0; padding: 2px 14px 0 14px; min-height: 22px; color: #333333;
+}
+button.folio-sheettab:hover { background: #e6e6e6; }
+button.folio-sheettab.active {
+  background: #ffffff; color: @accent_dark; font-weight: bold;
+  border-bottom: 2px solid @accent; box-shadow: 0 1px 2px alpha(#000000, 0.15);
+}
+
+.folio-status-btn { min-width: 20px; min-height: 18px; padding: 0 3px; border-radius: 0; }
+.folio-formulabar combobox, .folio-formulabar combobox box, .folio-formulabar combobox entry,
+.folio-formulabar combobox button { min-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; }
+.folio-formulabar combobox entry { min-height: 22px; }
+.folio-formulabar button.folio-fbtn { min-height: 0; padding-top: 0; padding-bottom: 0; }
+.folio-formulabar > button { min-height: 0; padding-top: 0; padding-bottom: 0; }
+
+/* function library menus and AutoComplete */
+button.folio-fnitem { padding: 3px 12px; min-height: 0; }
+.folio-aclist row { padding: 1px 2px; min-height: 0; }
+.folio-popup { background: #ffffff; }
+.folio-popup frame > border { border-color: #b8b8b8; }

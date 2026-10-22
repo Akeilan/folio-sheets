@@ -1,0 +1,68 @@
+Folio Sheets — keyboard shortcuts (this version)
+
+Moving
+  Arrow keys              Move one cell
+  Ctrl+Arrow              Edge of the current data region
+  End, then Arrow         Same as Ctrl+Arrow
+  Home / Ctrl+Home        Start of row / cell A1 (or the top-left unfrozen cell)
+  Ctrl+End                Last used cell
+  Page Up / Page Down     One screen up / down
+  Alt+Page Up / Down      One screen left / right
+  Ctrl+Page Up / Down     Previous / next sheet
+  Ctrl+Backspace          Scroll the active cell into view
+  F5 or Ctrl+G            Go To
+  Tab / Shift+Tab         Right / left (Enter after Tabs returns to the start column)
+  Enter / Shift+Enter     Down / up (inside a selection: move through it)
+
+Selecting
+  Shift+Arrow, Shift+Ctrl+Arrow, Shift+Home, Shift+Page Up/Down
+  Ctrl+Space / Shift+Space    Whole column / whole row
+  Ctrl+A                       Current region, then the whole sheet
+  F8 / Shift+F8                Extend selection / Add to selection mode
+
+Editing
+  Type                    Replace the cell (Enter mode)
+  F2                      Edit the cell (toggle Enter / Edit mode)
+  Alt+Enter               New line in the cell
+  Ctrl+Enter              Fill the selection with the entry
+  Esc                     Cancel the entry
+  Delete                  Clear contents
+  Backspace               Clear and edit
+  Ctrl+D / Ctrl+R         Fill down / right
+  Ctrl+C / Ctrl+X / Ctrl+V   Copy / cut / paste (values and formulas)
+  Ctrl+Z / Ctrl+Y         Undo / redo
+
+Formulas
+  =, then arrow keys      Point at cells (Shift+arrow: a range); clicking a cell does the same
+  F4                      Cycle $ in the reference at the cursor (A1, $A$1, A$1, $A1)
+  Tab                     Accept the AutoComplete suggestion
+  Alt+=                   AutoSum
+  Shift+F3                Insert Function
+  F3                      Paste a defined name
+  Ctrl+F3                 Name Manager
+  Ctrl+Shift+F3           Create names from the selection
+  Ctrl+`                  Show Formulas
+  F9                      Calculate now
+  Shift+F9                Calculate the active sheet
+  Ctrl+Alt+F9             Calculate every formula
+
+Number formats
+  Ctrl+Shift+~            General
+  Ctrl+Shift+!            Number with thousands separator, two decimals
+  Ctrl+Shift+@            Time
+  Ctrl+Shift+#            Date
+  Ctrl+Shift+$            Currency
+  Ctrl+Shift+%            Percent
+  Ctrl+Shift+^            Scientific
+
+Sheets
+  Shift+F11               Insert a sheet
+  Double-click a tab      Rename the sheet
+  Double-click a border   AutoFit the column / row
+
+Workbook
+  Ctrl+N / Ctrl+O / Ctrl+S   New / open / save
+  Ctrl+W, Ctrl+F4            Close
+  Alt or F10                 KeyTips
+  Ctrl+mouse wheel           Zoom
+  Ctrl+Shift+U               Expand / collapse the formula bar
