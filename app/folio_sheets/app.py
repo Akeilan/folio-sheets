@@ -116,8 +116,14 @@ class SheetsApp(Gtk.Application):
         if script:
             def run_script():
                 ns = {"app": self, "win": win, "GLib": GLib, "Gtk": Gtk, "Gdk": Gdk}
-                with open(script) as f:
-                    exec(compile(f.read(), script, "exec"), ns)
+                try:
+                    with open(script) as f:
+                        exec(compile(f.read(), script, "exec"), ns)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+                    sys.stdout.flush()
+                    os._exit(3)
                 return False
             GLib.timeout_add(int(os.environ.get("FOLIO_TEST_DELAY", "2500")), run_script)
 

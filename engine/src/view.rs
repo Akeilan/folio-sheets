@@ -28,6 +28,8 @@ pub struct ViewParams {
     pub show_formulas: bool,
     pub arrows: Vec<(Rect, (u32, u32), u32)>,
     pub dark: bool,
+    /// the range the fill handle is being dragged over
+    pub fill_target: Option<Rect>,
 }
 
 impl Default for ViewParams {
@@ -51,6 +53,7 @@ impl Default for ViewParams {
             show_formulas: false,
             arrows: vec![],
             dark: false,
+            fill_target: None,
         }
     }
 }

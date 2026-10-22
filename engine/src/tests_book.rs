@@ -259,3 +259,46 @@ fn clipboard() {
     c.paste_from(&clip, 0, Rect::new(0, 0, 1, 1), 0, Rect::cell(10, 0), PasteOpts { what: What::Values, ..Default::default() }).unwrap();
     assert_eq!(c.input(0, 11, 1), "20");
 }
+
+#[test]
+fn fills() {
+    let mut b = blank();
+    b.set_input(0, 0, 0, "1").unwrap();
+    b.set_input(0, 1, 0, "3").unwrap();
+    b.set_input(0, 0, 1, "Mon").unwrap();
+    b.set_input(0, 0, 2, "Item 9").unwrap();
+    b.set_input(0, 0, 3, "1/15/2026").unwrap();
+    b.set_input(0, 1, 3, "2/15/2026").unwrap();
+    b.autofill(0, Rect::new(0, 3, 1, 3), Rect::new(0, 3, 3, 3), true, false, false).unwrap();
+    b.set_input(0, 0, 4, "=A1*2").unwrap();
+    b.set_input(0, 0, 5, "x").unwrap();
+    b.autofill(0, Rect::new(0, 0, 1, 0), Rect::new(0, 0, 4, 0), true, false, false).unwrap();
+    assert_eq!(n(&b, 4, 0), 9.0);
+    b.autofill(0, Rect::new(0, 1, 0, 2), Rect::new(0, 1, 3, 2), true, false, false).unwrap();
+    b.autofill(0, Rect::new(0, 4, 0, 5), Rect::new(0, 4, 3, 5), true, false, false).unwrap();
+    assert_eq!(b.value(0, 3, 1), Value::str("Thu"));
+    assert_eq!(b.value(0, 2, 2), Value::str("Item 11"));
+    assert_eq!(b.input(0, 3, 4), "=A4*2");
+    assert_eq!(b.value(0, 3, 5), Value::str("x"));
+    assert_eq!(b.display(0, 3, 3), "4/15/2026");
+    // up
+    b.set_input(0, 10, 7, "5").unwrap();
+    b.set_input(0, 11, 7, "6").unwrap();
+    b.autofill(0, Rect::new(10, 7, 11, 7), Rect::new(8, 7, 11, 7), true, false, false).unwrap();
+    assert_eq!(n(&b, 8, 7), 3.0);
+    // copy (Ctrl+drag)
+    b.autofill(0, Rect::new(0, 0, 1, 0), Rect::new(0, 0, 5, 0), false, false, false).unwrap();
+    assert_eq!(n(&b, 5, 0), 3.0);
+    // series dialog
+    b.set_input(0, 20, 0, "2").unwrap();
+    let k = b.fill_series(0, Rect::new(20, 0, 30, 0), false, "growth", "day", 3.0, Some(500.0), false).unwrap();
+    assert_eq!(k, 5);
+    assert_eq!(n(&b, 25, 0), 486.0);
+    // flash fill
+    b.set_input(0, 40, 0, "John Smith").unwrap();
+    b.set_input(0, 41, 0, "Ada Lovelace").unwrap();
+    b.set_input(0, 42, 0, "Alan Turing").unwrap();
+    b.set_input(0, 40, 1, "Smith").unwrap();
+    assert_eq!(b.flash_fill(0, 40, 1).unwrap(), 2);
+    assert_eq!(b.value(0, 42, 1), Value::str("Turing"));
+}

@@ -24,6 +24,8 @@ pub mod book_struct;
 pub mod book_data;
 pub mod book_find;
 pub mod book_clip;
+pub mod book_fill;
+pub mod flashfill;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]
