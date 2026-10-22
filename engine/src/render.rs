@@ -159,9 +159,109 @@ impl Book {
             rgb(cr, 0x9A9A9A);
             rect(cr, g.col_spans[0].1 - 1.0, g.hh, 1.0, p.height - g.hh);
         }
+        self.paint_notes(s, cr, p, &g, &mut pen);
         self.paint_object_selection(s, cr, p, &g);
         if p.show_headers {
             self.paint_headers(s, cr, p, &g, &mut pen);
+        }
+        cairo_restore(cr);
+    }
+
+    /// Where a note's box goes on screen (x, y, w, h), beside its cell.
+    pub fn note_box(&self, s: usize, p: &ViewParams, g: &Geometry, r: u32, c: u32) -> (f64, f64, f64, f64) {
+        let z = p.zoom;
+        let n = self.sheets[s].notes.get(&(r, c));
+        let (w, h) = n.map(|n| (n.w, n.h)).unwrap_or((crate::notes::NOTE_W, crate::notes::NOTE_H));
+        let x = self.screen_x(s, p, g, c + 1) + 15.0 * z;
+        let y = (self.screen_y(s, p, g, r) - 10.0 * z).max(g.hh + 2.0);
+        (x, y, w * z, h * z)
+    }
+
+    unsafe fn paint_notes(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, pen: &mut Pen) {
+        let sh = &self.sheets[s];
+        if sh.notes.is_empty() && sh.threads.is_empty() {
+            return;
+        }
+        let z = p.zoom;
+        cairo_save(cr);
+        cairo_rectangle(cr, g.hw, g.hh, p.width - g.hw, p.height - g.hh);
+        cairo_clip(cr);
+        let on_screen = |r: u32, c: u32| g.rows.iter().any(|x| x.0 == r) && g.cols.iter().any(|x| x.0 == c);
+        // the corner markers
+        let mark = |r: u32, c: u32, col: u32| {
+            if !on_screen(r, c) {
+                return;
+            }
+            let (_, y, _) = *g.rows.iter().find(|x| x.0 == r).unwrap();
+            let (_, x, w) = *g.cols.iter().find(|x| x.0 == c).unwrap();
+            let k = (6.0 * z).max(4.0);
+            rgb(cr, col);
+            cairo_new_path(cr);
+            cairo_move_to(cr, x + w - 1.0 - k, y);
+            cairo_line_to(cr, x + w - 1.0, y);
+            cairo_line_to(cr, x + w - 1.0, y + k);
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        };
+        for (r, c) in sh.notes.keys() {
+            mark(*r, *c, 0xE81123);
+        }
+        for ((r, c), t) in sh.threads.iter() {
+            mark(*r, *c, if t.resolved { 0x9A9A9A } else { 0x7719AA });
+        }
+        // shown notes, and the one under the pointer
+        let f = FontSpec { family: self.styles.theme_fonts.1.clone(), size: 9.0, bold: false, italic: false, underline: 0, strike: false, vert: 0, color: 0 };
+        let fb = FontSpec { bold: true, ..f.clone() };
+        for ((r, c), n) in sh.notes.iter() {
+            let show = n.visible || p.hover_note == Some((*r, *c));
+            if !show || p.edit_note == Some((*r, *c)) {
+                continue;
+            }
+            let (bx, by, bw, bh) = self.note_box(s, p, g, *r, *c);
+            // the line to the cell
+            let cx = self.screen_x(s, p, g, *c + 1) - 1.0;
+            let cy = self.screen_y(s, p, g, *r);
+            rgb(cr, 0x000000);
+            cairo_set_line_width(cr, 1.0);
+            cairo_move_to(cr, cx, cy + 1.0);
+            cairo_line_to(cr, bx, by + 6.0 * z);
+            cairo_stroke(cr);
+            {
+                let (dx, dy) = (cx - bx, cy + 1.0 - (by + 6.0 * z));
+                let len = (dx * dx + dy * dy).sqrt().max(1.0);
+                let (ux, uy) = (dx / len, dy / len);
+                let k = 6.0 * z;
+                cairo_new_path(cr);
+                cairo_move_to(cr, cx, cy + 1.0);
+                cairo_line_to(cr, cx - ux * k - uy * k * 0.4, cy + 1.0 - uy * k + ux * k * 0.4);
+                cairo_line_to(cr, cx - ux * k + uy * k * 0.4, cy + 1.0 - uy * k - ux * k * 0.4);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            }
+            rgba(cr, 0x000000, 0.25);
+            rect(cr, bx + 3.0, by + 3.0, bw, bh);
+            rgb(cr, 0xFFFFE1);
+            rect(cr, bx, by, bw, bh);
+            rgb(cr, 0x000000);
+            cairo_rectangle(cr, bx.round() + 0.5, by.round() + 0.5, bw.round() - 1.0, bh.round() - 1.0);
+            cairo_stroke(cr);
+            cairo_save(cr);
+            cairo_rectangle(cr, bx + 1.0, by + 1.0, bw - 2.0, bh - 2.0);
+            cairo_clip(cr);
+            let prefix = format!("{}:", n.author);
+            let mut y = by + 3.0 * z;
+            let (head, body) = if !n.author.is_empty() && n.text.starts_with(&prefix) { (Some(prefix.clone()), &n.text[prefix.len()..]) } else { (None, n.text.as_str()) };
+            if let Some(hd) = head {
+                let (_, th) = pen.set(&hd, &fb, z, Some(bw - 8.0 * z));
+                rgb(cr, 0x000000);
+                pen.show(cr, bx + 4.0 * z, y);
+                y += th;
+            }
+            let body = body.strip_prefix('\n').unwrap_or(body);
+            pen.set(body, &f, z, Some(bw - 8.0 * z));
+            rgb(cr, 0x000000);
+            pen.show(cr, bx + 4.0 * z, y);
+            cairo_restore(cr);
         }
         cairo_restore(cr);
     }

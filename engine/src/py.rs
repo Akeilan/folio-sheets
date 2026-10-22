@@ -84,6 +84,8 @@ fn view_params(d: &Bound<'_, PyDict>) -> ViewParams {
     p.fill_target = get::<R4>(d, "fill_target").map(rect);
     p.sel_objects = get(d, "sel_objects").unwrap_or_default();
     p.obj_preview = get(d, "obj_preview");
+    p.hover_note = get(d, "hover_note");
+    p.edit_note = get(d, "edit_note");
     p
 }
 
@@ -807,6 +809,96 @@ impl PyBook {
             Some(o) => self.b.filter_values_at(s, o, col),
             None => (vec![], false),
         })
+    }
+
+    // ---- notes and comments
+    fn notes<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let mut out = Vec::new();
+        for ((r, c), n) in &self.b.sheets[s].notes {
+            let d = PyDict::new_bound(py);
+            d.set_item("cell", (*r, *c))?;
+            d.set_item("author", &n.author)?;
+            d.set_item("text", &n.text)?;
+            d.set_item("visible", n.visible)?;
+            out.push(d);
+        }
+        Ok(out)
+    }
+    fn note<'py>(&self, py: Python<'py>, s: usize, r: u32, c: u32) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        match self.b.note(s, r, c) {
+            Some(n) => {
+                let d = PyDict::new_bound(py);
+                d.set_item("author", &n.author)?;
+                d.set_item("text", &n.text)?;
+                d.set_item("visible", n.visible)?;
+                d.set_item("size", (n.w, n.h))?;
+                Ok(Some(d))
+            }
+            None => Ok(None),
+        }
+    }
+    #[pyo3(signature = (s, r, c, author, text=None))]
+    fn set_note(&mut self, s: usize, r: u32, c: u32, author: &str, text: Option<&str>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_note(s, r, c, author, text).map_err(verr)
+    }
+    #[pyo3(signature = (s, cells=None, on=None))]
+    fn show_notes(&mut self, s: usize, cells: Option<Vec<(u32, u32)>>, on: Option<bool>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.show_notes(s, cells.as_deref(), on).map_err(verr)
+    }
+    fn set_note_size(&mut self, s: usize, r: u32, c: u32, w: f64, h: f64) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_note_size(s, r, c, w, h).map_err(verr)
+    }
+    fn note_box(&self, s: usize, r: u32, c: u32, p: &Bound<'_, PyDict>) -> PyResult<(f64, f64, f64, f64)> {
+        self.sheet(s)?;
+        let vp = view_params(p);
+        let g = self.b.geometry(s, &vp);
+        Ok(self.b.note_box(s, &vp, &g, r, c))
+    }
+    fn thread<'py>(&self, py: Python<'py>, s: usize, r: u32, c: u32) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        match self.b.thread(s, r, c) {
+            Some(t) => {
+                let d = PyDict::new_bound(py);
+                d.set_item("resolved", t.resolved)?;
+                d.set_item("entries", t.entries.iter().map(|e| (e.author.clone(), e.date.clone(), e.text.clone())).collect::<Vec<_>>())?;
+                Ok(Some(d))
+            }
+            None => Ok(None),
+        }
+    }
+    fn threads(&self, s: usize) -> PyResult<Vec<(u32, u32)>> {
+        self.sheet(s)?;
+        Ok(self.b.sheets[s].threads.keys().copied().collect())
+    }
+    fn add_comment(&mut self, s: usize, r: u32, c: u32, author: &str, text: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.add_comment(s, r, c, author, text).map_err(verr)
+    }
+    #[pyo3(signature = (s, r, c, k, text=None))]
+    fn edit_comment(&mut self, s: usize, r: u32, c: u32, k: usize, text: Option<&str>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.edit_comment(s, r, c, k, text).map_err(verr)
+    }
+    fn resolve_comment(&mut self, s: usize, r: u32, c: u32, resolved: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.resolve_comment(s, r, c, resolved).map_err(verr)
+    }
+    fn clear_comments(&mut self, s: usize, ranges: Vec<R4>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.clear_comments(s, &rects(ranges)).map_err(verr)
+    }
+    fn notes_to_comments(&mut self, s: usize) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.notes_to_comments(s).map_err(verr)
+    }
+    fn next_comment(&self, s: usize, r: u32, c: u32, back: bool, notes: bool) -> PyResult<Option<(u32, u32)>> {
+        self.sheet(s)?;
+        Ok(self.b.next_comment(s, r, c, back, notes))
     }
 
     // ---- tables

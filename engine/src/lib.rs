@@ -33,6 +33,7 @@ pub mod book_chart;
 pub mod cf;
 pub mod cf_icons;
 pub mod tables;
+pub mod notes;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

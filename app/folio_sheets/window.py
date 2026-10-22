@@ -78,7 +78,12 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.grid = GridView(self)
         self.formula_bar = FormulaBar(self)
         self.outer.pack_start(self.formula_bar, False, False, 0)
-        self.outer.pack_start(self.grid, True, True, 0)
+        mid = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        mid.pack_start(self.grid, True, True, 0)
+        from .notes_ui import make_pane
+        self.comments_pane = make_pane(self)
+        mid.pack_start(self.comments_pane, False, False, 0)
+        self.outer.pack_start(mid, True, True, 0)
         self.tabs = SheetTabs(self)
         self.outer.pack_start(self.tabs, False, False, 0)
         self.status = StatusBar(self)
@@ -1087,12 +1092,21 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             items = common + [("Smart Lookup", None), ("Insert...", "insert-cells"), ("Delete...", "delete-cells"),
                               ("Clear Contents", "clear-contents"), None, ("Quick Analysis", None),
                               ("Filter", "filter"), ("Sort", "sort-custom"), ("Get Data from Table/Range...", None),
-                              None, ("New Comment", "new-comment"), ("New Note", "new-note"), None,
+                              None, ("New Comment", "new-comment")] + self._note_items() + [None,
                               ("Format Cells...", "format-cells"), ("Pick From Drop-down List...", "pick-from-list"),
                               ("Define Name...", "define-name"), ("Link", "link")]
             # cloud / AI lookups are not part of Folio
             items = [it for it in items if it is None or it[1] is not None]
         self._popup_menu(items, ev)
+
+    def _note_items(self):
+        g = self.grid
+        r, c = g.sel.active
+        if self.book is not None and self.book.note(g.sheet, r, c):
+            return [("Edit Note", "edit-note"), ("Delete Note", "delete-note"), ("Show/Hide Note", "show-hide-note")]
+        if self.book is not None and self.book.thread(g.sheet, r, c):
+            return [("Delete Comment", "delete-comment")]
+        return [("New Note", "new-note")]
 
     def _popup_menu(self, items, ev):
         menu = Gtk.Menu()
@@ -1398,6 +1412,74 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 b.set_input(g.sheet, r, c1, lines[i] if i < len(lines) else "")
         g.refresh()
         self.update_title()
+
+    # ------------------------------------------------------------ notes and comments
+    def act_new_note(self):
+        from . import notes_ui
+        notes_ui.edit_note(self)
+
+    def act_edit_note(self):
+        from . import notes_ui
+        notes_ui.edit_note(self)
+
+    def act_delete_note(self):
+        from . import notes_ui
+        notes_ui.delete(self)
+
+    def act_show_hide_note(self):
+        from . import notes_ui
+        notes_ui.show_hide(self)
+
+    def act_show_all_notes(self):
+        from . import notes_ui
+        notes_ui.show_all(self)
+
+    def act_next_note(self):
+        from . import notes_ui
+        notes_ui.go(self, False, True)
+
+    def act_prev_note(self):
+        from . import notes_ui
+        notes_ui.go(self, True, True)
+
+    def act_convert_notes(self):
+        from . import notes_ui
+        notes_ui.convert(self)
+
+    def act_new_comment(self):
+        from . import notes_ui
+        notes_ui.open_card(self)
+
+    def act_comment(self):
+        self.act_new_comment()
+
+    def act_delete_comment(self):
+        from . import notes_ui
+        g = self.grid
+        r, c = g.sel.active
+        if self.book.thread(g.sheet, r, c) is None:
+            self.status.extra.set_text("There's no comment in this cell.")
+            return
+        self.book.edit_comment(g.sheet, r, c, 0, None)
+        g.refresh()
+        self.update_title()
+        notes_ui.refresh_pane(self)
+
+    def act_next_comment(self):
+        from . import notes_ui
+        notes_ui.go(self, False, False)
+
+    def act_prev_comment(self):
+        from . import notes_ui
+        notes_ui.go(self, True, False)
+
+    def act_show_comments(self):
+        from . import notes_ui
+        notes_ui.toggle_pane(self)
+
+    def act_clear_comments(self):
+        from . import notes_ui
+        notes_ui.delete(self)
 
     # ------------------------------------------------------------ tables
     def act_format_as_table(self, style=None):
@@ -1996,6 +2078,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return False
         if kv == Gdk.KEY_F10 and not shift:
             self.keytips.start()
+            return True
+        if shift and kv == Gdk.KEY_F2 and not self.grid.editing():
+            self.run("new-note")
             return True
         if alt and kv == Gdk.KEY_F1 and not self.grid.editing():
             self.run("chart-column:col")

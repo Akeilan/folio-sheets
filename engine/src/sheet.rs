@@ -159,6 +159,11 @@ pub struct Sheet {
     pub objects: Vec<crate::drawing::Obj>,
     /// tables (Format as Table)
     pub tables: Vec<crate::tables::Table>,
+    /// notes and threaded comments by cell
+    pub notes: BTreeMap<(u32, u32), crate::notes::Note>,
+    pub threads: BTreeMap<(u32, u32), crate::notes::Thread>,
+    /// the comment parts as read, and the notes and threads they held
+    pub comments_file: Option<crate::notes::CommentsFile>,
     /// the drawing part as read (None when the sheet had none, or it couldn't be read)
     pub drawing: Option<crate::drawing::DrawingFile>,
     // ---- file
@@ -201,6 +206,9 @@ impl Sheet {
             autofilter: None,
             objects: Vec::new(),
             tables: Vec::new(),
+            notes: BTreeMap::new(),
+            threads: BTreeMap::new(),
+            comments_file: None,
             drawing: None,
             part: String::new(),
             prolog: String::new(),

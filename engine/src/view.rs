@@ -33,6 +33,9 @@ pub struct ViewParams {
     /// selected objects (charts) and the outline of one being moved or sized (screen px)
     pub sel_objects: Vec<usize>,
     pub obj_preview: Option<(f64, f64, f64, f64)>,
+    /// the note shown while the pointer is over its cell, and one being edited (not drawn)
+    pub hover_note: Option<(u32, u32)>,
+    pub edit_note: Option<(u32, u32)>,
 }
 
 impl Default for ViewParams {
@@ -59,6 +62,8 @@ impl Default for ViewParams {
             fill_target: None,
             sel_objects: vec![],
             obj_preview: None,
+            hover_note: None,
+            edit_note: None,
         }
     }
 }

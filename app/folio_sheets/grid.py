@@ -90,6 +90,9 @@ class GridView(Gtk.Box):
         self.add_mode = False         # Shift+F8
         self._drag = None
         self.sel_objects = []         # selected charts (indexes on this sheet)
+        self.hover_note = None
+        self.edit_note = None
+        self._hover_card = 0
         self.obj_preview = None
         self.edit_sheet = None        # the sheet of the cell being edited
         self._autoscroll_id = 0
@@ -183,6 +186,8 @@ class GridView(Gtk.Box):
             "fill_target": getattr(self, "fill_target", None),
             "sel_objects": [i for i in self.sel_objects if i < self._object_count()],
             "obj_preview": self.obj_preview,
+            "hover_note": self.hover_note,
+            "edit_note": self.edit_note,
         }
         if extra:
             p.update(extra)
@@ -390,6 +395,27 @@ class GridView(Gtk.Box):
             b = max(b + dy, t + 12)
         return (l, t, r - l, b - t)
 
+    def _hover(self, h):
+        """Notes show while the pointer is over their cell; comments show their card."""
+        cell = (h[1], h[2]) if h[0] == "cell" else None
+        note = cell if cell is not None and self.book.note(self.sheet, *cell) else None
+        if note != self.hover_note:
+            self.hover_note = note
+            self.area.queue_draw()
+        if self._hover_card:
+            GLib.source_remove(self._hover_card)
+            self._hover_card = 0
+        if cell is not None and self.book.thread(self.sheet, *cell):
+            card = getattr(self.win, "comment_card", None)
+            if card is None or card.cell != cell:
+                def show(cell=cell):
+                    self._hover_card = 0
+                    from .notes_ui import open_card
+                    if not self.editing():
+                        open_card(self.win, *cell, focus=False)
+                    return False
+                self._hover_card = GLib.timeout_add(450, show)
+
     # ------------------------------------------------------------ mouse
     def hit(self, x, y):
         return self.book.hit(self.sheet, float(x), float(y), self.params())
@@ -531,6 +557,7 @@ class GridView(Gtk.Box):
             if oh is not None:
                 h = ("object",)
                 cur = self.CURSORS.get(oh[1], "move")
+            self._hover(h)
             if h[0] == "colresize":
                 cur = "col-resize"
             elif h[0] == "rowresize":

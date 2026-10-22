@@ -620,7 +620,10 @@ def build_ribbon(win):
         B.big("Show\nComments", "r-show-comments", "show-comments", "H"),
     ])
     B.group(t, "Notes", [
-        B.big("Notes", "r-notes", None, "T", menu=[("New Note", "new-note"), ("Show All Notes", "show-all-notes")]),
+        B.big("Notes", "r-notes", None, "T", menu=[("New Note", "new-note"), ("Edit Note", "edit-note"), None,
+                                                    ("Previous Note", "prev-note"), ("Next Note", "next-note"), None,
+                                                    ("Show/Hide Note", "show-hide-note"), ("Show All Notes", "show-all-notes"), None,
+                                                    ("Convert to Comments", "convert-notes")]),
     ])
     B.group(t, "Protect", [
         B.big("Protect\nSheet", "r-protect-sheet", "protect-sheet", "PS"),
