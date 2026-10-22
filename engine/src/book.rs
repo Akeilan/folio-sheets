@@ -8,7 +8,7 @@ use crate::recalc::Deps;
 use crate::sheet::{Cell, ColSpan, FKind, Formula, RowInfo, Sheet};
 use crate::styles::Styles;
 use crate::value::{Value, XlErr};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 pub type Key = (usize, u32, u32);
@@ -99,6 +99,8 @@ pub enum Delta {
     Calc(CalcSettings),
     Filter(usize, Option<crate::book_data::AutoFilter>),
     Objects(usize, Vec<crate::drawing::Obj>),
+    /// the worksheet's kept elements (conditional formats...)
+    Pieces(usize, Vec<crate::sheet::Piece>),
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +150,8 @@ pub struct Book {
     pub(crate) extents: std::cell::RefCell<Vec<Option<(u32, u32)>>>,
     pub(crate) calc_depth: u32,
     pub layout: crate::layout::Layout,
+    pub(crate) cf_cache: std::cell::RefCell<HashMap<usize, (u64, std::rc::Rc<Vec<crate::cf::CfBlock>>)>>,
+    pub(crate) cf_stats: std::cell::RefCell<HashMap<(usize, usize, usize), ((u64, u64), std::rc::Rc<crate::cf::Stats>)>>,
 }
 
 impl Book {
@@ -185,6 +189,8 @@ impl Book {
             extents: std::cell::RefCell::new(vec![]),
             calc_depth: 0,
             layout: crate::layout::Layout::default(),
+            cf_cache: Default::default(),
+            cf_stats: Default::default(),
         };
         b.sheets.push(Sheet::new(1, "Sheet1"));
         b
@@ -449,6 +455,10 @@ impl Book {
                 let old = std::mem::replace(&mut self.calc, c);
                 Delta::Calc(old)
             }
+            Delta::Pieces(s, pieces) => {
+                let old = std::mem::replace(&mut self.sheets[s].pieces, pieces);
+                Delta::Pieces(s, old)
+            }
             Delta::Objects(s, objs) => {
                 let old = std::mem::replace(&mut self.sheets[s].objects, objs);
                 Delta::Objects(s, old)
@@ -618,7 +628,11 @@ impl Book {
 
     pub fn format_value(&self, v: &Value, xf: u32, width: usize) -> crate::numfmt::Formatted {
         let code = self.styles.xf_numfmt(xf);
-        let fmt = crate::numfmt::get(&code);
+        self.format_value_code(v, &code, width)
+    }
+
+    pub fn format_value_code(&self, v: &Value, code: &str, width: usize) -> crate::numfmt::Formatted {
+        let fmt = crate::numfmt::get(code);
         match v {
             Value::Num(n) if *n < 0.0 && fmt.is_date() => crate::numfmt::Formatted {
                 // negative dates and times can't be shown

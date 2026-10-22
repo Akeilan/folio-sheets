@@ -1068,6 +1068,95 @@ impl PyBook {
         unsafe { self.b.render(s, ctx, &vp) };
         Ok(())
     }
+    // ---- conditional formatting
+    fn add_cf_rule(&mut self, s: usize, ranges: Vec<R4>, spec: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.sheet(s)?;
+        let mut sp = crate::cf::RuleSpec {
+            typ: get(spec, "type").unwrap_or_default(),
+            operator: get(spec, "operator").unwrap_or_default(),
+            values: get(spec, "values").unwrap_or_default(),
+            text: get(spec, "text").unwrap_or_default(),
+            time_period: get(spec, "time_period").unwrap_or_default(),
+            rank: get(spec, "rank").unwrap_or(10),
+            percent: get(spec, "percent").unwrap_or(false),
+            bottom: get(spec, "bottom").unwrap_or(false),
+            above: get(spec, "above").unwrap_or(true),
+            equal: get(spec, "equal").unwrap_or(false),
+            std_dev: get(spec, "std_dev").unwrap_or(0),
+            points: vec![],
+            bar_color: get(spec, "bar_color").unwrap_or(0x638EC6),
+            gradient: get(spec, "gradient").unwrap_or(true),
+            icon_set: get(spec, "icon_set").unwrap_or_else(|| "3TrafficLights1".into()),
+            reverse: get(spec, "reverse").unwrap_or(false),
+            show_value: get(spec, "show_value").unwrap_or(true),
+            stop: get(spec, "stop").unwrap_or(false),
+            font_color: get(spec, "font_color"),
+            fill: get(spec, "fill"),
+            bold: get(spec, "bold").unwrap_or(false),
+            italic: get(spec, "italic").unwrap_or(false),
+            underline: get(spec, "underline").unwrap_or(false),
+            strike: get(spec, "strike").unwrap_or(false),
+            border: get(spec, "border"),
+            numfmt: get(spec, "numfmt"),
+        };
+        if let Some(pts) = get::<Vec<(String, String, u32)>>(spec, "points") {
+            sp.points = pts;
+        }
+        self.b.add_cf_rule(s, &rects(ranges), &sp).map_err(verr)
+    }
+    #[pyo3(signature = (s, ranges=None))]
+    fn clear_cf(&mut self, s: usize, ranges: Option<Vec<R4>>) -> PyResult<()> {
+        self.sheet(s)?;
+        let r = ranges.map(rects);
+        self.b.clear_cf(s, r.as_deref()).map_err(verr)
+    }
+    #[pyo3(signature = (s, rg=None))]
+    fn cf_rules<'py>(&self, py: Python<'py>, s: usize, rg: Option<R4>) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let mut out = Vec::new();
+        for r in self.b.cf_rules(s, rg.map(rect)) {
+            let d = PyDict::new_bound(py);
+            d.set_item("piece", r.piece)?;
+            d.set_item("index", r.index)?;
+            d.set_item("priority", r.priority)?;
+            d.set_item("type", &r.typ)?;
+            d.set_item("desc", &r.desc)?;
+            d.set_item("stop", r.stop)?;
+            d.set_item("applies", &r.applies)?;
+            d.set_item("fill", r.dxf.fill)?;
+            d.set_item("color", r.dxf.color)?;
+            d.set_item("bold", r.dxf.bold.unwrap_or(false))?;
+            d.set_item("italic", r.dxf.italic.unwrap_or(false))?;
+            out.push(d);
+        }
+        Ok(out)
+    }
+    fn delete_cf_rule(&mut self, s: usize, piece: usize, index: usize) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.delete_cf_rule(s, piece, index).map_err(verr)
+    }
+    #[pyo3(signature = (s, piece, index, stop=None, applies=None, step=0))]
+    fn edit_cf_rule(&mut self, s: usize, piece: usize, index: usize, stop: Option<bool>, applies: Option<&str>, step: i32) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.edit_cf_rule(s, piece, index, stop, applies, step).map_err(verr)
+    }
+    /// What conditional formatting does to a cell (for tests and the status bar).
+    fn cf_at<'py>(&self, py: Python<'py>, s: usize, r: u32, c: u32) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let blocks = self.b.cf_blocks(s);
+        let o = match self.b.cf_at(s, r, c, &blocks) {
+            Some(o) => o,
+            None => return Ok(None),
+        };
+        let d = PyDict::new_bound(py);
+        d.set_item("fill", o.scale.or(o.dxf.fill))?;
+        d.set_item("color", o.dxf.color)?;
+        d.set_item("bold", o.dxf.bold)?;
+        d.set_item("icon", o.icon.clone())?;
+        d.set_item("bar", o.bar.as_ref().map(|b| (b.0, b.1)))?;
+        Ok(Some(d))
+    }
+
     // ---- charts and objects
     fn objects<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Vec<Bound<'py, PyDict>>> {
         self.sheet(s)?;
@@ -1206,6 +1295,14 @@ fn check_formula(text: &str) -> Option<String> {
     crate::formula::check(t)
 }
 
+/// Draw one icon of a conditional-format icon set (menus and dialogs).
+#[pyfunction]
+fn draw_cf_icon(cr: &Bound<'_, PyAny>, set: &str, i: u32, x: f64, y: f64, size: f64) -> PyResult<()> {
+    let ctx = cairo_ptr(cr)?;
+    unsafe { crate::cf_icons::draw_icon(ctx, set, i, x, y, size) };
+    Ok(())
+}
+
 #[pyfunction]
 fn col_name(c: u32) -> String {
     crate::cellref::col_name(c)
@@ -1236,6 +1333,7 @@ fn ref_spans(text: &str) -> Vec<(usize, usize, Option<String>, u32, u32, u32, u3
 fn folio_sheets_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBook>()?;
     m.add_function(wrap_pyfunction!(check_formula, m)?)?;
+    m.add_function(wrap_pyfunction!(draw_cf_icon, m)?)?;
     m.add_function(wrap_pyfunction!(col_name, m)?)?;
     m.add_function(wrap_pyfunction!(format_number_fn, m)?)?;
     m.add_function(wrap_pyfunction!(function_names, m)?)?;

@@ -274,6 +274,18 @@ impl Book {
             let y2 = self.screen_y(s, p, g, m.r2) + self.row_px(s, m.r2) * z;
             (x1, y1, x2 - x1, y2 - y1)
         };
+        // ---- conditional formats of the cells in view
+        let blocks = self.cf_blocks(s);
+        let mut cfm: HashMap<(u32, u32), crate::cf::CfOut> = HashMap::new();
+        if blocks.iter().any(|b| b.ranges.iter().any(|x| x.intersects(&view))) {
+            for &(r, _, _) in rows {
+                for &(c, _, _) in cols {
+                    if let Some(o) = self.cf_at(s, r, c, &blocks) {
+                        cfm.insert((r, c), o);
+                    }
+                }
+            }
+        }
         // ---- fills
         let mut filled: HashMap<(u32, u32), u32> = HashMap::new();
         for &(r, y, h) in rows {
@@ -282,15 +294,69 @@ impl Book {
                     Some(m) => (sh.style_at(m.r1, m.c1), mrect(&m)),
                     None => (sh.style_at(r, c), (x, y, w, h)),
                 };
-                if xf == 0 {
+                let cf_fill = cfm.get(&match merge_of(r, c) { Some(m) => (m.r1, m.c1), None => (r, c) }).and_then(|o| o.scale.or(o.dxf.fill));
+                if xf == 0 && cf_fill.is_none() {
                     continue;
                 }
-                if let Some(col) = self.fill_color(self.styles.xf(xf)) {
+                if let Some(col) = cf_fill.or_else(|| self.fill_color(self.styles.xf(xf))) {
                     filled.insert((r, c), col);
                     if merge_of(r, c).map(|m| (m.r1.max(rmin), m.c1.max(cmin)) == (r, c)).unwrap_or(true) {
                         rgb(cr, col);
                         rect(cr, fx, fy, fw, fh);
                     }
+                }
+            }
+        }
+        // ---- data bars and icons
+        for &(r, y, h) in rows {
+            for &(c, x, w) in cols {
+                let o = match cfm.get(&(r, c)) {
+                    Some(o) => o,
+                    None => continue,
+                };
+                if let Some((a, b, bar, neg, axis)) = &o.bar {
+                    let (bx, bw) = (x + 1.0 * z, (w - 3.0 * z).max(1.0));
+                    let (by, bh) = (y + 2.0 * z, (h - 5.0 * z).max(1.0));
+                    let (fa, fb) = if bar.rtl { (1.0 - b, 1.0 - a) } else { (*a, *b) };
+                    let x0 = bx + fa * bw;
+                    let x1 = bx + fb * bw;
+                    let col = if *neg { bar.neg_color.unwrap_or(bar.color) } else { bar.color };
+                    if bar.gradient {
+                        let pat = cairo_pattern_create_linear(if neg ^ bar.rtl { x1 } else { x0 }, 0.0, if neg ^ bar.rtl { x0 } else { x1 }, 0.0);
+                        let ch = |c: u32, k: u32| ((c >> k) & 255) as f64 / 255.0;
+                        cairo_pattern_add_color_stop_rgb(pat, 0.0, ch(col, 16), ch(col, 8), ch(col, 0));
+                        let light = crate::cf::mix(col, 0xFFFFFF, 0.9);
+                        cairo_pattern_add_color_stop_rgb(pat, 1.0, ch(light, 16), ch(light, 8), ch(light, 0));
+                        cairo_set_source(cr, pat);
+                        cairo_rectangle(cr, x0, by, (x1 - x0).max(0.0), bh);
+                        cairo_fill(cr);
+                        cairo_pattern_destroy(pat);
+                    } else {
+                        rgb(cr, col);
+                        rect(cr, x0, by, (x1 - x0).max(0.0), bh);
+                    }
+                    let border = if *neg { bar.neg_border.or(bar.border) } else { bar.border };
+                    if let Some(bc) = border.or(if bar.gradient && bar.min_len == 10.0 { None } else { None }) {
+                        rgb(cr, bc);
+                        cairo_set_line_width(cr, 1.0);
+                        cairo_rectangle(cr, x0.round() + 0.5, by.round() + 0.5, (x1 - x0 - 1.0).max(0.0), bh.round() - 1.0);
+                        cairo_stroke(cr);
+                    }
+                    if let Some(ax) = axis {
+                        let axx = (bx + if bar.rtl { 1.0 - ax } else { *ax } * bw).round() + 0.5;
+                        rgb(cr, bar.axis_color);
+                        cairo_set_line_width(cr, 1.0);
+                        let d = [2.0f64, 1.0];
+                        cairo_set_dash(cr, d.as_ptr(), 2, 0.0);
+                        cairo_move_to(cr, axx, y);
+                        cairo_line_to(cr, axx, y + h - 1.0);
+                        cairo_stroke(cr);
+                        cairo_set_dash(cr, d.as_ptr(), 0, 0.0);
+                    }
+                }
+                if let Some((set, i)) = &o.icon {
+                    let sz = (h - 4.0 * z).min(16.0 * z).max(4.0);
+                    crate::cf_icons::draw_icon(cr, set, *i, x + 2.0 * z, y + (h - sz) / 2.0, sz);
                 }
             }
         }
@@ -344,7 +410,12 @@ impl Book {
                 if bw <= 0.0 || bh <= 0.0 {
                     continue;
                 }
-                let job = self.layout_text(s, r, c, &v, xf, is_f, p, (bx, by, bw, bh), merged.is_some(), pen, &|cc: u32| {
+                let cfo = if cfm.is_empty() { None } else { cfm.get(&(r, c)).cloned().or_else(|| if bands.cols.contains_key(&c) { None } else { self.cf_at(s, r, c, &blocks) }) };
+                if cfo.as_ref().map(|o| o.hide_value).unwrap_or(false) {
+                    continue;
+                }
+                let icon_pad = if cfo.as_ref().map(|o| o.icon.is_some()).unwrap_or(false) { ((h - 4.0 * z).min(16.0 * z) + 3.0 * z).max(0.0) } else { 0.0 };
+                let job = self.layout_text(s, r, c, &v, xf, is_f, p, (bx + icon_pad, by, (bw - icon_pad).max(1.0), bh), merged.is_some(), cfo.as_ref(), pen, &|cc: u32| {
                     // an empty neighbour that text may run into
                     !sh.has_content(r, cc) && sh.merge_at(r, cc).is_none() && p.editing != Some((r, cc))
                 }, &|cc: u32| bands.cols.get(&cc).copied().unwrap_or_else(|| (self.screen_x(s, p, g, cc), self.col_px(s, cc) * z)));
@@ -448,6 +519,19 @@ impl Book {
                 }
             }
         }
+        // conditional borders
+        for (&(r, c), o) in cfm.iter() {
+            if o.dxf.borders.iter().all(|b| b.is_none()) {
+                continue;
+            }
+            let (x, w) = match bands.cols.get(&c) { Some(v) => *v, None => continue };
+            let (y, h) = match bands.rows.get(&r) { Some(v) => *v, None => continue };
+            let b = &o.dxf.borders;
+            if let Some((st, col)) = &b[0] { line(cr, st, *col, x - 0.5, y, x - 0.5, y + h, z); }
+            if let Some((st, col)) = &b[1] { line(cr, st, *col, x + w - 0.5, y, x + w - 0.5, y + h, z); }
+            if let Some((st, col)) = &b[2] { line(cr, st, *col, x - 1.0, y - 0.5, x + w, y - 0.5, z); }
+            if let Some((st, col)) = &b[3] { line(cr, st, *col, x - 1.0, y + h - 0.5, x + w, y + h - 0.5, z); }
+        }
     }
 
     /// The AutoFilter drop-down buttons in the header row.
@@ -501,11 +585,24 @@ impl Book {
 
     #[allow(clippy::too_many_arguments)]
     unsafe fn layout_text(&self, s: usize, r: u32, c: u32, v: &Value, xf_i: u32, is_formula: bool, p: &ViewParams,
-                          cell: (f64, f64, f64, f64), merged: bool, pen: &mut Pen,
+                          cell: (f64, f64, f64, f64), merged: bool, cf: Option<&crate::cf::CfOut>, pen: &mut Pen,
                           empty: &dyn Fn(u32) -> bool, colpos: &dyn Fn(u32) -> (f64, f64)) -> Option<TextJob> {
         let z = p.zoom;
         let xf = self.styles.xf(xf_i).clone();
-        let font = font_of(&self.styles, xf_i);
+        let mut font = font_of(&self.styles, xf_i);
+        let cf_code = cf.and_then(|o| o.dxf.numfmt.clone());
+        if let Some(o) = cf {
+            let d = &o.dxf;
+            if let Some(c) = d.color { font.color = c }
+            if let Some(b) = d.bold { font.bold = b }
+            if let Some(i) = d.italic { font.italic = i }
+            if let Some(st) = d.strike { font.strike = st }
+            if let Some(u) = d.underline { font.underline = u }
+        }
+        let fmtv = |v: &Value, k: usize| match &cf_code {
+            Some(code) => self.format_value_code(v, code, k),
+            None => self.format_value(v, xf_i, k),
+        };
         let (bx, by, bw, bh) = cell;
         let pad = (3.0 * z).round().max(1.0);
         let mdw = self.mdw(s);
@@ -525,17 +622,17 @@ impl Book {
             // numbers may use the cell up to its right padding
             let avail = bw - pad - 2.0 - indent;
             let f = match v {
-                Value::Num(_) if self.styles.xf_numfmt(xf_i).eq_ignore_ascii_case("General") && !xf.wrap => {
+                Value::Num(_) if cf_code.as_deref().map(|c| c.eq_ignore_ascii_case("General")).unwrap_or_else(|| self.styles.xf_numfmt(xf_i).eq_ignore_ascii_case("General")) && !xf.wrap => {
                     // General shows as many digits as fit (11 at most)
-                    let mut best = self.format_value(v, xf_i, 11);
+                    let mut best = fmtv(v, 11);
                     let mut k = 11;
                     while k > 1 && pen.width(&best.text, &font, z) > avail {
                         k -= 1;
-                        best = self.format_value(v, xf_i, k);
+                        best = fmtv(v, k);
                     }
                     best
                 }
-                _ => self.format_value(v, xf_i, 255),
+                _ => fmtv(v, 255),
             };
             text = f.text.clone();
             if let Some(col) = f.color {

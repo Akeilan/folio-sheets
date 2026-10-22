@@ -19,6 +19,7 @@ format_number = _c.format_number
 ref_spans = _c.ref_spans
 function_names = _c.function_names
 check_formula = _c.check_formula
+draw_cf_icon = _c.draw_cf_icon
 MAX_ROWS = _c.MAX_ROWS
 MAX_COLS = _c.MAX_COLS
 

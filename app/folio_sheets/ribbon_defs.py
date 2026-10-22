@@ -316,12 +316,9 @@ def build_ribbon(win):
           B.icon("r-decimal-decrease-sm", "decimal-decrease", "9", "Decrease Decimal")]],
     ], launcher="number-dialog", launcher_keytip="FM")
 
-    cf_menu = [("Highlight Cells Rules", "conditional-formatting:highlight"),
-               ("Top/Bottom Rules", "conditional-formatting:topbottom"),
-               ("Data Bars", "conditional-formatting:databars"), ("Color Scales", "conditional-formatting:scales"),
-               ("Icon Sets", "conditional-formatting:icons"), None,
-               ("New Rule...", "conditional-formatting:new"), ("Clear Rules", "conditional-formatting:clear"),
-               ("Manage Rules...", "conditional-formatting:manage")]
+    def cf_menu():
+        from . import cf_ui
+        return cf_ui.popover(win)
     B.group(t, "Styles", [
         B.big("Conditional\nFormatting", "r-conditional-formatting", None, "L", menu=cf_menu),
         B.big("Format as\nTable", "r-format-as-table", None, "T", menu=[("Light, Medium and Dark styles...", "format-as-table")]),
