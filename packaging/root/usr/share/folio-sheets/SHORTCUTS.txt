@@ -28,6 +28,8 @@ Editing
   Esc                     Cancel the entry
   Delete                  Clear contents
   Backspace               Clear and edit
+  Ctrl++ / Ctrl+-         Insert / delete cells, rows or columns
+  Ctrl+Shift+L            Filter on / off
   Ctrl+D / Ctrl+R         Fill down / right
   Ctrl+C / Ctrl+X / Ctrl+V   Copy / cut / paste (values and formulas)
   Ctrl+Z / Ctrl+Y         Undo / redo

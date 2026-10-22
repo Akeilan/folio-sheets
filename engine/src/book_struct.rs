@@ -297,7 +297,13 @@ impl Book {
             }
             other => other.clone(),
         }).collect();
-        let body = Body { pieces, cells, rows, cols, merges };
+        let autofilter = sheet.autofilter.as_ref().and_then(|af| {
+            let rect = sh.rect(&af.rect)?;
+            let mut af = af.clone();
+            af.rect = rect;
+            Some(af)
+        });
+        let body = Body { pieces, cells, rows, cols, merges, autofilter };
         self.record(Delta::Body(s, Box::new(body)));
         // ---- defined names
         let mut names = self.names.clone();

@@ -500,6 +500,13 @@ fn read_sheet(sh: &mut Sheet, text: &str, sst: &[(Rc<str>, Option<Rc<str>>)], st
                         sh.cols = out;
                         sh.pieces.push(Piece::Known(l));
                     }
+                    "autoFilter" => match crate::book_data::read_autofilter(raw) {
+                        Some(af) => {
+                            sh.autofilter = Some(af);
+                            sh.pieces.push(Piece::Known(l));
+                        }
+                        None => sh.pieces.push(Piece::Raw(l, raw.to_string())),
+                    },
                     "mergeCells" => {
                         let (_, e) = xml::parse(raw)?;
                         for m in e.elems() {
@@ -1178,7 +1185,7 @@ impl Book {
         // the pieces, in schema order
         let mut pieces: Vec<Piece> = sh.pieces.clone();
         let have = |p: &[Piece], tag: &str| p.iter().any(|x| matches!(x, Piece::Known(t) if t == tag));
-        for tag in ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData", "mergeCells"] {
+        for tag in ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData", "autoFilter", "mergeCells"] {
             if !have(&pieces, tag) {
                 pieces.push(Piece::Known(tag.to_string()));
             }
@@ -1249,6 +1256,11 @@ impl Book {
                         }
                     }
                     "sheetData" => self.write_sheet_data(sh, sst, dyn_cm, &pfx, &mut out),
+                    "autoFilter" => {
+                        if let Some(af) = &sh.autofilter {
+                            crate::book_data::write_autofilter(af, &pfx, &mut out);
+                        }
+                    }
                     "mergeCells" => {
                         if !sh.merges.is_empty() {
                             out.push_str(&format!("<{}mergeCells count=\"{}\">", pfx, sh.merges.len()));

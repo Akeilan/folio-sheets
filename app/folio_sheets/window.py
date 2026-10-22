@@ -1355,6 +1355,35 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.sheet_changed()
         self.update_title()
 
+    # ------------------------------------------------------------ sort & filter
+    def act_sort_asc(self):
+        from . import data_ui
+        data_ui.sort_quick(self, True)
+
+    def act_sort_desc(self):
+        from . import data_ui
+        data_ui.sort_quick(self, False)
+
+    def act_sort_custom(self):
+        from . import data_ui
+        data_ui.sort_custom(self)
+
+    def act_filter(self):
+        from . import data_ui
+        data_ui.toggle_filter(self)
+
+    def act_filter_clear(self):
+        from . import data_ui
+        data_ui.clear_filter(self)
+
+    def act_filter_reapply(self):
+        from . import data_ui
+        data_ui.reapply_filter(self)
+
+    def act_remove_duplicates(self):
+        from . import data_ui
+        data_ui.remove_duplicates(self)
+
     # ------------------------------------------------------------ insert / delete cells
     def _struct_ranges(self, rows):
         """The selection's row (or column) spans, last first so earlier ones don't move."""
@@ -1710,6 +1739,16 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                     return True
             if ch in ("f", "p") and shift:
                 self.run("font-dialog")
+                return True
+            if ch == "l" and shift and not g.editing():
+                self.run("filter")
+                return True
+            # Ctrl++ insert cells, Ctrl+- delete cells
+            if not g.editing() and kv in (Gdk.KEY_plus, Gdk.KEY_KP_Add) or (shift and kv == Gdk.KEY_equal and not g.editing()):
+                self.run("insert-cells")
+                return True
+            if not g.editing() and not shift and kv in (Gdk.KEY_minus, Gdk.KEY_KP_Subtract):
+                self.run("delete-cells")
                 return True
             # Ctrl+Shift+& outline border, Ctrl+Shift+_ no border
             if shift and not g.editing() and kv in (Gdk.KEY_ampersand, Gdk.KEY_7):

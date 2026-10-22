@@ -384,6 +384,12 @@ class GridView(Gtk.Box):
                 self.win.run("autofit-row-at:%d" % h[1])
             return True
         kind = h[0]
+        if kind == "filterbtn":
+            self.select_cell(h[1], h[2], refresh=True)
+            from .data_ui import filter_menu
+            rect = self.book.cell_rect(self.sheet, h[1], h[2], self.params())
+            filter_menu(self.win, h[2], rect)
+            return True
         if kind == "cell":
             r, c = h[1], h[2]
             if shift:

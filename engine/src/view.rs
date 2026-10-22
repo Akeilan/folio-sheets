@@ -319,6 +319,19 @@ impl Book {
                 None => vec![HitPart::S("out")],
             };
         }
+        // an AutoFilter button
+        if let Some(af) = &self.sheets[s].autofilter {
+            if let (Some(r), Some(c)) = (self.band_row(&g, y), self.band_col(&g, x)) {
+                if r == af.rect.r1 && c >= af.rect.c1 && c <= af.rect.c2 {
+                    let (_, ry, rh) = *g.rows.iter().find(|x| x.0 == r).unwrap();
+                    let (_, cx, cw) = *g.cols.iter().find(|x| x.0 == c).unwrap();
+                    let (bx, by, bs) = crate::render::filter_button(cx, ry, cw, rh, p.zoom);
+                    if x >= bx && x <= bx + bs && y >= by && y <= by + bs {
+                        return vec![HitPart::S("filterbtn"), HitPart::N(r), HitPart::N(c)];
+                    }
+                }
+            }
+        }
         // the fill handle at the bottom right of the selection
         if p.sel.len() == 1 {
             let rg = p.sel[0];
