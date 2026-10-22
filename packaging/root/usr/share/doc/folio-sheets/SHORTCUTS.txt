@@ -30,6 +30,7 @@ Editing
   Backspace               Clear and edit
   Ctrl++ / Ctrl+-         Insert / delete cells, rows or columns
   Ctrl+Shift+L            Filter on / off
+  Ctrl+F / Ctrl+H         Find / Replace (Shift+F4 finds the next match)
   Ctrl+D / Ctrl+R         Fill down / right
   Ctrl+C / Ctrl+X / Ctrl+V   Copy / cut / paste (values and formulas)
   Ctrl+Z / Ctrl+Y         Undo / redo

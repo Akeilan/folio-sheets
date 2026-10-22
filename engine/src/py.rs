@@ -688,6 +688,28 @@ impl PyBook {
         Ok(self.b.filter_values(s, col))
     }
 
+    // ---- find
+    #[pyo3(signature = (sheets, pattern, case=false, whole=false, formulas=true, by_cols=false))]
+    fn find_all(&self, sheets: Vec<usize>, pattern: &str, case: bool, whole: bool, formulas: bool, by_cols: bool) -> Vec<(usize, u32, u32)> {
+        let o = crate::book_find::FindOpts { pattern: pattern.to_string(), case, whole, formulas, by_cols };
+        self.b.find_all(&sheets, &o)
+    }
+    #[pyo3(signature = (sheets, pattern, with, case=false, whole=false, by_cols=false))]
+    fn replace_all(&mut self, sheets: Vec<usize>, pattern: &str, with: &str, case: bool, whole: bool, by_cols: bool) -> PyResult<usize> {
+        let o = crate::book_find::FindOpts { pattern: pattern.to_string(), case, whole, formulas: true, by_cols };
+        self.b.replace_all(&sheets, &o, with).map_err(verr)
+    }
+    #[pyo3(signature = (s, row, col, pattern, with, case=false, whole=false))]
+    fn replaced_text(&self, s: usize, row: u32, col: u32, pattern: &str, with: &str, case: bool, whole: bool) -> Option<String> {
+        let o = crate::book_find::FindOpts { pattern: pattern.to_string(), case, whole, formulas: true, by_cols: false };
+        self.b.replaced_text(s, row, col, &o, with)
+    }
+    #[pyo3(signature = (s, rg, kind, mask=23))]
+    fn special_cells(&self, s: usize, rg: R4, kind: &str, mask: u32) -> PyResult<Vec<R4>> {
+        self.sheet(s)?;
+        Ok(self.b.special_cells(s, rect(rg), kind, mask).iter().map(tup).collect())
+    }
+
     // ---- calculation
     #[pyo3(signature = (full=false, sheet=None))]
     fn calculate(&mut self, full: bool, sheet: Option<usize>) -> usize {
