@@ -215,3 +215,47 @@ fn sort_filter_dedupe() {
     assert_eq!((removed, left), (1, 4));
     assert_eq!(b.value(0, 5, 0), Value::Empty);
 }
+
+#[test]
+fn clipboard() {
+    use crate::book_clip::{Op, PasteOpts, What};
+    let mut b = blank();
+    b.set_input(0, 0, 0, "1").unwrap();
+    b.set_input(0, 1, 0, "2").unwrap();
+    b.set_input(0, 0, 1, "=A1*10").unwrap();
+    b.set_input(0, 1, 1, "=A2*10").unwrap();
+    b.set_input(0, 5, 5, "=B1+1").unwrap();
+    // copy B1:B2 to D1: relative refs move
+    let out = b.paste_cells(0, Rect::new(0, 1, 1, 1), 0, Rect::cell(0, 3), PasteOpts::default(), false).unwrap();
+    assert_eq!(out, Rect::new(0, 3, 1, 3));
+    assert_eq!(b.input(0, 0, 3), "=C1*10");
+    // values
+    b.paste_cells(0, Rect::new(0, 1, 1, 1), 0, Rect::cell(0, 4), PasteOpts { what: What::Values, ..Default::default() }, false).unwrap();
+    assert_eq!(b.input(0, 1, 4), "20");
+    // operation: add A1:A2 onto E1:E2
+    b.paste_cells(0, Rect::new(0, 0, 1, 0), 0, Rect::cell(0, 4), PasteOpts { what: What::Values, op: Op::Add, ..Default::default() }, false).unwrap();
+    assert_eq!(n(&b, 1, 4), 22.0);
+    // transpose
+    b.paste_cells(0, Rect::new(0, 0, 1, 1), 0, Rect::cell(10, 0), PasteOpts { transpose: true, ..Default::default() }, false).unwrap();
+    assert_eq!(b.input(0, 10, 1), "2");
+    assert_eq!(b.input(0, 11, 0), "=XFD12*10");
+    // tiling: copy A1 into A20:A22
+    b.paste_cells(0, Rect::cell(0, 0), 0, Rect::new(19, 0, 21, 0), PasteOpts::default(), false).unwrap();
+    assert_eq!(b.input(0, 21, 0), "1");
+    // cut moves and references follow
+    b.paste_cells(0, Rect::new(0, 1, 0, 1), 0, Rect::cell(30, 1), PasteOpts::default(), true).unwrap();
+    assert_eq!(b.input(0, 5, 5), "=B31+1");
+    assert_eq!(b.input(0, 30, 1), "=A1*10");
+    assert_eq!(b.value(0, 0, 1), Value::Empty);
+    b.undo();
+    assert_eq!(b.input(0, 5, 5), "=B1+1");
+    // across workbooks
+    let bytes = b.copy_to_bytes(0, Rect::new(0, 0, 1, 1)).unwrap();
+    let clip = Book::from_bytes(&bytes).unwrap();
+    let mut c = blank();
+    c.paste_from(&clip, 0, Rect::new(0, 0, 1, 1), 0, Rect::cell(4, 4), PasteOpts::default()).unwrap();
+    assert_eq!(c.input(0, 4, 5), "=E5*10");
+    assert_eq!(c.value(0, 5, 5), Value::num(20.0));
+    c.paste_from(&clip, 0, Rect::new(0, 0, 1, 1), 0, Rect::cell(10, 0), PasteOpts { what: What::Values, ..Default::default() }).unwrap();
+    assert_eq!(c.input(0, 11, 1), "20");
+}

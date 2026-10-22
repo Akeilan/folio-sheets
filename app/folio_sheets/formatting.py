@@ -466,11 +466,8 @@ class FormattingMixin:
         self.paste_formats(src, "Format Painter")
 
     def act_paste_formatting(self):
-        cp = getattr(self, "_copied", None)
-        if not cp:
-            return
-        sheet, rg, cut = cp
-        self.paste_formats(self._copy_formats(sheet, rg), "Paste Formatting")
+        from . import clip_ui
+        clip_ui.paste(self, {"what": "formats"})
 
     # ------------------------------------------------------------ dialogs
     def open_format_cells(self, page="number"):

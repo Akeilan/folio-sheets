@@ -23,6 +23,7 @@ pub mod book_fmt;
 pub mod book_struct;
 pub mod book_data;
 pub mod book_find;
+pub mod book_clip;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

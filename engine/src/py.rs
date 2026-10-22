@@ -192,6 +192,40 @@ fn style_op(item: &Bound<'_, PyAny>) -> PyResult<StyleOp> {
     }
 }
 
+fn paste_opts(d: Option<&Bound<'_, PyDict>>) -> PyResult<crate::book_clip::PasteOpts> {
+    use crate::book_clip::{Op, PasteOpts, What};
+    let mut o = PasteOpts::default();
+    if let Some(d) = d {
+        if let Some(w) = get::<String>(d, "what") {
+            o.what = match w.as_str() {
+                "all" => What::All,
+                "formulas" => What::Formulas,
+                "values" => What::Values,
+                "formats" => What::Formats,
+                "noborders" => What::NoBorders,
+                "widths" => What::Widths,
+                "formulas_numfmt" => What::FormulasNumfmt,
+                "values_numfmt" => What::ValuesNumfmt,
+                "all_widths" => What::AllWidths,
+                x => return Err(PyValueError::new_err(format!("unknown paste {}", x))),
+            };
+        }
+        if let Some(w) = get::<String>(d, "op") {
+            o.op = match w.as_str() {
+                "add" => Op::Add,
+                "sub" => Op::Sub,
+                "mul" => Op::Mul,
+                "div" => Op::Div,
+                _ => Op::None,
+            };
+        }
+        o.skip_blanks = get(d, "skip_blanks").unwrap_or(false);
+        o.transpose = get(d, "transpose").unwrap_or(false);
+        o.link = get(d, "link").unwrap_or(false);
+    }
+    Ok(o)
+}
+
 #[pyclass(unsendable, name = "Book", module = "folio_sheets_core")]
 pub struct PyBook {
     pub b: Book,
@@ -708,6 +742,29 @@ impl PyBook {
     fn special_cells(&self, s: usize, rg: R4, kind: &str, mask: u32) -> PyResult<Vec<R4>> {
         self.sheet(s)?;
         Ok(self.b.special_cells(s, rect(rg), kind, mask).iter().map(tup).collect())
+    }
+
+    // ---- clipboard
+    #[pyo3(signature = (src_s, src, dst_s, dst, opts=None, cut=false))]
+    fn paste_cells(&mut self, src_s: usize, src: R4, dst_s: usize, dst: R4, opts: Option<&Bound<'_, PyDict>>, cut: bool) -> PyResult<R4> {
+        self.sheet(src_s)?;
+        self.sheet(dst_s)?;
+        let o = paste_opts(opts)?;
+        self.b.paste_cells(src_s, rect(src), dst_s, rect(dst), o, cut).map(|r| tup(&r)).map_err(verr)
+    }
+    /// A block as a small workbook, for the clipboard.
+    fn copy_to_bytes<'py>(&self, py: Python<'py>, s: usize, rg: R4) -> PyResult<Bound<'py, PyBytes>> {
+        self.sheet(s)?;
+        let d = self.b.copy_to_bytes(s, rect(rg)).map_err(verr)?;
+        Ok(PyBytes::new_bound(py, &d))
+    }
+    #[pyo3(signature = (data, dst_s, dst, opts=None))]
+    fn paste_from_bytes(&mut self, data: &[u8], dst_s: usize, dst: R4, opts: Option<&Bound<'_, PyDict>>) -> PyResult<R4> {
+        self.sheet(dst_s)?;
+        let clip = Book::from_bytes(data).map_err(verr)?;
+        let o = paste_opts(opts)?;
+        let area = clip.clip_area();
+        self.b.paste_from(&clip, 0, area, dst_s, rect(dst), o).map(|r| tup(&r)).map_err(verr)
     }
 
     // ---- calculation
