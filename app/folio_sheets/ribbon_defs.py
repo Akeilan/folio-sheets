@@ -193,14 +193,14 @@ class Builder:
                                size="large", keytip=keytip, tooltip=tip or label)
         return RibbonButton(self.r, label, icon, cmd, size="large", keytip=keytip, tooltip=tip or label)
 
-    def small(self, label, icon, cmd, keytip, menu=None, tip=None):
+    def small(self, label, icon, cmd, keytip, menu=None, tip=None, state=None):
         if menu is not None:
             if cmd is None:
                 return MenuButton(self.r, label, icon, self.menu(menu) if isinstance(menu, list) else menu,
                                   size="small", keytip=keytip, tooltip=tip or label)
             return SplitButton(self.r, label, icon, cmd, self.menu(menu) if isinstance(menu, list) else menu,
-                               size="small", keytip=keytip, tooltip=tip or label)
-        return RibbonButton(self.r, label, icon, cmd, size="small", keytip=keytip, tooltip=tip or label)
+                               size="small", keytip=keytip, tooltip=tip or label, state=state)
+        return RibbonButton(self.r, label, icon, cmd, size="small", keytip=keytip, tooltip=tip or label, state=state)
 
     def icon(self, icon, cmd, keytip, tip, menu=None, state=None):
         if menu is not None:
@@ -292,13 +292,14 @@ def build_ribbon(win):
           B.icon("r-align-middle-sm", "align-middle", "AM", "Middle Align", state="align-middle"),
           B.icon("r-align-bottom-sm", "align-bottom", "AB", "Bottom Align", state="align-bottom"),
           B.icon("r-orientation-sm", None, "FQ", "Orientation", menu=orient_menu),
-          B.small("Wrap Text", "r-wrap-text-sm", "wrap-text", "W")],
+          B.small("Wrap Text", "r-wrap-text-sm", "wrap-text", "W", state="wrap-text")],
          [B.icon("r-align-left-sm", "align-left", "AL", "Align Left", state="align-left"),
           B.icon("r-align-center-sm", "align-center", "AC", "Center", state="align-center"),
           B.icon("r-align-right-sm", "align-right", "AR", "Align Right", state="align-right"),
           B.icon("r-indent-decrease-sm", "indent-decrease", "5", "Decrease Indent"),
           B.icon("r-indent-increase-sm", "indent-increase", "6", "Increase Indent"),
-          B.small("Merge & Center", "r-merge-center-sm", "merge-center", "M", menu=merge_menu)]],
+          B.small("Merge & Center", "r-merge-center-sm", "merge-center", "M", menu=merge_menu,
+                  state="merge-center")]],
     ], launcher="alignment-dialog", launcher_keytip="FA")
 
     win.numfmt_combo = ComboControl(r, [n for n, _ in NUMBER_FORMATS] + ["More Number Formats..."],

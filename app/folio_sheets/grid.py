@@ -507,6 +507,8 @@ class GridView(Gtk.Box):
         if d and d[0] in ("colresize", "rowresize"):
             self.win.resize_header(d, ev.x, ev.y)
         self.win.on_selection_changed()
+        if d and d[0] in ("cells", "cols", "rows") and getattr(self.win, "painter", None):
+            self.win.painter_finish()
         return d is not None
 
     # ------------------------------------------------------------ selection
