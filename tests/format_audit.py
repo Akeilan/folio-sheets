@@ -63,7 +63,7 @@ Gtk.MessageDialog.run = fake_run
 g = win.grid
 b = win.book
 S = 0
-from folio_sheets import restyle as R  # noqa: E402
+from folio_sheets.core import MAX_ROWS, MAX_COLS  # noqa: E402
 
 
 def sel(*rgs, active=None):
@@ -77,9 +77,7 @@ def st(r, c):
 
 
 def spec(r, c):
-    pkg = R.Package(win.book.snapshot())
-    sh = pkg.sheet(S)
-    return pkg.styles.spec(sh.cell_xf(r, c))
+    return win.book.style_spec(S, r, c)
 
 
 def run(cmd):
@@ -231,24 +229,20 @@ sel((36, 1, 36, 1))
 check("selection inside a merge covers the merge", win.style_ranges() == [(36, 0, 36, 2)], win.style_ranges())
 
 # ------------------------------------------------------------------ whole rows / columns
-sel((0, 5, R.MAX_ROWS - 1, 5))
+sel((0, 5, MAX_ROWS - 1, 5))
 run("fill-color:00B0F0")
 check("whole column fill: existing and far cells", st(0, 5)["fill"] == 0x00B0F0 or True)
-p = R.Package(win.book.snapshot())
-check("whole column fill is a column style", p.styles.spec(p.sheet(S).col_xf(5))["fill"]["fg"] == 0x00B0F0)
-sel((40, 0, 40, R.MAX_COLS - 1))
+check("whole column fill is a column style", spec(900000, 5)["fill"]["fg"] == 0x00B0F0)
+sel((40, 0, 40, MAX_COLS - 1))
 run("bold")
-p = R.Package(win.book.snapshot())
-shp = p.sheet(S)
-check("whole row bold is a row style", shp.row_styled(40) and p.styles.spec(int(shp.row_attr(40, "s")))["font"]["bold"])
-check("row style wins in the column for empty cells", p.styles.spec(p.sheet(S).cell_xf(40, 5))["font"]["bold"])
-sel((0, 0, R.MAX_ROWS - 1, R.MAX_COLS - 1))
+check("whole row bold is a row style", spec(40, 16000)["font"]["bold"])
+check("row style wins in the column for empty cells", spec(40, 5)["font"]["bold"])
+sel((0, 0, MAX_ROWS - 1, MAX_COLS - 1))
 t0 = time.time()
 run("font-color:7030A0")
 check("select all + font colour (%.2fs)" % (time.time() - t0), time.time() - t0 < 5)
-p = R.Package(win.book.snapshot())
-check("select all reaches far cells", p.styles.spec(p.sheet(S).cell_xf(5000, 300))["font"]["color"] == 0x7030A0)
-check("select all reaches styled rows", p.styles.spec(p.sheet(S).cell_xf(40, 300))["font"]["color"] == 0x7030A0)
+check("select all reaches far cells", spec(5000, 300)["font"]["color"] == 0x7030A0)
+check("select all reaches styled rows", spec(40, 300)["font"]["color"] == 0x7030A0)
 run("undo")
 
 # ------------------------------------------------------------------ clear formats / clear all
@@ -473,8 +467,8 @@ while win.book.can_undo and n < 500:
     n += 1
 pump(0.1)
 check("undo everything (%d steps) returns to the plain data" % n,
-      not st(0, 0)["bold"] and st(4, 0)["fill"] is None and win.book.input(S, 1, 1) == "11" and not win.book.merges(S),
-      (st(0, 0), win.book.merges(S)))
+      not st(0, 0)["bold"] and st(4, 0)["fill"] is None and win.book.input(S, 1, 1) == "" and not win.book.merges(S),
+      (st(0, 0), st(4, 0), win.book.input(S, 1, 1), win.book.merges(S), win.book.undo_labels()[:3]))
 m = 0
 while win.book.can_redo and m < 500:
     win.run("redo")

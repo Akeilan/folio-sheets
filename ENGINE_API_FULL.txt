@@ -1,0 +1,135 @@
+== active_sheet 
+== adjust_decimals ($self, sheet, ranges, row, col, delta)
+Increase/Decrease Decimal from the active cell's format and value.
+== aggregates ($self, sheet, ranges)
+== array_range ($self, sheet, row, col)
+The array-formula range a cell belongs to (r1, c1, r2, c2), if any.
+== autofit_cols ($self, sheet, c1, c2, rows=None)
+Fit columns to their contents (rows: only those rows, as when cells
+rather than whole columns are selected).
+== autofit_rows ($self, sheet, r1, r2)
+== calc_manual 
+== calc_pending 
+Cells changed since the last calculation (manual mode).
+== calculate ($self, full=False, sheet=None)
+F9 (what changed + volatile), Ctrl+Alt+F9 (full=True), Shift+F9
+(sheet=index). Returns the number of formulas calculated.
+== can_redo 
+== can_undo 
+== cell_rect ($self, sheet, row, col, p)
+Screen rectangle of a cell (merge-aware), or None when off screen.
+== cell_style ($self, sheet, row, col)
+Font and alignment of a cell, for the in-cell editor.
+== check_sheet_name ($self, name, i=None)
+== circular ($self)
+Formula cells in circular references after the last calculation.
+== clear_contents ($self, sheet, ranges)
+Clear contents (values and formulas, keeping formats) of ranges.
+== col_at ($self, sheet, x)
+== col_px ($self, sheet, col)
+== col_width ($self, sheet, col)
+Column width in characters, as Column Width shows it.
+== col_x ($self, sheet, col)
+== ctrl_move ($self, sheet, row, col, dr, dc)
+== current_region ($self, sheet, row, col)
+== date1904 
+== default_col_width ($self, sheet)
+== default_row_height ($self, sheet)
+== define_name ($self, name, refers_to, scope=None, comment=None, old=None)
+Add or change a defined name; old = (name, scope) when renaming.
+== delete_name ($self, name, scope=None)
+== delete_sheet ($self, i)
+== dependents ($self, sheet, row, col)
+== display ($self, sheet, row, col)
+== error_cells ($self, sheet)
+Formula cells holding error values, row by row: (row, col, error).
+== evaluate ($self, sheet, row, col, text, array=False)
+Evaluate formula text (no '=') as if it were in a cell.
+== format_number ($self, v, code)
+Format a number the way the cell display would (status bar).
+== from_bytes (data)
+== geometry ($self, sheet, p)
+Header sizes and the bands on screen:
+{"hw","hh","rows":[(r,y,h)…], "cols":[(c,x,w)…]} (all bands flattened).
+== has_content ($self, sheet, row, col)
+== has_data ($self, i)
+Whether a sheet holds any data.
+== hit ($self, sheet, x, y, p)
+What is under a point: ("cell", r, c) | ("colhdr", c) | ("rowhdr", r)
+| ("corner",) | ("colresize", c) | ("rowresize", r) | ("fill",) | ("out",)
+== input ($self, sheet, row, col)
+== insert_sheet ($self, at, name=None)
+== is_formula ($self, sheet, row, col)
+== iterate 
+== mark_saved ($self)
+== mdw ($self, sheet)
+== merge_at ($self, sheet, row, col)
+== merges ($self, sheet)
+== modified 
+== move_sheet ($self, from, to)
+== name_comment ($self, name, scope=None)
+The comment of a defined name, if any.
+== names ($self)
+Defined names: (name, refers_to, sheet_index or None, hidden).
+== number_format ($self, sheet, row, col)
+The number format code of a cell (or of what an empty cell inherits).
+== open (path)
+== precedents ($self, sheet, row, col)
+== px_to_width ($self, sheet, px)
+Width in characters for a pixel width (100 % zoom), for the drag tip.
+== redo ($self)
+== rename_sheet ($self, i, name)
+== render ($self, sheet, cr, p)
+Paint the grid onto a pycairo Context.
+== row_at ($self, sheet, y)
+== row_height ($self, sheet, row)
+Row height in points.
+== row_px ($self, sheet, row)
+== row_y ($self, sheet, row)
+== save ($self, path)
+== set_col_px ($self, sheet, c1, c2, px)
+Set a column to a pixel width (100 % zoom) as dragging does.
+== set_col_width ($self, sheet, c1, c2, chars)
+== set_cols_hidden ($self, sheet, c1, c2, hidden)
+== set_default_col_width ($self, sheet, chars)
+== set_input ($self, sheet, row, col, text)
+Type a value into a cell (constants; formulas are stored for the
+calculation engine).
+== set_iterate ($self, on, count, delta)
+== set_number_format ($self, sheet, ranges, code)
+Apply a number format code to ranges.
+== set_row_height ($self, sheet, r1, r2, pt)
+== set_row_px ($self, sheet, r1, r2, px)
+== set_rows_hidden ($self, sheet, r1, r2, hidden)
+== set_sheet_state ($self, i, state)
+== set_tab_color ($self, i, rgb=None)
+== set_view ($self, sheet, d)
+Store view state from the window into the sheet (written on save,
+only where it differs from the file).
+== sheet_count 
+== sheet_info ($self, i)
+== shift_formula ($self, text, dr, dc)
+Shift the relative references of formula text (no '=') by dr, dc.
+== structure ($self)
+== undo ($self)
+== undo_labels ($self)
+== used_extent ($self, sheet)
+== value ($self, sheet, row, col)
+The raw value: None, float, str, bool, or ("error", "#N/A").
+== version 
+== check_formula (text)
+None if formula text (without '=') parses, else a message.
+== col_name (c)
+None
+== format_number (v, code)
+None
+== function_names ()
+Every worksheet function the engine knows.
+== parse_ref (s)
+Parse "A1", "B2:C5", "A:C", "3:5".
+== ref_spans (text)
+References in formula text, for colouring: (start, end, sheet name or
+None, r1, c1, r2, c2) with character offsets.
+1048576 16384
+463
+ABS ACCRINT ACCRINTM ACOS ACOSH ACOT ACOTH ADDRESS AGGREGATE AND ARABIC AREAS ARRAYTOTEXT ASIN ASINH ATAN ATAN2 ATANH AVEDEV AVERAGE AVERAGEA AVERAGEIF AVERAGEIFS BASE BESSELI BESSELJ BESSELK BESSELY BETA.DIST BETA.INV BETADIST BETAINV BIN2DEC BIN2HEX BIN2OCT BINOM.DIST BINOM.INV BINOMDIST BITAND BITLSHIFT BITOR BITRSHIFT BITXOR CEILING CEILING.MATH CEILING.PRECISE CELL CHAR CHIDIST CHIINV CHISQ.DIST CHISQ.DIST.RT CHISQ.INV CHISQ.INV.RT CHISQ.TEST CHITEST CHOOSE CHOOSECOLS CHOOSEROWS CLEAN CODE COLUMN COLUMNS COMBIN COMBINA COMPLEX CONCAT CONCATENATE CONFIDENCE CONFIDENCE.NORM CONFIDENCE.T CONVERT CORREL COS COSH COT COTH COUNT COUNTA COUNTBLANK COUNTIF COUNTIFS COUPDAYBS COUPDAYS COUPDAYSNC COUPNCD COUPNUM COUPPCD COVAR COVARIANCE.P COVARIANCE.S CRITBINOM CSC CSCH CUMIPMT CUMPRINC DATE DATEDIF DATEVALUE DAVERAGE DAY DAYS DAYS360 DB DCOUNT DCOUNTA DDB DEC2BIN DEC2HEX DEC2OCT DECIMAL DEGREES DELTA DEVSQ DGET DISC DMAX DMIN DOLLAR DOLLARDE DOLLARFR DPRODUCT DROP DSTDEV DSTDEVP DSUM DURATION DVAR DVARP EDATE EFFECT EOMONTH ERF ERF.PRECISE ERFC ERFC.PRECISE ERROR.TYPE EVEN EXACT EXP EXPAND EXPON.DIST EXPONDIST F.DIST F.DIST.RT F.INV F.INV.RT F.TEST FACT FACTDOUBLE FALSE FDIST FILTER FIND FINDB FINV FISHER FISHERINV FIXED FLOOR FLOOR.MATH FLOOR.PRECISE FORECAST FORECAST.LINEAR FORMULATEXT FREQUENCY FTEST FV FVSCHEDULE GAMMA GAMMA.DIST GAMMA.INV GAMMADIST GAMMAINV GAMMALN GAMMALN.PRECISE GAUSS GCD GEOMEAN GESTEP GROWTH HARMEAN HEX2BIN HEX2DEC HEX2OCT HLOOKUP HOUR HSTACK HYPERLINK HYPGEOM.DIST HYPGEOMDIST IF IFERROR IFNA IFS IMABS IMAGINARY IMARGUMENT IMCONJUGATE IMCOS IMDIV IMEXP IMLN IMLOG10 IMLOG2 IMPOWER IMPRODUCT IMREAL IMSIN IMSQRT IMSUB IMSUM IMTAN INDEX INDIRECT INFO INT INTERCEPT INTRATE IPMT IRR ISBLANK ISERR ISERROR ISEVEN ISFORMULA ISLOGICAL ISNA ISNONTEXT ISNUMBER ISO.CEILING ISODD ISOWEEKNUM ISPMT ISREF ISTEXT KURT LARGE LCM LEFT LEFTB LEN LENB LET LINEST LN LOG LOG10 LOGEST LOGINV LOGNORM.DIST LOGNORM.INV LOGNORMDIST LOOKUP LOWER MATCH MAX MAXA MAXIFS MDETERM MDURATION MEDIAN MID MIDB MIN MINA MINIFS MINUTE MINVERSE MIRR MMULT MOD MODE MODE.MULT MODE.SNGL MONTH MROUND MULTINOMIAL MUNIT N NA NEGBINOM.DIST NEGBINOMDIST NETWORKDAYS NETWORKDAYS.INTL NOMINAL NORM.DIST NORM.INV NORM.S.DIST NORM.S.INV NORMDIST NORMINV NORMSDIST NORMSINV NOT NOW NPER NPV NUMBERVALUE OCT2BIN OCT2DEC OCT2HEX ODD OFFSET OR PDURATION PEARSON PERCENTILE PERCENTILE.EXC PERCENTILE.INC PERCENTRANK PERCENTRANK.EXC PERCENTRANK.INC PERMUT PERMUTATIONA PHI PI PMT POISSON POISSON.DIST POWER PPMT PRICE PRICEDISC PRICEMAT PROB PRODUCT PROPER PV QUARTILE QUARTILE.EXC QUARTILE.INC QUOTIENT RADIANS RAND RANDARRAY RANDBETWEEN RANK RANK.AVG RANK.EQ RATE RECEIVED REPLACE REPLACEB REPT RIGHT RIGHTB ROMAN ROUND ROUNDDOWN ROUNDUP ROW ROWS RRI RSQ SEARCH SEARCHB SEC SECH SECOND SEQUENCE SERIESSUM SHEET SHEETS SIGN SIN SINH SKEW SLN SLOPE SMALL SORT SORTBY SQRT SQRTPI STANDARDIZE STDEV STDEV.P STDEV.S STDEVA STDEVP STDEVPA STEYX SUBSTITUTE SUBTOTAL SUM SUMIF SUMIFS SUMPRODUCT SUMSQ SUMX2MY2 SUMX2PY2 SUMXMY2 SWITCH SYD T T.DIST T.DIST.2T T.DIST.RT T.INV T.INV.2T T.TEST TAKE TAN TANH TBILLEQ TBILLPRICE TBILLYIELD TDIST TEXT TEXTAFTER TEXTBEFORE TEXTJOIN TEXTSPLIT TIME TIMEVALUE TINV TOCOL TODAY TOROW TRANSPOSE TREND TRIM TRIMMEAN TRUE TRUNC TTEST TYPE UNICHAR UNICODE UNIQUE UPPER VALUE VALUETOTEXT VAR VAR.P VAR.S VARA VARP VARPA VDB VLOOKUP VSTACK WEEKDAY WEEKNUM WEIBULL WEIBULL.DIST WORKDAY WORKDAY.INTL WRAPCOLS WRAPROWS XIRR XLOOKUP XMATCH XNPV XOR YEAR YEARFRAC YIELD YIELDDISC YIELDMAT Z.TEST ZTEST

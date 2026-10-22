@@ -1,28 +1,33 @@
-# Folio Sheets 0.2.2 — recovered source
+# Folio Sheets — source
 
-Rebuilt from the installed package `folio-sheets_0.2.2_amd64.deb`.
-
-| Part | Status |
+| Part | What it is |
 |---|---|
-| `app/folio_sheets/` — the whole GTK3 Python UI (21 modules, ~7,600 lines), `sheets.css`, all ribbon icons | **Full source** (Python ships as source) |
-| `packaging/` — control file, postinst/prerm/postrm, launcher, desktop file, app icons, man page, fontconfig aliases, Blank.xlsx template, SHORTCUTS.txt | **Full** |
-| `prebuilt/folio_sheets_core.so` — the Rust engine (pyo3 0.22.6, quick-xml 0.36.2, zip 2.4.2, chrono 0.4.45) | **Binary only** — the Rust source is not in the package and cannot be recovered from it |
+| `app/folio_sheets/` | the GTK3 Python UI |
+| `engine/` | the calculation and file engine, Rust (pyo3 only; zip/deflate, XML, formulas, number formats, .xlsx, drawing via cairo/pango — all written here) |
+| `packaging/` | control file, maintainer scripts, launcher, desktop file, icons, man page, Blank.xlsx |
+| `prebuilt/folio_sheets_core.so` | the old 0.2 engine binary — kept only as the oracle for differential tests |
 
-`./build-deb.sh [outdir]` reassembles the package. Its contents are identical
-to the original 0.2.2 .deb (all 320 files match by checksum), and the rebuilt
-package installs and runs.
+Build:
 
-You can keep developing the UI as normal. The engine can't be changed until its
-source is rewritten. Two files record what it has to match:
+    engine/build.sh          # Rust tests + release build -> engine/out/folio_sheets_core.so
+    ./build-deb.sh [outdir]  # the .deb (uses engine/out unless FOLIO_SHEETS_ENGINE is set)
 
-- `ENGINE_API.txt` — every class, method and signature the Python UI calls
-  (introspected from the compiled module, with its docstrings).
-- `ENGINE_MODULES.txt` — the original Rust file layout
-  (`engine/src/calc/fns/*.rs`, `formula/parse.rs`, `model/*.rs`, `numfmt/*.rs`, …).
+## 0.4.0 — the engine rewritten
 
-To use a rebuilt engine: `FOLIO_SHEETS_ENGINE=path/to/folio_sheets_core.so ./build-deb.sh`.
+The engine is now source in `engine/`. It keeps the old API (`ENGINE_API_FULL.txt`)
+and adds formatting (`restyle`, `style_spec`, `xf_grid`, `set_merges`), undo
+groups (`begin_group`/`end_group`), array formulas and dynamic-array spills. All
+undo history is the engine's own; `history.py` is a thin wrapper.
 
-## 0.3.0 — cell formatting
+Tests:
+
+    (cd engine && ./b.sh test --no-default-features --lib)          # Rust unit tests
+    python3 tests/diff_formulas.py OLD_DIR NEW_DIR BLANK.xlsx         # 529 formulas vs the old engine
+    python3 tests/roundtrip.py OLD_DIR NEW_DIR BLANK.xlsx OUT_DIR     # files read back by both engines
+    FOLIO_TEST_SCRIPT=tests/format_audit.py PYTHONPATH=app python3 -m folio_sheets
+    FOLIO_TEST_SCRIPT=tests/command_walk.py PYTHONPATH=app python3 -m folio_sheets
+
+## 0.3.0 — cell formatting (superseded by 0.4.0)
 
 The engine draws every kind of formatting it reads from a file but only exposes
 number formats for changing. Formatting commands therefore edit the workbook file
@@ -36,4 +41,3 @@ Tests (run under Xvfb from the source tree):
 
     FOLIO_TEST_SCRIPT=tests/format_audit.py PYTHONPATH=app python3 -m folio_sheets
     FOLIO_TEST_SCRIPT=tests/command_walk.py PYTHONPATH=app python3 -m folio_sheets
-    python3 tests/restyle_fuzz.py

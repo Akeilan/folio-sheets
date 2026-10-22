@@ -2,8 +2,19 @@
 Format Cells: the formatting commands of the workbook window (a mixin)."""
 from gi.repository import GLib, Gtk
 
-from .core import MAX_COLS, MAX_ROWS, Book
-from . import restyle as R
+from .core import MAX_COLS, MAX_ROWS
+
+
+def whole_cols(rg):
+    return rg[0] == 0 and rg[2] >= MAX_ROWS - 1
+
+
+def whole_rows(rg):
+    return rg[1] == 0 and rg[3] >= MAX_COLS - 1
+
+
+def intersects(a, b):
+    return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
 
 THIN, MEDIUM, DOUBLE = "thin", "medium", "double"
 SIDES = ("left", "right", "top", "bottom")
@@ -11,68 +22,6 @@ SIDES = ("left", "right", "top", "bottom")
 
 def _contains(rg, r, c):
     return rg[0] <= r <= rg[2] and rg[1] <= c <= rg[3]
-
-
-def border_fn(styles, preset, color=None, style=THIN):
-    """Style change for one of the Borders menu presets; positional (edges follow the
-    selection's outline). r or c is None for a whole-column or whole-row style."""
-    pen = (style, color)
-
-    def edges(r, c, rg):
-        r1, c1, r2, c2 = rg
-        return (c is not None and c == c1, c is not None and c == c2,
-                r is not None and r == r1, r is not None and r == r2)
-
-    def fn(xf, r, c, rg):
-        L, Rt, T, B = edges(r, c, rg)
-        d = {}
-        if preset == "none":
-            d = {s: None for s in SIDES}
-            d.update({"diagonal": None, "diagonalUp": False, "diagonalDown": False})
-        elif preset == "all":
-            d = {s: pen for s in SIDES}
-        elif preset in ("outside", "thick-outside"):
-            p = (MEDIUM, color) if preset == "thick-outside" else pen
-            for side, on in zip(SIDES, (L, Rt, T, B)):
-                if on:
-                    d[side] = p
-        elif preset == "bottom":
-            if B:
-                d["bottom"] = pen
-        elif preset == "top":
-            if T:
-                d["top"] = pen
-        elif preset == "left":
-            if L:
-                d["left"] = pen
-        elif preset == "right":
-            if Rt:
-                d["right"] = pen
-        elif preset == "bottom-double":
-            if B:
-                d["bottom"] = (DOUBLE, color)
-        elif preset == "bottom-thick":
-            if B:
-                d["bottom"] = (MEDIUM, color)
-        elif preset == "top-bottom":
-            if T:
-                d["top"] = pen
-            if B:
-                d["bottom"] = pen
-        elif preset == "top-thick-bottom":
-            if T:
-                d["top"] = pen
-            if B:
-                d["bottom"] = (MEDIUM, color)
-        elif preset == "top-double-bottom":
-            if T:
-                d["top"] = pen
-            if B:
-                d["bottom"] = (DOUBLE, color)
-        if not d:
-            return xf
-        return styles.derive(xf, {"border": d})
-    return fn
 
 
 BORDER_PRESETS = ["bottom", "top", "left", "right", "none", "all", "outside", "thick-outside", "bottom-double",
@@ -93,20 +42,17 @@ class FormattingMixin:
         for rg in g.sel.ranges:
             r1, c1, r2, c2 = rg
             changed = True
-            while changed and not (R.whole_cols(rg) or R.whole_rows(rg)):
+            while changed and not (whole_cols(rg) or whole_rows(rg)):
                 changed = False
                 for m in merges:
                     m = tuple(m)
-                    if R.intersects((r1, c1, r2, c2), m) and not (r1 <= m[0] and c1 <= m[1] and r2 >= m[2] and c2 >= m[3]):
+                    if intersects((r1, c1, r2, c2), m) and not (r1 <= m[0] and c1 <= m[1] and r2 >= m[2] and c2 >= m[3]):
                         r1, c1, r2, c2 = min(r1, m[0]), min(c1, m[1]), max(r2, m[2]), max(c2, m[3])
                         changed = True
             out.append((r1, c1, r2, c2))
         return out
 
-    def restyle(self, label, edit, post=None):
-        """Run edit(pkg, sheet) on the workbook file and make the result current, as one
-        undoable step. post(book) may make engine edits on the new book that belong to
-        the same step (contents a merge discards). Returns True when something changed."""
+    def _ready(self):
         g = self.grid
         if g.editing() and g.commit_edit() is False:
             return False
@@ -114,40 +60,27 @@ class FormattingMixin:
             self.dialogs.message("This command works on worksheets only.")
             return False
         self.status.extra.set_text("")
+        return True
+
+    def restyle(self, label, ops, ranges=None):
+        """Formatting operations (see Book.restyle) over the selection, as one undo
+        step. Returns True when something changed."""
+        if not self._ready():
+            return False
+        g = self.grid
+        ranges = ranges or self.style_ranges()
         try:
-            self.store_view_state()
-            pkg = R.Package(self.book.snapshot())
-            sheet = pkg.sheet(g.sheet)
-            if edit(pkg, sheet) is False:
-                return False
-            if not (pkg.styles.changed or sheet.changed):
-                return False
-            book = Book.from_bytes(pkg.to_bytes())
+            changed = self.book.restyle(g.sheet, [tuple(r) for r in ranges], ops, label)
         except ValueError as e:
             self.dialogs.message(str(e))
             return False
-        try:
-            book.active_sheet = g.sheet
-        except Exception:
-            pass
-        if post:
-            post(book)
-        self.book.push(book, label)
         g.refresh()
         self.update_title()
-        return True
+        return changed
 
     def apply_style(self, label, change, ranges=None):
-        """One style change (a derive() dict, or fn(styles) -> fn(xf, r, c, rg))
-        over the selection."""
-        ranges = ranges or self.style_ranges()
-
-        def edit(pkg, sh):
-            if callable(change):
-                sh.apply(ranges, change(pkg.styles), positional=True)
-            else:
-                sh.apply(ranges, lambda xf, r, c, rg: pkg.styles.derive(xf, change))
-        return self.restyle(label, edit)
+        """One style change (a derive() dict, or an operation tuple) over the selection."""
+        return self.restyle(label, [change], ranges)
 
     def active_style(self):
         g = self.grid
@@ -155,14 +88,10 @@ class FormattingMixin:
         return self.book.cell_style(g.sheet, r, c)
 
     def active_spec(self):
-        """Everything Format Cells needs about the active cell (reads the file)."""
+        """Everything Format Cells needs about the active cell."""
         g = self.grid
         r, c = g.sel.active
-        pkg = R.Package(self.book.snapshot())
-        sh = pkg.sheet(g.sheet)
-        spec = pkg.styles.spec(sh.cell_xf(r, c))
-        spec["merged"] = any(_contains(m, r, c) and m[0:2] != m[2:4] for m in sh.merges())
-        return spec
+        return self.book.style_spec(g.sheet, r, c)
 
     # ------------------------------------------------------------ font
     def _toggle_font(self, label, key, on_value=True):
@@ -257,33 +186,8 @@ class FormattingMixin:
 
     # ------------------------------------------------------------ borders
     def _border(self, preset, label):
-        ranges = self.style_ranges()
         pen = getattr(self, "border_pen", (THIN, None))
-
-        def edit(pkg, sh):
-            fn = border_fn(pkg.styles, preset, pen[1], pen[0])
-            sh.apply(ranges, fn, positional=True)
-            if preset == "none":
-                # the cells around lose the edges they share with the selection
-                clear = {"bottom": None}
-                for rg in ranges:
-                    r1, c1, r2, c2 = rg
-                    nb = []
-                    if r1 > 0 and not R.whole_cols(rg):
-                        nb.append(((r1 - 1, c1, r1 - 1, c2), {"bottom": None}))
-                    if r2 < MAX_ROWS - 1 and not R.whole_cols(rg):
-                        nb.append(((r2 + 1, c1, r2 + 1, c2), {"top": None}))
-                    if c1 > 0 and not R.whole_rows(rg):
-                        nb.append(((r1, c1 - 1, r2, c1 - 1), {"right": None}))
-                    if c2 < MAX_COLS - 1 and not R.whole_rows(rg):
-                        nb.append(((r1, c2 + 1, r2, c2 + 1), {"left": None}))
-                    for nrg, clear in nb:
-                        for r in range(nrg[0], min(nrg[2], nrg[0] + 100000) + 1):
-                            for c in range(nrg[1], nrg[3] + 1):
-                                xf = sh.cell_xf(r, c)
-                                if xf and sh.cells(r).get(c) is not None:
-                                    sh.set_cell_xf(r, c, pkg.styles.derive(xf, {"border": clear}))
-        self.restyle(label, edit)
+        self.restyle(label, [("preset", preset, pen[0], pen[1])])
 
     def act_border_bottom(self):
         self._border("bottom", "Bottom Border")
@@ -397,7 +301,7 @@ class FormattingMixin:
             return self.act_unmerge()
         targets = []
         for rg in ranges:
-            if R.whole_cols(rg) or R.whole_rows(rg):
+            if whole_cols(rg) or whole_rows(rg):
                 if (rg[2] - rg[0] + 1) * (rg[3] - rg[1] + 1) > 4_000_000:
                     self.dialogs.message("The selection is too large to merge.")
                     return
@@ -429,19 +333,23 @@ class FormattingMixin:
             if not ok:
                 return
 
-        def edit(pkg, sh):
-            keep = [m for m in sh.merges() if not any(R.intersects(m, t) for t in targets)]
+        if not self._ready():
+            return
+        keep = [m for m in merges if not any(intersects(m, t) for t in targets)]
+        with self.book.group(label):
+            ops_sheet = g.sheet
             for t in targets:
-                top = sh.cell_xf(t[0], t[1])
+                top = self.book.xf_grid(ops_sheet, (t[0], t[1], t[0], t[1]))[0][0]
+                ops = [("set", top)]
                 if center:
-                    top = pkg.styles.derive(top, {"align": {"horizontal": "center"}})
-                sh.apply([t], lambda xf, rr, cc, rg, top=top: top)
-            sh.set_merges(keep + targets)
-
-        post = (lambda book: book.clear_contents(g.sheet, discard)) if discard else None
-        if self.restyle(label, edit, post):
-            g.sel.ranges = [tuple(rg) for rg in ranges]
-            g.refresh()
+                    ops.append({"align": {"horizontal": "center"}})
+                self.book.restyle(ops_sheet, [t], ops, label)
+            self.book.set_merges(ops_sheet, keep + targets, label)
+            if discard:
+                self.book.clear_contents(ops_sheet, discard, label)
+        g.sel.ranges = [tuple(rg) for rg in ranges]
+        g.refresh()
+        self.update_title()
 
     def act_merge_center(self):
         self._merge("Merge & Center", center=True)
@@ -453,38 +361,43 @@ class FormattingMixin:
         self._merge("Merge Cells")
 
     def act_unmerge(self):
-        ranges = self.style_ranges()
-
-        def edit(pkg, sh):
-            before = sh.merges()
-            keep = [m for m in before if not any(R.intersects(m, rg) for rg in ranges)]
-            if len(keep) == len(before):
-                return False
-            sh.set_merges(keep)
-        self.restyle("Unmerge Cells", edit)
-
-    # ------------------------------------------------------------ clear
-    def act_clear_formats(self):
-        ranges = self.style_ranges()
-
-        def edit(pkg, sh):
-            sh.apply(ranges, lambda xf, r, c, rg: 0)
-            keep = [m for m in sh.merges() if not any(R.intersects(m, rg) for rg in ranges)]
-            if len(keep) != len(sh.merges()):
-                sh.set_merges(keep)
-        self.restyle("Clear Formats", edit)
-
-    def act_clear_all(self):
+        if not self._ready():
+            return
         g = self.grid
         ranges = self.style_ranges()
+        before = [tuple(m) for m in (self.book.merges(g.sheet) or [])]
+        keep = [m for m in before if not any(intersects(m, rg) for rg in ranges)]
+        if len(keep) == len(before):
+            return
+        self.book.set_merges(g.sheet, keep, "Unmerge Cells")
+        g.refresh()
+        self.update_title()
 
-        def edit(pkg, sh):
-            sh.apply(ranges, lambda xf, r, c, rg: 0)
-            keep = [m for m in sh.merges() if not any(R.intersects(m, rg) for rg in ranges)]
-            if len(keep) != len(sh.merges()):
-                sh.set_merges(keep)
-            sh.changed = True
-        self.restyle("Clear All", edit, post=lambda book: book.clear_contents(g.sheet, ranges))
+    # ------------------------------------------------------------ clear
+    def _clear_formats(self, label, contents=False):
+        if not self._ready():
+            return
+        g = self.grid
+        ranges = self.style_ranges()
+        before = [tuple(m) for m in (self.book.merges(g.sheet) or [])]
+        keep = [m for m in before if not any(intersects(m, rg) for rg in ranges)]
+        try:
+            with self.book.group(label):
+                self.book.restyle(g.sheet, ranges, [("set", 0)], label)
+                if len(keep) != len(before):
+                    self.book.set_merges(g.sheet, keep, label)
+                if contents:
+                    self.book.clear_contents(g.sheet, ranges, label)
+        except ValueError as e:
+            self.dialogs.message(str(e))
+        g.refresh()
+        self.update_title()
+
+    def act_clear_formats(self):
+        self._clear_formats("Clear Formats")
+
+    def act_clear_all(self):
+        self._clear_formats("Clear All", contents=True)
 
     # ------------------------------------------------------------ protection
     def act_lock_cell(self):
@@ -492,57 +405,25 @@ class FormattingMixin:
         self.apply_style("Lock Cell", {"protection": {"locked": not spec["protection"]["locked"]}})
 
     # ------------------------------------------------------------ Format Painter / paste formats
+    def _copy_formats(self, sheet, rg):
+        if whole_cols(rg) or whole_rows(rg):
+            rg = (rg[0], rg[1], min(rg[2], rg[0] + 999), min(rg[3], rg[1] + 255))
+        return {"grid": self.book.xf_grid(sheet, rg),
+                "merges": [tuple(m) for m in (self.book.merges(sheet) or []) if intersects(m, rg)], "src": rg}
+
     def act_format_painter(self):
         g = self.grid
         if self.painter:
             self.painter = None
             self.status.extra.set_text("")
             return
-        rg = g.sel.ranges[-1]
-        if R.whole_cols(rg) or R.whole_rows(rg):
-            rg = (rg[0], rg[1], min(rg[2], rg[0] + 999), min(rg[3], rg[1] + 255))
-        pkg = R.Package(self.book.snapshot())
-        sh = pkg.sheet(g.sheet)
-        self.painter = {"specs": [[pkg.styles.spec(x) for x in row] for row in sh.xf_grid(rg)],
-                        "xml": self._xf_xml(pkg, sh, rg), "merges": [m for m in sh.merges() if R.intersects(m, rg)],
-                        "src": rg}
+        self.painter = self._copy_formats(g.sheet, g.sel.ranges[-1])
         self.status.extra.set_text("Select the cells to paste the formatting to (Esc cancels).")
-
-    @staticmethod
-    def _xf_xml(pkg, sh, rg):
-        """Self-contained copies of a block's styles, so they can go into another workbook state."""
-        import copy
-        st = pkg.styles
-        out = []
-        for row in sh.xf_grid(rg):
-            line = []
-            for xi in row:
-                xf = st._get(st.xfs, xi)
-                line.append({"xf": copy.deepcopy(xf), "font": copy.deepcopy(st._get(st.fonts, xf.get("fontId"))),
-                             "fill": copy.deepcopy(st._get(st.fills, xf.get("fillId"))),
-                             "border": copy.deepcopy(st._get(st.borders, xf.get("borderId"))),
-                             "numfmt": st.numfmt_code(xf.get("numFmtId"))})
-            out.append(line)
-        return out
-
-    @staticmethod
-    def _import_xf(st, item, cache):
-        k = id(item)
-        if k in cache:
-            return cache[k]
-        import copy
-        xf = copy.deepcopy(item["xf"])
-        xf.set("fontId", str(st._intern("font", st.fonts, copy.deepcopy(item["font"]))))
-        xf.set("fillId", str(st._intern("fill", st.fills, copy.deepcopy(item["fill"]))))
-        xf.set("borderId", str(st._intern("border", st.borders, copy.deepcopy(item["border"]))))
-        xf.set("numFmtId", str(st._numfmt_id(item["numfmt"])))
-        cache[k] = st._intern("xf", st.xfs, xf)
-        return cache[k]
 
     def paste_formats(self, src, label):
         """Tile a copied block of styles (and its merges) over the selection."""
         g = self.grid
-        grid = src["xml"]
+        grid = src["grid"]
         sr = src["src"]
         h, w = len(grid), len(grid[0])
         ranges = []
@@ -552,27 +433,30 @@ class FormattingMixin:
             if (r2 - r1 + 1) < h or (c2 - c1 + 1) < w:
                 r2, c2 = r1 + h - 1, c1 + w - 1
             ranges.append((r1, c1, min(r2, MAX_ROWS - 1), min(c2, MAX_COLS - 1)))
-        cache = {}
-
-        def edit(pkg, sh):
-            st = pkg.styles
-            sh.apply(ranges, lambda xf, r, c, rg: self._import_xf(st, grid[(r - rg[0]) % h if r is not None else 0]
-                                                                     [(c - rg[1]) % w if c is not None else 0], cache))
-            new = []
-            for rg in ranges:
-                for m in src["merges"]:
-                    for dr in range(0, rg[2] - rg[0] + 1, h):
-                        for dc in range(0, rg[3] - rg[1] + 1, w):
-                            nm = (m[0] - sr[0] + rg[0] + dr, m[1] - sr[1] + rg[1] + dc,
-                                  m[2] - sr[0] + rg[0] + dr, m[3] - sr[1] + rg[1] + dc)
-                            if nm[2] <= rg[2] and nm[3] <= rg[3]:
-                                new.append(nm)
-            keep = [m for m in sh.merges() if not any(R.intersects(m, rg) for rg in ranges)]
-            if new or len(keep) != len(sh.merges()):
-                sh.set_merges(keep + new)
-        if self.restyle(label, edit):
-            g.sel.ranges = ranges
-            g.refresh()
+        if not self._ready():
+            return
+        new = []
+        for rg in ranges:
+            for m in src["merges"]:
+                for dr in range(0, rg[2] - rg[0] + 1, h):
+                    for dc in range(0, rg[3] - rg[1] + 1, w):
+                        nm = (m[0] - sr[0] + rg[0] + dr, m[1] - sr[1] + rg[1] + dc,
+                              m[2] - sr[0] + rg[0] + dr, m[3] - sr[1] + rg[1] + dc)
+                        if nm[2] <= rg[2] and nm[3] <= rg[3]:
+                            new.append(nm)
+        before = [tuple(m) for m in (self.book.merges(g.sheet) or [])]
+        keep = [m for m in before if not any(intersects(m, rg) for rg in ranges)]
+        try:
+            with self.book.group(label):
+                self.book.restyle(g.sheet, ranges, [("grid", grid)], label)
+                if new or len(keep) != len(before):
+                    self.book.set_merges(g.sheet, keep + new, label)
+        except ValueError as e:
+            self.dialogs.message(str(e))
+            return
+        g.sel.ranges = ranges
+        g.refresh()
+        self.update_title()
 
     def painter_finish(self):
         if not self.painter:
@@ -586,12 +470,7 @@ class FormattingMixin:
         if not cp:
             return
         sheet, rg, cut = cp
-        if R.whole_cols(rg) or R.whole_rows(rg):
-            rg = (rg[0], rg[1], min(rg[2], rg[0] + 999), min(rg[3], rg[1] + 255))
-        pkg = R.Package(self.book.snapshot())
-        sh = pkg.sheet(sheet)
-        self.paste_formats({"xml": self._xf_xml(pkg, sh, rg), "merges": [m for m in sh.merges() if R.intersects(m, rg)],
-                            "src": rg}, "Paste Formatting")
+        self.paste_formats(self._copy_formats(sheet, rg), "Paste Formatting")
 
     # ------------------------------------------------------------ dialogs
     def open_format_cells(self, page="number"):
@@ -611,22 +490,28 @@ class FormattingMixin:
         border = changes.pop("border_layout", None)
         merge = changes.pop("merge", None)
 
-        def edit(pkg, sh):
-            st = pkg.styles
-            if changes:
-                sh.apply(ranges, lambda xf, rr, cc, rg: st.derive(xf, changes))
-            if border:
-                sh.apply(ranges, lambda xf, rr, cc, rg: st.derive(xf, {"border": border_layout(border, rr, cc, rg)}),
-                         positional=True)
-            if merge is not None:
-                if merge:
-                    keep = [m for m in sh.merges() if not any(R.intersects(m, rg) for rg in ranges)]
-                    sh.set_merges(keep + [rg for rg in ranges if rg[0:2] != rg[2:4]])
-                else:
-                    keep = [m for m in sh.merges() if not any(R.intersects(m, rg) for rg in ranges)]
-                    if len(keep) != len(sh.merges()):
-                        sh.set_merges(keep)
-        self.restyle("Format Cells", edit)
+        ops = []
+        if changes:
+            ops.append(changes)
+        if border:
+            ops.append(("layout", border))
+        if not self._ready():
+            return
+        before = [tuple(m) for m in (self.book.merges(g.sheet) or [])]
+        keep = [m for m in before if not any(intersects(m, rg) for rg in ranges)]
+        try:
+            with self.book.group("Format Cells"):
+                if ops:
+                    self.book.restyle(g.sheet, ranges, ops, "Format Cells")
+                if merge is not None:
+                    if merge:
+                        self.book.set_merges(g.sheet, keep + [rg for rg in ranges if rg[0:2] != rg[2:4]], "Format Cells")
+                    elif len(keep) != len(before):
+                        self.book.set_merges(g.sheet, keep, "Format Cells")
+        except ValueError as e:
+            self.dialogs.message(str(e))
+        g.refresh()
+        self.update_title()
 
     def act_format_cells(self):
         self.open_format_cells("number")
@@ -646,26 +531,3 @@ class FormattingMixin:
         if ch:
             name, change = ch
             self.apply_style("Cell Style: " + name, change)
-
-
-def border_layout(lay, r, c, rg):
-    """Format Cells ▸ Border: outline edges for cells on the selection's outline, the
-    inside lines between cells. lay maps left/right/top/bottom/insideV/insideH/diagUp/diagDown
-    to a (style, color) pen, None (remove) or absent (leave)."""
-    r1, c1, r2, c2 = rg
-    d = {}
-
-    def put(side, key):
-        if key in lay:
-            d[side] = lay[key]
-    put("left", "left" if (c is None or c == c1) else "insideV")
-    put("right", "right" if (c is None or c == c2) else "insideV")
-    put("top", "top" if (r is None or r == r1) else "insideH")
-    put("bottom", "bottom" if (r is None or r == r2) else "insideH")
-    if "diagUp" in lay or "diagDown" in lay:
-        up, down = lay.get("diagUp"), lay.get("diagDown")
-        pen = up or down
-        d["diagonal"] = pen
-        d["diagonalUp"] = bool(up)
-        d["diagonalDown"] = bool(down)
-    return d

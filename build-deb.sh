@@ -1,7 +1,7 @@
 #!/bin/sh
 # Rebuilds folio-sheets_<version>_amd64.deb from this tree.
-# Python UI is source (app/); the Rust engine is the prebuilt module in prebuilt/
-# until its source is rewritten (see README.md).
+# Python UI is source (app/); the Rust engine is built from engine/ (engine/build.sh).
+# prebuilt/ holds the old 0.2 engine binary, used only as a test oracle.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VERSION="$(sed -n 's/^Version: //p' "$HERE/packaging/DEBIAN/control")"
@@ -12,7 +12,7 @@ cp -a "$HERE/packaging/root/." "$STAGE/"
 mkdir -p "$STAGE/usr/lib/folio-sheets"
 cp -a "$HERE/app/folio_sheets" "$STAGE/usr/lib/folio-sheets/"
 find "$STAGE/usr/lib/folio-sheets" -name '__pycache__' -prune -exec rm -rf {} +
-ENGINE="${FOLIO_SHEETS_ENGINE:-$HERE/prebuilt/folio_sheets_core.so}"
+ENGINE="${FOLIO_SHEETS_ENGINE:-$HERE/engine/out/folio_sheets_core.so}"
 install -m 644 "$ENGINE" "$STAGE/usr/lib/folio-sheets/folio_sheets_core.so"
 mkdir -p "$STAGE/DEBIAN"
 cp "$HERE/packaging/DEBIAN/"* "$STAGE/DEBIAN/"
