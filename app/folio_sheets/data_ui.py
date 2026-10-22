@@ -227,11 +227,12 @@ def reapply_filter(win):
 class FilterMenu(Gtk.Popover):
     """The menu of a column's filter button."""
 
-    def __init__(self, win, col):
+    def __init__(self, win, col, row=None):
         super().__init__()
         self.win, self.col = win, col
         b, s = win.book, win.grid.sheet
-        af = b.autofilter(s)
+        self.at = (row, col) if row is not None else None
+        af = b.autofilter(s, self.at)
         self.ref = af["ref"]
         self.off = col - self.ref[1]
         cur = af["columns"].get(self.off)
@@ -256,7 +257,7 @@ class FilterMenu(Gtk.Popover):
         self.search = Gtk.SearchEntry()
         self.search.set_placeholder_text("Search")
         box.pack_start(self.search, False, False, 4)
-        values, blank = b.filter_values(s, self.off)
+        values, blank = b.filter_values(s, self.off, self.at)
         self.store = Gtk.ListStore(bool, str, str)   # shown, label, value ("" = blanks, None-like "\0" = all)
         shown_vals = None
         show_blank = True
@@ -334,11 +335,11 @@ class FilterMenu(Gtk.Popover):
                 self.win.dialogs.message("Select at least one value to show.")
                 return
         self.popdown()
-        _run(self.win, "Filter", lambda: b.filter_column(s, self.off, spec))
+        _run(self.win, "Filter", lambda: b.filter_column(s, self.off, spec, self.at))
 
     def clear(self):
         self.popdown()
-        _run(self.win, "Clear Filter", lambda: self.win.book.filter_column(self.win.grid.sheet, self.off, None))
+        _run(self.win, "Clear Filter", lambda: self.win.book.filter_column(self.win.grid.sheet, self.off, None, self.at))
 
     def sort(self, asc):
         self.popdown()
@@ -347,13 +348,13 @@ class FilterMenu(Gtk.Popover):
 
     def custom(self):
         self.popdown()
-        custom_filter(self.win, self.off, self.name)
+        custom_filter(self.win, self.off, self.name, self.at)
 
 
-def custom_filter(win, off, name):
+def custom_filter(win, off, name, at=None):
     """Custom AutoFilter: two conditions joined by And/Or."""
     b, s = win.book, win.grid.sheet
-    af = b.autofilter(s)
+    af = b.autofilter(s, at)
     cur = af["columns"].get(off) if af else None
     d = Gtk.Dialog(title="Custom AutoFilter", transient_for=win, modal=True)
     d.add_button("OK", Gtk.ResponseType.OK)
@@ -403,7 +404,7 @@ def custom_filter(win, off, name):
     if r != Gtk.ResponseType.OK:
         return
     spec = {"custom": conds, "and": is_and} if conds else None
-    _run(win, "Filter", lambda: b.filter_column(s, off, spec))
+    _run(win, "Filter", lambda: b.filter_column(s, off, spec, at))
 
 
 def _to_engine(op, val):
@@ -431,10 +432,10 @@ def _from_engine(op, val):
     return names.get(op, "equals"), val
 
 
-def filter_menu(win, col, rect):
-    if not win.book.autofilter(win.grid.sheet):
+def filter_menu(win, col, rect, row=None):
+    if not win.book.autofilter(win.grid.sheet, (row, col) if row is not None else None):
         return None
-    m = FilterMenu(win, col)
+    m = FilterMenu(win, col, row)
     m.set_relative_to(win.grid.area)
     if rect:
         x, y, w, h = rect

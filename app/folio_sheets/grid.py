@@ -471,7 +471,12 @@ class GridView(Gtk.Box):
             self.select_cell(h[1], h[2], refresh=True)
             from .data_ui import filter_menu
             rect = self.book.cell_rect(self.sheet, h[1], h[2], self.params())
-            filter_menu(self.win, h[2], rect)
+            filter_menu(self.win, h[2], rect, row=h[1])
+            return True
+        if kind == "totalsbtn":
+            from .table_ui import totals_menu
+            rect = self.book.cell_rect(self.sheet, h[1], h[2], self.params())
+            totals_menu(self.win, h[1], h[2], rect)
             return True
         if kind == "cell":
             r, c = h[1], h[2]

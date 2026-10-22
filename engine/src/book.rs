@@ -101,6 +101,7 @@ pub enum Delta {
     Objects(usize, Vec<crate::drawing::Obj>),
     /// the worksheet's kept elements (conditional formats...)
     Pieces(usize, Vec<crate::sheet::Piece>),
+    Tables(usize, Vec<crate::tables::Table>),
 }
 
 #[derive(Clone, Debug)]
@@ -455,6 +456,12 @@ impl Book {
                 let old = std::mem::replace(&mut self.calc, c);
                 Delta::Calc(old)
             }
+            Delta::Tables(s, tables) => {
+                let old = std::mem::replace(&mut self.sheets[s].tables, tables);
+                // structured references read the tables: work the formulas out again
+                self.rebuild = true;
+                Delta::Tables(s, old)
+            }
             Delta::Pieces(s, pieces) => {
                 let old = std::mem::replace(&mut self.sheets[s].pieces, pieces);
                 Delta::Pieces(s, old)
@@ -590,10 +597,16 @@ impl Book {
             None => return String::new(),
         };
         if let Some(f) = &cell.f {
+            let text = if f.text.contains('[') {
+                let here = crate::tables::table_at(&self.sheets, s, r, c).map(|i| self.sheets[s].tables[i].name.clone());
+                crate::tables::to_display(&f.text, here.as_deref())
+            } else {
+                f.text.clone()
+            };
             if let FKind::Array(_) = f.kind {
-                return format!("{{={}}}", f.text);
+                return format!("{{={}}}", text);
             }
-            return format!("={}", f.text);
+            return format!("={}", text);
         }
         match &cell.v {
             Value::Empty => String::new(),
@@ -715,6 +728,7 @@ impl Book {
         let newcell = if cell.is_blank() && cell.s == self.inherited_xf(s, r, c) { None } else { Some(cell) };
         self.begin("Typing", s);
         self.record(Delta::Cell(s, r, c, newcell));
+        self.tables_after_input(s, r, c);
         self.commit();
         Ok(())
     }

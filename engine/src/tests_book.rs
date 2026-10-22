@@ -486,3 +486,93 @@ fn conditional_format_edits() {
     b.undo();
     assert_eq!(b.cf_blocks(0).len(), 2);
 }
+
+#[test]
+fn tables_from_file() {
+    let b = Book::open("testdata/table.xlsx").unwrap();
+    let t = &b.sheets[0].tables[0];
+    assert_eq!(t.name, "Sales");
+    assert!(t.totals && t.header);
+    assert_eq!(t.style.as_deref(), Some("TableStyleMedium9"));
+    // [@Qty]*[@Price], the totals and a reference from outside
+    assert_eq!(b.value(0, 2, 4), Value::Num(25.0));
+    assert_eq!(b.value(0, 5, 2), Value::Num(45.0));
+    assert_eq!(b.value(0, 5, 4), Value::Num(25.0 + 60.0 + 60.0));
+    assert_eq!(b.value(0, 1, 6), Value::Num(145.0));
+    assert_eq!(b.input(0, 2, 4), "=[@Qty]*[@Price]");
+    // saved: the references are qualified again
+    let bytes = b.to_bytes().unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let sx = String::from_utf8(z.read("xl/worksheets/sheet1.xml").unwrap()).unwrap();
+    assert!(sx.contains("Sales[[#This Row],[Qty]]*Sales[[#This Row],[Price]]"), "{}", &sx[..900]);
+    assert!(sx.contains("<tableParts count=\"1\">"));
+    let b2 = Book::from_bytes(&bytes).unwrap();
+    assert_eq!(b2.value(0, 1, 6), Value::Num(145.0));
+    assert_eq!(b2.sheets[0].tables[0].cols[3].calc.as_deref(), Some("Sales[[#This Row],[Qty]]*Sales[[#This Row],[Price]]"));
+}
+
+#[test]
+fn tables_commands() {
+    let mut b = blank();
+    for (r, row) in [["Item", "Qty", "Price"], ["Pens", "3", "1.5"], ["Ink", "2", "4"], ["Pads", "5", "2"]].iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            b.set_input(0, r as u32, c as u32, v).unwrap();
+        }
+    }
+    let i = b.create_table(0, Rect::new(1, 1, 1, 1), true, "TableStyleMedium2").unwrap();
+    assert_eq!(b.sheets[0].tables[i].rect, Rect::new(0, 0, 3, 2));
+    assert_eq!(b.sheets[0].tables[i].name, "Table1");
+    // a calculated column: typing a formula next to the table adds a column and fills it
+    b.set_input(0, 0, 3, "Amount").unwrap();
+    assert_eq!(b.sheets[0].tables[0].rect.c2, 3, "typing beside the table makes it wider");
+    b.set_input(0, 1, 3, "=[@Qty]*[@Price]").unwrap();
+    assert_eq!(b.value(0, 1, 3), Value::Num(4.5));
+    assert_eq!(b.value(0, 3, 3), Value::Num(10.0), "the formula filled the column");
+    // a new row below: the table grows and the formula comes along
+    b.set_input(0, 4, 0, "Clips").unwrap();
+    b.set_input(0, 4, 1, "10").unwrap();
+    b.set_input(0, 4, 2, "0.1").unwrap();
+    assert_eq!(b.sheets[0].tables[0].rect.r2, 4);
+    assert_eq!(b.value(0, 4, 3), Value::Num(1.0));
+    // a total row
+    b.set_table_option(0, 0, "totals", true).unwrap();
+    assert_eq!(b.value(0, 5, 3), Value::Num(4.5 + 8.0 + 10.0 + 1.0));
+    assert_eq!(b.display(0, 5, 0), "Total");
+    b.set_table_total(0, 0, 1, "average").unwrap();
+    assert_eq!(b.value(0, 5, 1), Value::Num(5.0));
+    // formulas outside
+    b.set_input(0, 8, 0, "=SUM(Table1[Qty])").unwrap();
+    assert_eq!(b.value(0, 8, 0), Value::Num(20.0));
+    b.set_input(0, 9, 0, "=ROWS(Table1[#All])").unwrap();
+    assert_eq!(b.value(0, 9, 0), Value::Num(6.0));
+    // renaming the column header follows into the formulas
+    b.set_input(0, 0, 1, "Count").unwrap();
+    assert_eq!(b.input(0, 8, 0), "=SUM(Table1[Count])");
+    assert_eq!(b.input(0, 1, 3), "=[@Count]*[@Price]");
+    assert_eq!(b.value(0, 8, 0), Value::Num(20.0));
+    // and renaming the table
+    b.rename_table(0, 0, "Orders").unwrap();
+    assert_eq!(b.input(0, 8, 0), "=SUM(Orders[Count])");
+    // rows inserted inside make it taller
+    b.insert_rows(0, 2, 1).unwrap();
+    assert_eq!(b.sheets[0].tables[0].rect, Rect::new(0, 0, 6, 3));
+    assert_eq!(b.value(0, 9, 0), Value::Num(20.0));
+    b.undo();
+    // saved and read back
+    let b2 = Book::from_bytes(&b.to_bytes().unwrap()).unwrap();
+    assert_eq!(b2.sheets[0].tables[0].name, "Orders");
+    assert_eq!(b2.value(0, 8, 0), Value::Num(20.0));
+    assert_eq!(b2.value(0, 3, 3), Value::Num(10.0));
+    // convert to a range: plain references
+    b.convert_table(0, 0).unwrap();
+    assert!(b.sheets[0].tables.is_empty());
+    assert_eq!(b.input(0, 8, 0), "=SUM($B$2:$B$5)");
+    assert_eq!(b.value(0, 8, 0), Value::Num(20.0));
+    b.undo();
+    assert_eq!(b.sheets[0].tables.len(), 1);
+    // the style draws
+    let mut p = crate::view::ViewParams::default();
+    p.width = 500.0;
+    p.height = 200.0;
+    crate::render::render_png(&b, 0, &p, "/tmp/table_test.png").unwrap();
+}

@@ -158,6 +158,31 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             continue;
         }
         if c == '[' {
+            // a structured reference inside a table: [@Col], [Col], [[#This Row],[Col]]
+            {
+                let mut depth = 0;
+                let mut k = i;
+                while k < n {
+                    if ch(k) == '[' {
+                        depth += 1;
+                    } else if ch(k) == ']' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    } else if ch(k) == '\'' {
+                        k += 1;
+                    }
+                    k += 1;
+                }
+                let after = ch(k + 1);
+                let starts = matches!(ch(i + 1), '@' | '[' | '#');
+                if k < n && (starts || !(is_name_start(after) || after == '\'' || after.is_ascii_digit())) {
+                    push(&mut out, TokKind::Struct, s, at(k + 1));
+                    i = k + 1;
+                    continue;
+                }
+            }
             // external workbook reference: [1]Sheet1!A1 or ['path']...
             let mut j = i + 1;
             while j < n && ch(j) != ']' {

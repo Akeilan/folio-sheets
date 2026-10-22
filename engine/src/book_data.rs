@@ -32,6 +32,12 @@ pub struct AutoFilter {
     pub cols: Vec<FilterCol>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FOwner {
+    Sheet,
+    Table(usize),
+}
+
 #[derive(Clone, Debug)]
 pub struct SortKey {
     /// absolute column (or row, sorting left to right)
@@ -282,33 +288,81 @@ impl Book {
         }
     }
 
+    /// Whose filter a header cell belongs to: the sheet's AutoFilter or a table's.
+    pub fn filter_owner(&self, s: usize, at: Option<(u32, u32)>) -> Option<FOwner> {
+        let sh = &self.sheets[s];
+        if let Some((r, c)) = at {
+            if let Some(i) = sh.tables.iter().position(|t| t.filter_button && t.header && t.rect.r1 == r && c >= t.rect.c1 && c <= t.rect.c2) {
+                return Some(FOwner::Table(i));
+            }
+            if let Some(i) = sh.tables.iter().position(|t| t.filter_button && t.rect.contains(r, c)) {
+                if sh.autofilter.as_ref().map(|a| !a.rect.contains(r, c)).unwrap_or(true) {
+                    return Some(FOwner::Table(i));
+                }
+            }
+        }
+        sh.autofilter.as_ref().map(|_| FOwner::Sheet)
+    }
+
+    /// The filter of an owner (a table's covers its header and data rows).
+    pub fn owner_filter(&self, s: usize, o: FOwner) -> Option<AutoFilter> {
+        match o {
+            FOwner::Sheet => self.sheets[s].autofilter.clone(),
+            FOwner::Table(i) => {
+                let t = self.sheets[s].tables.get(i)?;
+                let mut af = t.filter.clone().unwrap_or(AutoFilter { rect: t.filter_rect(), cols: vec![] });
+                af.rect = t.filter_rect();
+                Some(af)
+            }
+        }
+    }
+
+    fn record_owner_filter(&mut self, s: usize, o: FOwner, af: AutoFilter) {
+        match o {
+            FOwner::Sheet => self.record(Delta::Filter(s, Some(af))),
+            FOwner::Table(i) => {
+                let mut tables = self.sheets[s].tables.clone();
+                tables[i].filter = if af.cols.is_empty() { None } else { Some(af) };
+                self.record(Delta::Tables(s, tables));
+            }
+        }
+    }
+
     /// Set (or clear, None) the filter of one column of the AutoFilter, and apply.
     pub fn filter_column(&mut self, s: usize, col: u32, kind: Option<FilterKind>) -> Result<(), String> {
-        let mut af = self.sheets[s].autofilter.clone().ok_or("There's no filter on this sheet.")?;
+        self.filter_column_at(s, FOwner::Sheet, col, kind)
+    }
+
+    pub fn filter_column_at(&mut self, s: usize, o: FOwner, col: u32, kind: Option<FilterKind>) -> Result<(), String> {
+        let mut af = self.owner_filter(s, o).ok_or("There's no filter on this sheet.")?;
         af.cols.retain(|f| f.col != col);
         if let Some(k) = kind {
             af.cols.push(FilterCol { col, kind: k });
             af.cols.sort_by_key(|f| f.col);
         }
         self.begin("Filter", s);
-        self.record(Delta::Filter(s, Some(af)));
+        self.record_owner_filter(s, o, af);
         self.apply_filter(s);
         self.commit();
         Ok(())
     }
 
     pub fn clear_filters(&mut self, s: usize) -> Result<(), String> {
-        let mut af = self.sheets[s].autofilter.clone().ok_or("There's no filter on this sheet.")?;
+        self.clear_filters_at(s, FOwner::Sheet)
+    }
+
+    pub fn clear_filters_at(&mut self, s: usize, o: FOwner) -> Result<(), String> {
+        let mut af = self.owner_filter(s, o).ok_or("There's no filter on this sheet.")?;
         af.cols.clear();
         self.begin("Clear Filter", s);
-        self.record(Delta::Filter(s, Some(af)));
+        self.record_owner_filter(s, o, af);
         self.apply_filter(s);
         self.commit();
         Ok(())
     }
 
     pub fn reapply_filter(&mut self, s: usize) -> Result<(), String> {
-        if self.sheets[s].autofilter.is_none() {
+        if self.sheets[s].autofilter.is_none() && !self.sheets[s].tables.iter().any(|t| t.filter.is_some()) {
             return Err("There's no filter on this sheet.".into());
         }
         self.begin("Reapply", s);
@@ -319,11 +373,38 @@ impl Book {
 
     /// Hide the rows the filters exclude, show the others (recorded).
     fn apply_filter(&mut self, s: usize) {
-        let af = match self.sheets[s].autofilter.clone() {
-            Some(a) => a,
-            None => return,
-        };
-        let last = self.sheets[s].data_extent().map(|(r, _)| r).unwrap_or(af.rect.r2).max(af.rect.r2);
+        let mut filters: Vec<(AutoFilter, u32)> = Vec::new();
+        if let Some(af) = self.sheets[s].autofilter.clone() {
+            let last = self.sheets[s].data_extent().map(|(r, _)| r).unwrap_or(af.rect.r2).max(af.rect.r2);
+            filters.push((af, last));
+        }
+        for i in 0..self.sheets[s].tables.len() {
+            if self.sheets[s].tables[i].filter_button {
+                if let Some(af) = self.owner_filter(s, FOwner::Table(i)) {
+                    let last = af.rect.r2;
+                    filters.push((af, last));
+                }
+            }
+        }
+        let mut rows: std::collections::BTreeMap<u32, bool> = std::collections::BTreeMap::new();
+        for (af, last) in &filters {
+            for (r, show) in self.filter_rows(s, af, *last) {
+                let e = rows.entry(r).or_insert(true);
+                *e = *e && show;
+            }
+        }
+        for (r, show) in rows {
+            let cur = self.sheets[s].rows.get(&r).cloned().unwrap_or_default();
+            if cur.hidden == show {
+                let mut ri = cur;
+                ri.hidden = !show;
+                self.record(Delta::Row(s, r, Some(ri)));
+            }
+        }
+    }
+
+    /// Which rows under a filter's header show.
+    fn filter_rows(&self, s: usize, af: &AutoFilter, last: u32) -> Vec<(u32, bool)> {
         // values of the Top 10 filters, worked out once
         let mut tops: Vec<(u32, f64)> = Vec::new();
         for fc in &af.cols {
@@ -338,6 +419,7 @@ impl Book {
                 tops.push((fc.col, cut));
             }
         }
+        let mut out = Vec::new();
         for r in af.rect.r1 + 1..=last {
             let mut show = true;
             for fc in &af.cols {
@@ -371,24 +453,24 @@ impl Book {
                     break;
                 }
             }
-            let cur = self.sheets[s].rows.get(&r).cloned().unwrap_or_default();
-            if cur.hidden == show {
-                let mut ri = cur;
-                ri.hidden = !show;
-                self.record(Delta::Row(s, r, Some(ri)));
-            }
+            out.push((r, show));
         }
+        out
     }
 
     /// The distinct shown values of a filter column (for the filter menu), sorted, and
     /// whether there are blanks.
     pub fn filter_values(&self, s: usize, col: u32) -> (Vec<String>, bool) {
-        let af = match &self.sheets[s].autofilter {
+        self.filter_values_at(s, FOwner::Sheet, col)
+    }
+
+    pub fn filter_values_at(&self, s: usize, o: FOwner, col: u32) -> (Vec<String>, bool) {
+        let af = match self.owner_filter(s, o) {
             Some(a) => a,
             None => return (vec![], false),
         };
         let sh = &self.sheets[s];
-        let last = sh.data_extent().map(|(r, _)| r).unwrap_or(af.rect.r2).max(af.rect.r2);
+        let last = if o == FOwner::Sheet { sh.data_extent().map(|(r, _)| r).unwrap_or(af.rect.r2).max(af.rect.r2) } else { af.rect.r2 };
         let c = af.rect.c1 + col;
         let mut vals: Vec<(Value, String)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
