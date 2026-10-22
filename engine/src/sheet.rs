@@ -121,7 +121,7 @@ impl Default for View {
 }
 
 /// A piece of the worksheet XML: an element the engine rewrites, or text kept as is.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Piece {
     /// an element the engine writes itself (by local name)
     Known(String),

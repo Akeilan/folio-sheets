@@ -149,7 +149,36 @@ impl Book {
             return self.move_cells(src_s, src, dst.r1, dst.c1);
         }
         let block = snapshot(&self.sheets[src_s], src);
-        let out = self.paste_block(&block, None, dst_s, dst, o, if src_s == dst_s { None } else { Some(&block.src_sheet_name) }, "Paste")?;
+        let with_cf = src_s == dst_s && !o.transpose && matches!(o.what, What::All | What::Formats | What::NoBorders | What::AllWidths);
+        if with_cf {
+            self.begin_group("Paste", dst_s);
+        }
+        let out = self.paste_block(&block, None, dst_s, dst, o, if src_s == dst_s { None } else { Some(&block.src_sheet_name) }, "Paste");
+        let out = match out {
+            Ok(o) => o,
+            Err(e) => {
+                if with_cf {
+                    self.end_group();
+                }
+                return Err(e);
+            }
+        };
+        if with_cf {
+            // conditional formats come along (tiled like the cells)
+            self.begin("Paste", dst_s);
+            let (h, w) = (src.rows() as u32, src.cols() as u32);
+            let mut r = out.r1;
+            while r <= out.r2 {
+                let mut c = out.c1;
+                while c <= out.c2 {
+                    self.copy_cf(src_s, src, dst_s, Rect::new(r, c, r + h - 1, c + w - 1));
+                    c += w;
+                }
+                r += h;
+            }
+            self.commit();
+            self.end_group();
+        }
         if cut {
             // a cut to another sheet: the source empties
             self.clear_all(src_s, src, "Paste")?;

@@ -408,3 +408,81 @@ fn charts_render() {
     p.height = 900.0;
     crate::render::render_png(&b, 0, &p, "/tmp/charts_test.png").unwrap();
 }
+
+#[test]
+fn conditional_formats() {
+    let b = Book::open("testdata/cf.xlsx").unwrap();
+    let blocks = b.cf_blocks(0);
+    assert_eq!(blocks.len(), 11);
+    let at = |r: u32, c: u32| b.cf_at(0, r, c, &blocks);
+    // A: > 5 (values 3,8,1,9,5,7,2,6,4,10)
+    assert_eq!(at(1, 0).unwrap().dxf.fill, Some(0xFFC7CE));
+    assert!(at(0, 0).is_none());
+    assert!(at(4, 0).is_none(), "5 is not greater than 5");
+    // B: top 3 = 10, 9, 8
+    assert_eq!(at(9, 1).unwrap().dxf.bold, Some(true));
+    assert!(at(1, 1).is_some() && at(5, 1).is_none());
+    // C: above the average (5.5)
+    assert!(at(5, 2).is_some() && at(4, 2).is_none());
+    // D: colour scale: lowest red, highest green
+    assert_eq!(at(2, 3).unwrap().scale, Some(0xF8696B));
+    assert_eq!(at(9, 3).unwrap().scale, Some(0x63BE7B));
+    // E: 2007 bar, 10 % to 90 %
+    let (a, e, _, _, _) = at(9, 4).unwrap().bar.unwrap();
+    assert!(a == 0.0 && (e - 0.9).abs() < 1e-9, "{} {}", a, e);
+    // F: arrows by thirds
+    assert_eq!(at(2, 5).unwrap().icon, Some(("3Arrows".to_string(), 0)));
+    assert_eq!(at(9, 5).unwrap().icon, Some(("3Arrows".to_string(), 2)));
+    // G: 2010 solid bar with negatives around an axis (values -2..5)
+    let (a, e, bar, neg, axis) = at(2, 6).unwrap().bar.unwrap();
+    assert!(!bar.gradient && neg && axis.is_some() && a < e, "{:?}", (a, e, neg, axis));
+    // H: formula
+    assert!(at(1, 7).is_some() && at(0, 7).is_none());
+    // I: duplicates
+    assert!(at(0, 8).is_some() && at(3, 8).is_none());
+    // K: contains "an"
+    assert!(at(0, 10).is_some() && at(2, 10).is_some() && at(1, 10).is_none());
+    let mut p = crate::view::ViewParams::default();
+    p.width = 900.0;
+    p.height = 260.0;
+    crate::render::render_png(&b, 0, &p, "/tmp/cf_test.png").unwrap();
+}
+
+#[test]
+fn conditional_format_edits() {
+    use crate::cf::RuleSpec;
+    let mut b = blank();
+    for r in 0..6 {
+        b.set_input(0, r, 0, &format!("{}", r * 2)).unwrap();
+    }
+    let sp = RuleSpec { typ: "cellIs".into(), operator: "greaterThan".into(), values: vec!["5".into()], fill: Some(0xFFC7CE), font_color: Some(0x9C0006), ..Default::default() };
+    b.add_cf_rule(0, &[Rect::new(0, 0, 5, 0)], &sp).unwrap();
+    let blocks = b.cf_blocks(0);
+    assert!(b.cf_at(0, 3, 0, &blocks).is_some() && b.cf_at(0, 2, 0, &blocks).is_none());
+    // a formula rule, relative to the first cell
+    let sp2 = RuleSpec { typ: "expression".into(), values: vec!["=A1=0".into()], bold: true, ..Default::default() };
+    b.add_cf_rule(0, &[Rect::new(0, 0, 5, 0)], &sp2).unwrap();
+    let blocks = b.cf_blocks(0);
+    assert_eq!(blocks[1].rules[0].priority, 1, "the newest rule comes first");
+    assert_eq!(b.cf_at(0, 0, 0, &blocks).unwrap().dxf.bold, Some(true));
+    assert!(b.cf_at(0, 1, 0, &blocks).map(|o| o.dxf.bold.is_none()).unwrap_or(true));
+    // rows inserted above move the rules
+    b.insert_rows(0, 0, 1).unwrap();
+    let blocks = b.cf_blocks(0);
+    assert_eq!(blocks[0].ranges[0], Rect::new(1, 0, 6, 0));
+    assert_eq!(b.cf_at(0, 1, 0, &blocks).unwrap().dxf.bold, Some(true));
+    b.undo();
+    // clearing part of a range
+    b.clear_cf(0, Some(&[Rect::new(0, 0, 1, 0)])).unwrap();
+    let blocks = b.cf_blocks(0);
+    assert_eq!(blocks[0].ranges, vec![Rect::new(2, 0, 5, 0)]);
+    // saved and read back
+    let b2 = Book::from_bytes(&b.to_bytes().unwrap()).unwrap();
+    let bl2 = b2.cf_blocks(0);
+    assert_eq!(bl2.len(), 2);
+    assert_eq!(b2.cf_at(0, 3, 0, &bl2).unwrap().dxf.fill, Some(0xFFC7CE));
+    b.clear_cf(0, None).unwrap();
+    assert!(b.cf_blocks(0).is_empty());
+    b.undo();
+    assert_eq!(b.cf_blocks(0).len(), 2);
+}

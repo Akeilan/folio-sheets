@@ -1398,6 +1398,30 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g.refresh()
         self.update_title()
 
+    # ------------------------------------------------------------ conditional formatting
+    def act_conditional_formatting(self, arg=None):
+        from . import cf_ui
+        arg = arg or "manage"
+        key, _, rest = arg.partition(":")
+        if key in cf_ui.HIGHLIGHT:
+            cf_ui.highlight(self, key)
+        elif key in cf_ui.TOPBOTTOM:
+            cf_ui.top_bottom(self, key)
+        elif key == "bar":
+            cf_ui.data_bar(self, rest)
+        elif key == "scale":
+            cf_ui.color_scale(self, rest)
+        elif key == "icons":
+            cf_ui.icon_set(self, rest)
+        elif key == "new":
+            cf_ui.new_rule(self)
+        elif key in ("clear-sel", "clear"):
+            cf_ui.clear(self, False)
+        elif key == "clear-sheet":
+            cf_ui.clear(self, True)
+        elif key == "manage":
+            cf_ui.manage(self)
+
     # ------------------------------------------------------------ charts
     def on_object_selection(self, switch_tab=False):
         g = self.grid

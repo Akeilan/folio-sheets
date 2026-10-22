@@ -30,6 +30,8 @@ pub mod chart;
 pub mod drawing;
 pub mod chart_render;
 pub mod book_chart;
+pub mod cf;
+pub mod cf_icons;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]
