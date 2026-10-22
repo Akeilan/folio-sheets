@@ -30,6 +30,9 @@ pub struct ViewParams {
     pub dark: bool,
     /// the range the fill handle is being dragged over
     pub fill_target: Option<Rect>,
+    /// selected objects (charts) and the outline of one being moved or sized (screen px)
+    pub sel_objects: Vec<usize>,
+    pub obj_preview: Option<(f64, f64, f64, f64)>,
 }
 
 impl Default for ViewParams {
@@ -54,6 +57,8 @@ impl Default for ViewParams {
             arrows: vec![],
             dark: false,
             fill_target: None,
+            sel_objects: vec![],
+            obj_preview: None,
         }
     }
 }

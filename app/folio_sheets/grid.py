@@ -89,6 +89,8 @@ class GridView(Gtk.Box):
         self.extend_mode = False      # F8
         self.add_mode = False         # Shift+F8
         self._drag = None
+        self.sel_objects = []         # selected charts (indexes on this sheet)
+        self.obj_preview = None
         self.edit_sheet = None        # the sheet of the cell being edited
         self._autoscroll_id = 0
         self._last_motion = None
@@ -131,6 +133,7 @@ class GridView(Gtk.Box):
         self.states = {}
         self.sheet = book.active_sheet
         self.copy_range = None
+        self.sel_objects = []
         self.cancel_edit()
         self.refresh()
 
@@ -160,6 +163,7 @@ class GridView(Gtk.Box):
         self.sheet = i
         self.book.active_sheet = i
         self.copy_range = None
+        self.sel_objects = []
         self.refresh()
 
     def params(self, extra=None):
@@ -177,6 +181,8 @@ class GridView(Gtk.Box):
             "show_formulas": self.sheet in self.win.show_formulas,
             "arrows": self.win.arrows.get(self.sheet, []),
             "fill_target": getattr(self, "fill_target", None),
+            "sel_objects": [i for i in self.sel_objects if i < self._object_count()],
+            "obj_preview": self.obj_preview,
         }
         if extra:
             p.update(extra)
@@ -337,6 +343,53 @@ class GridView(Gtk.Box):
             self.scroll_by(dcols=n)
         return True
 
+    # ------------------------------------------------------------ objects
+    def _object_count(self):
+        try:
+            return len(self.book.objects(self.sheet))
+        except Exception:
+            return 0
+
+    def select_object(self, i, add=False):
+        if add:
+            if i in self.sel_objects:
+                self.sel_objects.remove(i)
+            else:
+                self.sel_objects.append(i)
+        else:
+            self.sel_objects = [i]
+        self.refresh()
+
+    def deselect_objects(self):
+        if self.sel_objects:
+            self.sel_objects = []
+            self.refresh()
+
+    def selected_chart(self):
+        """The selected chart's index, if exactly one chart is selected."""
+        objs = self.book.objects(self.sheet) if self.book is not None else []
+        live = [i for i in self.sel_objects if i < len(objs) and objs[i]["kind"] == "chart"]
+        return live[0] if len(live) == 1 and len(self.sel_objects) == 1 else None
+
+    CURSORS = {"body": "move", "nw": "nw-resize", "se": "se-resize", "ne": "ne-resize", "sw": "sw-resize",
+               "n": "n-resize", "s": "s-resize", "e": "e-resize", "w": "w-resize"}
+
+    def _object_rect_for(self, d, x, y):
+        _, i, part, x0, y0, (rx, ry, rw, rh) = d
+        dx, dy = x - x0, y - y0
+        if part == "body":
+            return (rx + dx, ry + dy, rw, rh)
+        l, t, r, b = rx, ry, rx + rw, ry + rh
+        if "w" in part:
+            l = min(l + dx, r - 12)
+        if "e" in part:
+            r = max(r + dx, l + 12)
+        if "n" in part:
+            t = min(t + dy, b - 12)
+        if "s" in part:
+            b = max(b + dy, t + 12)
+        return (l, t, r - l, b - t)
+
     # ------------------------------------------------------------ mouse
     def hit(self, x, y):
         return self.book.hit(self.sheet, float(x), float(y), self.params())
@@ -353,6 +406,35 @@ class GridView(Gtk.Box):
         state = ev.get_state()
         shift = bool(state & Gdk.ModifierType.SHIFT_MASK) or self.extend_mode
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK) or self.add_mode
+        oh = None if pointing else self.book.object_hit(self.sheet, float(ev.x), float(ev.y), self.params())
+        if oh is not None:
+            i, part = oh
+            if self.editing() and self.commit_edit() is False:
+                return True
+            if ev.button == 3:
+                if i not in self.sel_objects:
+                    self.select_object(i)
+                self.win.object_menu(ev, i)
+                return True
+            if ev.button != 1:
+                return False
+            if ev.type == Gdk.EventType._2BUTTON_PRESS:
+                self.select_object(i)
+                self.win.run("chart-format")
+                return True
+            if ctrl or shift:
+                self.select_object(i, add=True)
+                return True
+            if i not in self.sel_objects:
+                self.select_object(i)
+            rect = self.book.object_screen_rect(self.sheet, i, self.params())
+            self._drag = ("obj", i, part, ev.x, ev.y, rect)
+            self.obj_preview = None
+            self.win.on_object_selection()
+            return True
+        if self.sel_objects:
+            self.sel_objects = []
+            self.win.on_object_selection()
         if ev.button == 3:
             if h[0] == "cell" and not any(contains(rg, h[1], h[2]) for rg in self.sel.ranges):
                 self.select_cell(h[1], h[2])
@@ -440,6 +522,10 @@ class GridView(Gtk.Box):
         if self._drag is None:
             h = self.hit(ev.x, ev.y)
             cur = None
+            oh = self.book.object_hit(self.sheet, float(ev.x), float(ev.y), self.params())
+            if oh is not None:
+                h = ("object",)
+                cur = self.CURSORS.get(oh[1], "move")
             if h[0] == "colresize":
                 cur = "col-resize"
             elif h[0] == "rowresize":
@@ -458,6 +544,13 @@ class GridView(Gtk.Box):
 
     def _drag_to(self, x, y):
         kind = self._drag[0]
+        if kind == "obj":
+            d = self._drag
+            if self.obj_preview is None and abs(x - d[3]) < 3 and abs(y - d[4]) < 3:
+                return
+            self.obj_preview = self._object_rect_for(d, x, y)
+            self.area.queue_draw()
+            return
         if kind in ("colresize", "rowresize"):
             self.win.resize_feedback(self._drag, x, y)
             return
@@ -535,6 +628,19 @@ class GridView(Gtk.Box):
             self._autoscroll_id = 0
         d = self._drag
         self._drag = None
+        if d and d[0] == "obj":
+            prev, self.obj_preview = self.obj_preview, None
+            if prev is not None:
+                x, y, w, h = prev
+                label = "Move Chart" if d[2] == "body" else "Size Chart"
+                try:
+                    self.book.place_object(self.sheet, d[1], float(x), float(y), float(w), float(h), self.params(), label)
+                except ValueError as e:
+                    self.win.dialogs.message(str(e))
+                self.win.update_title()
+            self.refresh()
+            self.win.on_object_selection()
+            return True
         if d and d[0] in ("colresize", "rowresize"):
             self.win.resize_header(d, ev.x, ev.y)
         if d and d[0] == "fill":

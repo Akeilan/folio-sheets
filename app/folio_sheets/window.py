@@ -616,6 +616,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if s is not None and s < self.book.sheet_count and s != g.sheet:
             g.set_sheet(s)
             self.tabs.rebuild()
+        self.on_object_selection()
         g.refresh()
         self.update_title()
 
@@ -1397,6 +1398,115 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g.refresh()
         self.update_title()
 
+    # ------------------------------------------------------------ charts
+    def on_object_selection(self, switch_tab=False):
+        g = self.grid
+        n = len(self.book.objects(g.sheet)) if self.book is not None else 0
+        g.sel_objects = [i for i in g.sel_objects if i < n]
+        chart = g.selected_chart() is not None if self.book is not None else False
+        self.ribbon.show_contextual("Chart Design", chart)
+        if chart and switch_tab:
+            t = self.ribbon.tab_by_name("Chart Design")
+            if t is not None:
+                self.ribbon.select(t)
+        if chart:
+            name = self.book.objects(g.sheet)[g.sel_objects[0]]["name"]
+            self.formula_bar.namebox.show_text(name)
+        g.area.queue_draw()
+
+    def object_menu(self, ev, i):
+        items = [("Cut", "chart-cut"), ("Copy", "chart-copy"), None, ("Delete", "chart-delete"), None,
+                 ("Change Chart Type...", "chart-change-type"), ("Select Data...", "chart-select-data"),
+                 ("Switch Row/Column", "chart-switch-row-col"), None, ("Format Chart...", "chart-format")]
+        kind = self.book.objects(self.grid.sheet)[i]["kind"]
+        if kind != "chart":
+            items = [("Delete", "chart-delete")]
+        items = [it for it in items if it is None or getattr(self, commands.method_name(it[1]), None)]
+        self._popup_menu(items, ev)
+
+    def _chart_index(self):
+        i = self.grid.selected_chart()
+        if i is None:
+            self.status.extra.set_text("Select a chart first.")
+        return i
+
+    def _insert_chart(self, kind, page):
+        from . import chart_ui
+        chart_ui.insert_chart(self, kind, page)
+
+    def act_chart_column(self, kind=None):
+        self._insert_chart(kind, "Column")
+
+    def act_chart_line(self, kind=None):
+        self._insert_chart(kind, "Line")
+
+    def act_chart_pie(self, kind=None):
+        self._insert_chart(kind, "Pie")
+
+    def act_chart_scatter(self, kind=None):
+        self._insert_chart(kind, "X Y (Scatter)")
+
+    def act_chart_combo(self, kind=None):
+        self._insert_chart(kind, "Combo")
+
+    def act_recommended_charts(self):
+        self._insert_chart(None, None)
+
+    def act_charts_dialog(self):
+        self._insert_chart(None, None)
+
+    def act_chart_change_type(self):
+        from . import chart_ui
+        i = self._chart_index()
+        if i is not None:
+            chart_ui.change_type(self, i)
+
+    def act_chart_select_data(self):
+        from . import chart_ui
+        i = self._chart_index()
+        if i is not None:
+            chart_ui.select_data(self, i)
+
+    def act_chart_switch_row_col(self):
+        i = self._chart_index()
+        if i is None:
+            return
+        try:
+            self.book.switch_chart_rows(self.grid.sheet, i)
+        except ValueError as e:
+            self.dialogs.message(str(e), "Switch Row/Column")
+            return
+        self.grid.refresh()
+        self.update_title()
+
+    def act_chart_format(self):
+        from . import chart_ui
+        i = self._chart_index()
+        if i is not None:
+            chart_ui.format_chart(self, i)
+
+    def act_chart_add_element(self, what=None):
+        from . import chart_ui
+        i = self._chart_index()
+        if i is not None and what:
+            chart_ui.add_element(self, i, what)
+
+    def act_chart_colors(self, n=None):
+        from . import chart_ui
+        i = self._chart_index()
+        if i is not None:
+            chart_ui.set_colors(self, i, int(n or 0))
+
+    def act_chart_delete(self):
+        g = self.grid
+        if not g.sel_objects:
+            return
+        self.book.delete_objects(g.sheet, list(g.sel_objects))
+        g.sel_objects = []
+        self.on_object_selection()
+        g.refresh()
+        self.update_title()
+
     def act_flash_fill(self):
         g = self.grid
         r, c = g.sel.active
@@ -1793,12 +1903,39 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if kv == Gdk.KEY_F10 and not shift:
             self.keytips.start()
             return True
+        if alt and kv == Gdk.KEY_F1 and not self.grid.editing():
+            self.run("chart-column:col")
+            return True
         if alt and not ctrl and kv < 0x10000 and chr(kv).isalnum() and not self.grid.editing():
             if self.keytips.start_with(chr(Gdk.keyval_to_upper(kv)).upper()):
                 return True
         g = self.grid
         focus = self.get_focus()
         in_grid = focus is g.area
+        if in_grid and g.sel_objects and not g.editing():
+            if kv in (Gdk.KEY_Delete, Gdk.KEY_BackSpace):
+                self.run("chart-delete")
+                return True
+            if kv == Gdk.KEY_Escape:
+                g.deselect_objects()
+                self.on_object_selection()
+                return True
+            arrows = {Gdk.KEY_Left: (-1, 0), Gdk.KEY_Right: (1, 0), Gdk.KEY_Up: (0, -1), Gdk.KEY_Down: (0, 1)}
+            if kv in arrows and not ctrl:
+                dx, dy = arrows[kv]
+                step = 1.0 if alt else 8.0
+                p = g.params()
+                for i in list(g.sel_objects):
+                    r = self.book.object_screen_rect(g.sheet, i, p)
+                    if r:
+                        self.book.place_object(g.sheet, i, r[0] + dx * step, r[1] + dy * step, r[2], r[3], p, "Move Chart")
+                g.refresh()
+                self.update_title()
+                return True
+            if not ctrl and not alt and kv not in (Gdk.KEY_Shift_L, Gdk.KEY_Shift_R, Gdk.KEY_Tab):
+                # anything else goes back to the cells
+                g.deselect_objects()
+                self.on_object_selection()
         # global shortcuts
         if ctrl and alt and not g.editing() and kv in (Gdk.KEY_v, Gdk.KEY_V):
             self.run("paste-special")

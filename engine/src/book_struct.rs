@@ -305,6 +305,9 @@ impl Book {
         });
         let body = Body { pieces, cells, rows, cols, merges, autofilter };
         self.record(Delta::Body(s, Box::new(body)));
+        if sh.span.is_none() {
+            self.shift_objects(s, sh.rows, sh.at, sh.n);
+        }
         // ---- defined names
         let mut names = self.names.clone();
         let mut changed = false;

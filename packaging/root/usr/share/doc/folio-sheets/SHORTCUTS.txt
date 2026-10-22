@@ -36,6 +36,12 @@ Editing
   Ctrl+C / Ctrl+X / Ctrl+V   Copy / cut / paste (values and formulas)
   Ctrl+Z / Ctrl+Y         Undo / redo
 
+Charts
+  Alt+F1                  Insert a column chart of the data around the cell
+  Drag / handles          Move / size the selected chart (arrow keys nudge it; Alt+arrow by a pixel)
+  Double-click            Format Chart
+  Delete / Esc            Delete the selected chart / back to the cells
+
 Formulas
   =, then arrow keys      Point at cells (Shift+arrow: a range); clicking a cell does the same
   F4                      Cycle $ in the reference at the cursor (A1, $A$1, A$1, $A1)

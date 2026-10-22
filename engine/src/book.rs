@@ -98,6 +98,7 @@ pub enum Delta {
     Body(usize, Box<Body>),
     Calc(CalcSettings),
     Filter(usize, Option<crate::book_data::AutoFilter>),
+    Objects(usize, Vec<crate::drawing::Obj>),
 }
 
 #[derive(Clone, Debug)]
@@ -447,6 +448,10 @@ impl Book {
             Delta::Calc(c) => {
                 let old = std::mem::replace(&mut self.calc, c);
                 Delta::Calc(old)
+            }
+            Delta::Objects(s, objs) => {
+                let old = std::mem::replace(&mut self.sheets[s].objects, objs);
+                Delta::Objects(s, old)
             }
             Delta::Filter(s, f) => {
                 let old = std::mem::replace(&mut self.sheets[s].autofilter, f);
@@ -1302,6 +1307,7 @@ impl Book {
                 self.record(Delta::Cell(s, r, c, Some(n)));
             }
         }
+        self.adjust_charts(how);
     }
 
     // ------------------------------------------------------------------ names

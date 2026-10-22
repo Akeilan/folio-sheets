@@ -18,6 +18,10 @@ const T_WORKSHEET: &str = "http://schemas.openxmlformats.org/officeDocument/2006
 const T_SST: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings";
 const T_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
 const T_META: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata";
+const T_DRAWING: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
+const T_CHART: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+const CT_DRAWING: &str = "application/vnd.openxmlformats-officedocument.drawing+xml";
+const CT_CHART: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
 const CT_WORKSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
 const CT_SST: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml";
 const CT_META: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml";
@@ -80,14 +84,21 @@ fn resolve(base_part: &str, target: &str) -> String {
 }
 
 fn relative(base_part: &str, target: &str) -> String {
-    let dir = match base_part.rfind('/') {
-        Some(i) => &base_part[..=i],
-        None => "",
+    let dir: Vec<&str> = match base_part.rfind('/') {
+        Some(i) => base_part[..i].split('/').collect(),
+        None => vec![],
     };
-    match target.strip_prefix(dir) {
-        Some(t) => t.to_string(),
-        None => format!("/{}", target),
+    let tg: Vec<&str> = target.split('/').collect();
+    let mut k = 0;
+    while k < dir.len() && k + 1 < tg.len() && dir[k] == tg[k] {
+        k += 1;
     }
+    if k == 0 && !dir.is_empty() {
+        return format!("/{}", target);
+    }
+    let mut parts: Vec<&str> = vec![".."; dir.len() - k];
+    parts.extend_from_slice(&tg[k..]);
+    parts.join("/")
 }
 
 /// Text escaped for OOXML: control characters as _xHHHH_.
@@ -238,6 +249,8 @@ impl Book {
                         if let Err(e) = read_sheet(&mut sh, &text, &sst, &b.styles, b.file.dyn_cm) {
                             sh.error = Some(e);
                             sh.raw_part = Some(d.clone());
+                        } else {
+                            load_drawing(&mut sh, &parts, &b.styles.theme);
                         }
                     }
                     None => sh.error = Some("the sheet's part is missing".into()),
@@ -291,6 +304,63 @@ impl Book {
         b.state = 0;
         b.saved = 0;
         Ok(b)
+    }
+}
+
+/// A part's relationships: (id, type, target part or URL, external).
+fn find_part<'a>(parts: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a Vec<u8>> {
+    parts.iter().find(|(n, _)| n == name).map(|(_, d)| d)
+}
+
+fn read_rels(part: &str, parts: &[(String, Vec<u8>)]) -> Vec<(String, String, String, bool)> {
+    let mut out = Vec::new();
+    if let Some(d) = find_part(parts, &rels_name(part)) {
+        if let Ok((_, rels)) = xml::parse_bytes(d) {
+            for r in rels.elems() {
+                if let (Some(id), Some(t)) = (r.attr("Id"), r.attr("Target")) {
+                    let ext = r.attr("TargetMode") == Some("External");
+                    out.push((id.to_string(), r.attr("Type").unwrap_or("").to_string(), if ext { t.to_string() } else { resolve(part, t) }, ext));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Charts and other objects of a sheet, from its drawing part (kept as read when it
+/// can't be read).
+fn load_drawing(sh: &mut Sheet, parts: &[(String, Vec<u8>)], theme: &[u32; 12]) {
+    let get = |name: &str| find_part(parts, name);
+    let idx = match sh.pieces.iter().position(|p| matches!(p, Piece::Raw(t, _) if t == "drawing")) {
+        Some(i) => i,
+        None => return,
+    };
+    let raw = match &sh.pieces[idx] {
+        Piece::Raw(_, x) => x.clone(),
+        _ => return,
+    };
+    let rid = match xml::parse(&raw) {
+        Ok((_, e)) => match e.attrs.iter().find(|(k, _)| xml::local(k) == "id" && k.contains(':')) {
+            Some((_, v)) => v.clone(),
+            None => return,
+        },
+        Err(_) => return,
+    };
+    let rels = read_rels(&sh.part, parts);
+    let target = match rels.iter().find(|r| r.0 == rid && !r.3) {
+        Some(r) => r.2.clone(),
+        None => return,
+    };
+    let text = match get(&target).and_then(|d| xml::decode(d).ok()) {
+        Some(t) => t,
+        None => return,
+    };
+    let drels = read_rels(&target, parts);
+    let read = |p: &str| -> Option<String> { get(p).and_then(|d| xml::decode(d).ok()) };
+    if let Ok((df, objs)) = crate::drawing::read_drawing(&target, &text, drels, &read, theme) {
+        sh.objects = objs;
+        sh.drawing = Some(df);
+        sh.pieces[idx] = Piece::Known("drawing".into());
     }
 }
 
@@ -968,6 +1038,18 @@ impl Book {
             dyn_cm = Some(1);
             meta_new = true;
         }
+        // drawings and charts
+        let mut taken_parts: std::collections::HashSet<String> = self.file.parts.iter().map(|(n, _)| n.clone()).collect();
+        let mut used_parts: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let base = if dir.is_empty() { "xl".to_string() } else { dir.clone() };
+        let mut drawing_rids: Vec<Option<String>> = vec![None; self.sheets.len()];
+        for (i, sh) in self.sheets.iter().enumerate() {
+            if sh.raw_part.is_some() || (sh.objects.is_empty() && sh.drawing.is_none()) {
+                continue;
+            }
+            let (part, _) = &sheet_parts[i];
+            drawing_rids[i] = self.write_drawing_parts(sh, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut used_parts);
+        }
         // worksheets
         for (i, sh) in self.sheets.iter().enumerate() {
             let (part, _) = &sheet_parts[i];
@@ -975,7 +1057,7 @@ impl Book {
                 out.push((part.clone(), raw.clone()));
                 continue;
             }
-            let x = self.write_sheet(i, &mut sst, dyn_cm);
+            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref());
             out.push((part.clone(), x.into_bytes()));
         }
         // shared strings
@@ -1046,6 +1128,168 @@ impl Book {
             z.add(n, d, d.len() > 64);
         }
         Ok(z.finish())
+    }
+
+    /// Write a sheet's drawing part, its charts and the sheet's relationship to it.
+    /// Returns the relationship id the worksheet names (None: no drawing any more).
+    #[allow(clippy::too_many_arguments)]
+    fn write_drawing_parts(&self, sh: &Sheet, sheet_part: &str, base: &str, out: &mut Vec<(String, Vec<u8>)>, dropped: &mut Vec<String>,
+                           ct: &mut Element, taken: &mut std::collections::HashSet<String>, used: &mut std::collections::HashSet<String>) -> Option<String> {
+        let fresh = |stem: &str, taken: &mut std::collections::HashSet<String>| -> String {
+            let mut k = 1;
+            loop {
+                let p = format!("{}/{}{}.xml", base, stem, k);
+                if !taken.contains(&p) {
+                    taken.insert(p.clone());
+                    return p;
+                }
+                k += 1;
+            }
+        };
+        // the sheet's relationships
+        let srels_name = rels_name(sheet_part);
+        let (srels_pro, mut srels) = self.file.parts.iter().find(|(n, _)| *n == srels_name).and_then(|(_, d)| xml::parse_bytes(d).ok())
+            .unwrap_or_else(|| (String::new(), Element::with_attrs("Relationships", &[("xmlns", "http://schemas.openxmlformats.org/package/2006/relationships")])));
+        let old = sh.drawing.as_ref();
+        let old_rid = old.and_then(|d| srels.elems().find(|e| e.attr("Type").map(|t| t.ends_with("/drawing")).unwrap_or(false)
+            && e.attr("Target").map(|t| resolve(sheet_part, t) == d.part).unwrap_or(false)).and_then(|e| e.attr("Id")).map(|s| s.to_string()));
+        // charts that are gone take their parts with them
+        let live: Vec<&str> = sh.objects.iter().filter_map(|o| o.part.as_deref()).collect();
+        let file_parts = &self.file.parts;
+        let drop_chart = |target: &str, dropped: &mut Vec<String>, ct: &mut Element, used: &std::collections::HashSet<String>| {
+            if used.contains(target) || live.contains(&target) {
+                return;
+            }
+            dropped.push(target.to_string());
+            let cr = rels_name(target);
+            if let Some((_, d)) = file_parts.iter().find(|(n, _)| *n == cr) {
+                if let Ok((_, rels)) = xml::parse_bytes(d) {
+                    for r in rels.elems() {
+                        let ty = r.attr("Type").unwrap_or("");
+                        if ty.ends_with("/chartStyle") || ty.ends_with("/chartColorStyle") {
+                            if let Some(t) = r.attr("Target") {
+                                let p = resolve(target, t);
+                                remove_override(ct, &p);
+                                dropped.push(p);
+                            }
+                        }
+                    }
+                }
+            }
+            dropped.push(cr);
+            remove_override(ct, target);
+        };
+        if sh.objects.is_empty() {
+            if let Some(d) = old {
+                for r in &d.rels {
+                    if r.1.ends_with("/chart") {
+                        drop_chart(&r.2, dropped, ct, used);
+                    }
+                }
+                if !used.contains(&d.part) {
+                    dropped.push(d.part.clone());
+                    dropped.push(rels_name(&d.part));
+                    remove_override(ct, &d.part);
+                }
+            }
+            if let Some(rid) = &old_rid {
+                srels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Id") == Some(rid)));
+                out.push((srels_name, xml::document(&srels_pro, &srels).into_bytes()));
+            }
+            return None;
+        }
+        // the drawing part (a copied sheet gets its own)
+        let dpart = match old {
+            Some(d) if !used.contains(&d.part) => d.part.clone(),
+            _ => fresh("drawings/drawing", taken),
+        };
+        used.insert(dpart.clone());
+        let mut drels: Vec<(String, String, String, bool)> = old.map(|d| d.rels.iter().filter(|r| !r.1.ends_with("/chart")).cloned().collect()).unwrap_or_default();
+        if let Some(d) = old {
+            for r in &d.rels {
+                if r.1.ends_with("/chart") {
+                    drop_chart(&r.2, dropped, ct, used);
+                }
+            }
+        }
+        let mut objs = sh.objects.clone();
+        let mut ids: Vec<String> = drels.iter().map(|r| r.0.clone()).collect();
+        for o in objs.iter_mut() {
+            let ch = match &o.chart {
+                Some(c) => c.clone(),
+                None => continue,
+            };
+            let cpart = match &o.part {
+                Some(p) if !used.contains(p) => p.clone(),
+                _ => fresh("charts/chart", taken),
+            };
+            used.insert(cpart.clone());
+            // a chart copied with its sheet keeps the original's look only if it can
+            let xml = ch.to_xml(self);
+            out.push((cpart.clone(), xml.into_bytes()));
+            if o.part.as_deref() != Some(cpart.as_str()) {
+                if let Some(op) = &o.part {
+                    // copy the original's style parts' relationships along
+                    let orels = rels_name(op);
+                    if let Some((_, d)) = self.file.parts.iter().find(|(n, _)| *n == orels) {
+                        if ch.orig.is_some() {
+                            let txt = xml::decode(d).unwrap_or_default();
+                            // targets are relative to the charts folder in both
+                            out.push((rels_name(&cpart), txt.into_bytes()));
+                        }
+                    }
+                }
+            }
+            set_override(ct, &cpart, CT_CHART);
+            let mut k = 1;
+            let rid = loop {
+                let id = format!("rId{}", k);
+                if !ids.contains(&id) {
+                    ids.push(id.clone());
+                    break id;
+                }
+                k += 1;
+            };
+            drels.push((rid.clone(), T_CHART.into(), cpart.clone(), false));
+            o.set_chart_rid(&rid);
+        }
+        let dxml = crate::drawing::write_drawing(old, &objs);
+        out.push((dpart.clone(), dxml.into_bytes()));
+        set_override(ct, &dpart, CT_DRAWING);
+        // its relationships
+        let mut rels = Element::with_attrs("Relationships", &[("xmlns", "http://schemas.openxmlformats.org/package/2006/relationships")]);
+        for (id, ty, target, ext) in &drels {
+            let tg = if *ext { target.clone() } else { relative(&dpart, target) };
+            let mut e = Element::with_attrs("Relationship", &[("Id", id), ("Type", ty), ("Target", &tg)]);
+            if *ext {
+                e.set_attr("TargetMode", "External");
+            }
+            rels.push(e);
+        }
+        out.push((rels_name(&dpart), xml::document("", &rels).into_bytes()));
+        // the sheet names the drawing
+        let target = relative(sheet_part, &dpart);
+        let rid = match &old_rid {
+            Some(r) if old.map(|d| d.part == dpart).unwrap_or(false) => r.clone(),
+            _ => {
+                let ids: Vec<String> = srels.elems().filter_map(|e| e.attr("Id").map(|s| s.to_string())).collect();
+                let mut k = 1;
+                let id = loop {
+                    let id = format!("rId{}", k);
+                    if !ids.contains(&id) {
+                        break id;
+                    }
+                    k += 1;
+                };
+                if let Some(orid) = &old_rid {
+                    srels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Id") == Some(orid)));
+                }
+                srels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", T_DRAWING), ("Target", &target)]));
+                id
+            }
+        };
+        out.push((srels_name, xml::document(&srels_pro, &srels).into_bytes()));
+        Some(rid)
     }
 
     fn write_workbook(&self, sheet_parts: &[(String, String)]) -> String {
@@ -1164,7 +1408,7 @@ impl Book {
         xml::document(&pro, &wb)
     }
 
-    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>) -> String {
+    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>) -> String {
         let sh = &self.sheets[i];
         let mut out = String::with_capacity(4096 + sh.cells.len() * 40);
         if sh.root_open.is_empty() {
@@ -1189,6 +1433,9 @@ impl Book {
             if !have(&pieces, tag) {
                 pieces.push(Piece::Known(tag.to_string()));
             }
+        }
+        if drawing_rid.is_some() && !pieces.iter().any(|x| matches!(x, Piece::Known(t) | Piece::Raw(t, _) if t == "drawing")) {
+            pieces.push(Piece::Known("drawing".into()));
         }
         let rank = |p: &Piece| -> usize {
             let t = match p {
@@ -1259,6 +1506,11 @@ impl Book {
                     "autoFilter" => {
                         if let Some(af) = &sh.autofilter {
                             crate::book_data::write_autofilter(af, &pfx, &mut out);
+                        }
+                    }
+                    "drawing" => {
+                        if let Some(rid) = drawing_rid {
+                            out.push_str(&format!("<{}drawing r:id=\"{}\"/>", pfx, esc_attr(rid)));
                         }
                     }
                     "mergeCells" => {

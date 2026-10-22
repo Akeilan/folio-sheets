@@ -82,7 +82,77 @@ fn view_params(d: &Bound<'_, PyDict>) -> ViewParams {
     }
     p.dark = get(d, "dark").unwrap_or(false);
     p.fill_target = get::<R4>(d, "fill_target").map(rect);
+    p.sel_objects = get(d, "sel_objects").unwrap_or_default();
+    p.obj_preview = get(d, "obj_preview");
     p
+}
+
+fn cairo_ptr(cr: &Bound<'_, PyAny>) -> PyResult<*mut crate::ffi::cairo_t> {
+    let tn = cr.get_type().name()?.to_string();
+    if tn != "Context" {
+        return Err(PyValueError::new_err("needs a cairo.Context"));
+    }
+    let ctx = unsafe { *((cr.as_ptr() as *const u8).add(std::mem::size_of::<pyo3::ffi::PyObject>()) as *const *mut crate::ffi::cairo_t) };
+    if ctx.is_null() {
+        return Err(PyValueError::new_err("no cairo context"));
+    }
+    Ok(ctx)
+}
+
+fn spec_dict<'py>(py: Python<'py>, sp: &crate::book_chart::ChartSpec) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new_bound(py);
+    d.set_item("kind", &sp.kind)?;
+    d.set_item("title_mode", &sp.title_mode)?;
+    d.set_item("title", &sp.title)?;
+    d.set_item("legend", &sp.legend)?;
+    d.set_item("x_title", &sp.x_title)?;
+    d.set_item("y_title", &sp.y_title)?;
+    d.set_item("gridlines", sp.gridlines)?;
+    d.set_item("labels", sp.labels)?;
+    d.set_item("palette", sp.palette)?;
+    let mut list = Vec::new();
+    for s in &sp.series {
+        let e = PyDict::new_bound(py);
+        e.set_item("name", &s.name)?;
+        e.set_item("cat", &s.cat)?;
+        e.set_item("val", &s.val)?;
+        e.set_item("kind", &s.kind)?;
+        e.set_item("secondary", s.secondary)?;
+        e.set_item("color", s.color)?;
+        list.push(e);
+    }
+    d.set_item("series", list)?;
+    Ok(d)
+}
+
+fn dict_spec(d: &Bound<'_, PyDict>) -> PyResult<crate::book_chart::ChartSpec> {
+    let mut sp = crate::book_chart::ChartSpec {
+        kind: get(d, "kind").unwrap_or_else(|| "col".into()),
+        title_mode: get(d, "title_mode").unwrap_or_else(|| "auto".into()),
+        title: get(d, "title").unwrap_or_default(),
+        legend: get(d, "legend").unwrap_or_else(|| "b".into()),
+        x_title: get(d, "x_title").unwrap_or_default(),
+        y_title: get(d, "y_title").unwrap_or_default(),
+        gridlines: get(d, "gridlines").unwrap_or(true),
+        labels: get(d, "labels").unwrap_or(false),
+        palette: get(d, "palette").unwrap_or(0),
+        series: vec![],
+    };
+    if let Some(list) = d.get_item("series")?.filter(|v| !v.is_none()) {
+        for item in list.iter()? {
+            let item = item?;
+            let e = item.downcast::<PyDict>()?;
+            sp.series.push(crate::book_chart::SeriesSpec {
+                name: get(e, "name").unwrap_or_default(),
+                cat: get(e, "cat").unwrap_or_default(),
+                val: get(e, "val").unwrap_or_default(),
+                kind: get(e, "kind").unwrap_or_else(|| "col".into()),
+                secondary: get(e, "secondary").unwrap_or(false),
+                color: get(e, "color"),
+            });
+        }
+    }
+    Ok(sp)
 }
 
 fn pen(v: &Bound<'_, PyAny>) -> PyResult<Option<(String, Option<u32>)>> {
@@ -998,6 +1068,133 @@ impl PyBook {
         unsafe { self.b.render(s, ctx, &vp) };
         Ok(())
     }
+    // ---- charts and objects
+    fn objects<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let mut out = Vec::new();
+        for o in &self.b.sheets[s].objects {
+            let d = PyDict::new_bound(py);
+            d.set_item("kind", o.kind())?;
+            d.set_item("name", &o.name)?;
+            d.set_item("rect", self.b.obj_rect(s, o))?;
+            out.push(d);
+        }
+        Ok(out)
+    }
+    fn object_hit(&self, s: usize, x: f64, y: f64, p: &Bound<'_, PyDict>) -> PyResult<Option<(usize, String)>> {
+        self.sheet(s)?;
+        Ok(self.b.object_hit(s, x, y, &view_params(p)).map(|(i, k)| (i, k.to_string())))
+    }
+    fn object_screen_rect(&self, s: usize, i: usize, p: &Bound<'_, PyDict>) -> PyResult<Option<(f64, f64, f64, f64)>> {
+        self.sheet(s)?;
+        Ok(self.b.object_screen_rect(s, i, &view_params(p)))
+    }
+    #[pyo3(signature = (s, i, x, y, w, h, p, label="Move Chart"))]
+    fn place_object(&mut self, s: usize, i: usize, x: f64, y: f64, w: f64, h: f64, p: &Bound<'_, PyDict>, label: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let vp = view_params(p);
+        self.b.place_object(s, i, x, y, w, h, &vp, label).map_err(verr)
+    }
+    #[pyo3(signature = (s, i, x, y, w, h, label="Move Chart"))]
+    fn set_object_rect(&mut self, s: usize, i: usize, x: f64, y: f64, w: f64, h: f64, label: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_object_rect(s, i, x, y, w, h, label).map_err(verr)
+    }
+    fn sheet_point(&self, s: usize, x: f64, y: f64, p: &Bound<'_, PyDict>) -> PyResult<(f64, f64)> {
+        self.sheet(s)?;
+        Ok(self.b.sheet_point(s, x, y, &view_params(p)))
+    }
+    fn delete_objects(&mut self, s: usize, which: Vec<usize>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.delete_objects(s, &which).map_err(verr)
+    }
+    fn insert_chart(&mut self, s: usize, rg: R4, kind: &str, x: f64, y: f64) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.insert_chart(s, rect(rg), kind, x, y).map_err(verr)
+    }
+    fn chart_spec<'py>(&self, py: Python<'py>, s: usize, i: usize) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        match self.b.chart_spec(s, i) {
+            Some(sp) => Ok(Some(spec_dict(py, &sp)?)),
+            None => Ok(None),
+        }
+    }
+    #[pyo3(signature = (s, i, spec, label="Format Chart"))]
+    fn set_chart_spec(&mut self, s: usize, i: usize, spec: &Bound<'_, PyDict>, label: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let sp = dict_spec(spec)?;
+        self.b.set_chart_spec(s, i, &sp, label).map_err(verr)
+    }
+    fn set_chart_kind(&mut self, s: usize, i: usize, kind: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_chart_kind(s, i, kind).map_err(verr)
+    }
+    fn switch_chart_rows(&mut self, s: usize, i: usize) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.switch_chart_rows(s, i).map_err(verr)
+    }
+    fn chart_range_text(&self, s: usize, i: usize) -> PyResult<Option<String>> {
+        self.sheet(s)?;
+        Ok(self.b.chart_range_text(s, i))
+    }
+    #[pyo3(signature = (s, i, range, by_rows=None))]
+    fn set_chart_range(&mut self, s: usize, i: usize, range: &str, by_rows: Option<bool>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_chart_range(s, i, range, by_rows).map_err(verr)
+    }
+    fn chart_title(&self, s: usize, i: usize) -> PyResult<Option<String>> {
+        self.sheet(s)?;
+        Ok(self.b.chart(s, i).and_then(|c| self.b.chart_title_text(c)))
+    }
+    fn chart_exotic(&self, s: usize, i: usize) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.chart(s, i).map(|c| c.exotic()).unwrap_or(false))
+    }
+    /// Draw a chart into a cairo context: the sheet's chart i, or (rg, kind) a preview
+    /// of a new chart of that range.
+    #[pyo3(signature = (s, cr, w, h, i=None, rg=None, kind=None, zoom=1.0))]
+    fn render_chart(&self, s: usize, cr: &Bound<'_, PyAny>, w: f64, h: f64, i: Option<usize>, rg: Option<R4>, kind: Option<&str>, zoom: f64) -> PyResult<()> {
+        self.sheet(s)?;
+        let ctx = cairo_ptr(cr)?;
+        let ch = match (i, rg) {
+            (Some(i), _) => self.b.chart(s, i).cloned().ok_or_else(|| PyValueError::new_err("no such chart"))?,
+            (None, Some(rg)) => self.b.chart_from_range(s, rect(rg), kind.unwrap_or("col")).map_err(verr)?,
+            _ => return Err(PyValueError::new_err("give a chart or a range")),
+        };
+        unsafe { self.b.paint_chart_at(&ch, ctx, 0.0, 0.0, w, h, zoom) };
+        Ok(())
+    }
+    /// The text of the cells a chart reference names.
+    fn chart_ref_text(&self, f: &str) -> String {
+        let src = crate::chart::Src { f: Some(f.trim_start_matches('=').to_string()), cache: vec![], fmt: None };
+        self.b.chart_values(&src).into_iter().map(|p| p.text).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ")
+    }
+    /// The spec a new chart of a range would have.
+    fn range_spec<'py>(&self, py: Python<'py>, s: usize, rg: R4, kind: &str) -> PyResult<Bound<'py, PyDict>> {
+        self.sheet(s)?;
+        let ch = self.b.chart_from_range(s, rect(rg), kind).map_err(verr)?;
+        spec_dict(py, &self.b.spec_of(&ch))
+    }
+    #[pyo3(signature = (s, cr, w, h, spec, zoom=1.0))]
+    fn render_spec(&self, s: usize, cr: &Bound<'_, PyAny>, w: f64, h: f64, spec: &Bound<'_, PyDict>, zoom: f64) -> PyResult<()> {
+        self.sheet(s)?;
+        let ctx = cairo_ptr(cr)?;
+        let ch = self.b.chart_of_spec(&dict_spec(spec)?).map_err(verr)?;
+        unsafe { self.b.paint_chart_at(&ch, ctx, 0.0, 0.0, w, h, zoom) };
+        Ok(())
+    }
+    #[pyo3(signature = (s, spec, x, y, w=480.0, h=288.0))]
+    fn add_chart_spec(&mut self, s: usize, spec: &Bound<'_, PyDict>, x: f64, y: f64, w: f64, h: f64) -> PyResult<usize> {
+        self.sheet(s)?;
+        let ch = self.b.chart_of_spec(&dict_spec(spec)?).map_err(verr)?;
+        self.b.add_chart(s, ch, x, y, w, h).map_err(verr)
+    }
+    /// Whether a range can be charted (None) or why not.
+    fn chart_check(&self, s: usize, rg: R4, kind: &str) -> PyResult<Option<String>> {
+        self.sheet(s)?;
+        Ok(self.b.chart_from_range(s, rect(rg), kind).err())
+    }
+
     fn render_png(&self, s: usize, path: &str, p: &Bound<'_, PyDict>) -> PyResult<()> {
         crate::render::render_png(&self.b, s, &view_params(p), path).map_err(PyIOError::new_err)
     }
