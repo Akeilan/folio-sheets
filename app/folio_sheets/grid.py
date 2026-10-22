@@ -176,6 +176,7 @@ class GridView(Gtk.Box):
             "refs": self.win.assist.refs if self.editing() else [],
             "show_formulas": self.sheet in self.win.show_formulas,
             "arrows": self.win.arrows.get(self.sheet, []),
+            "fill_target": getattr(self, "fill_target", None),
         }
         if extra:
             p.update(extra)
@@ -425,7 +426,8 @@ class GridView(Gtk.Box):
             self._drag = (kind, h[1], ev.x, ev.y)
             return True
         elif kind == "fill":
-            self._drag = ("fill",)
+            self._drag = ("fill", tuple(self.sel.ranges[-1]))
+            self.fill_target = None
             return True
         self.end_mode = False
         self.refresh()
@@ -463,6 +465,11 @@ class GridView(Gtk.Box):
         if kind == "point" and h[0] == "cell":
             self.win.insert_reference(h[1], h[2], extend=True)
             return
+        if kind == "fill":
+            if h[0] == "cell":
+                self.fill_target = self._fill_target(self._drag[1], h[1], h[2])
+                self.area.queue_draw()
+            return
         if kind == "cells" and h[0] == "cell":
             self.sel.extend_to(h[1], h[2])
             self.refresh()
@@ -481,6 +488,24 @@ class GridView(Gtk.Box):
                 a = self._drag[1]
                 self.sel.ranges[-1] = (min(a, r), 0, max(a, r), MAX_COLS - 1)
                 self.refresh()
+
+    @staticmethod
+    def _fill_target(src, r, c):
+        """The range a fill-handle drag to (r, c) covers: src stretched in one direction
+        (the one the pointer went further in), or shrunk."""
+        r1, c1, r2, c2 = src
+        down = r - r2 if r > r2 else (r - r1 if r < r1 else 0)
+        across = c - c2 if c > c2 else (c - c1 if c < c1 else 0)
+        if down == 0 and across == 0:
+            # inside: shrinking clears what is left out
+            if r < r2 and (r2 - r) >= (c2 - c):
+                return (r1, c1, max(r, r1), c2)
+            if c < c2:
+                return (r1, c1, r2, max(c, c1))
+            return src
+        if abs(down) >= abs(across):
+            return (min(r1, r), c1, max(r2, r), c2)
+        return (r1, min(c1, c), r2, max(c2, c))
 
     def _autoscroll_check(self, x, y):
         a = self.area.get_allocation()
@@ -512,6 +537,12 @@ class GridView(Gtk.Box):
         self._drag = None
         if d and d[0] in ("colresize", "rowresize"):
             self.win.resize_header(d, ev.x, ev.y)
+        if d and d[0] == "fill":
+            target, self.fill_target = getattr(self, "fill_target", None), None
+            if target and tuple(target) != tuple(d[1]):
+                ctrl = bool(ev.state & Gdk.ModifierType.CONTROL_MASK)
+                self.win.fill_handle(d[1], target, ctrl)
+            self.area.queue_draw()
         self.win.on_selection_changed()
         if d and d[0] in ("cells", "cols", "rows") and getattr(self.win, "painter", None):
             self.win.painter_finish()

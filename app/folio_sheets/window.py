@@ -1339,6 +1339,76 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.sheet_changed()
         self.update_title()
 
+    # ------------------------------------------------------------ fill
+    def fill_handle(self, src, target, ctrl=False):
+        """The fill handle was dragged from src over target (Ctrl: copy instead of a
+        series; a single number counts up instead)."""
+        g = self.grid
+        b = self.book
+        src, target = tuple(src), tuple(target)
+        try:
+            inside = target[0] >= src[0] and target[1] >= src[1] and target[2] <= src[2] and target[3] <= src[3]
+            if inside:
+                cut = (target[2] + 1, src[1], src[2], src[3]) if target[2] < src[2] else (src[0], target[3] + 1, src[2], src[3])
+                b.clear_contents(g.sheet, [cut], "AutoFill")
+            else:
+                single = src[0:2] == src[2:4]
+                v = b.value(g.sheet, src[0], src[1])
+                if ctrl and single and isinstance(v, float) and not b.is_formula(g.sheet, src[0], src[1]):
+                    vertical = target[0] != src[0] or target[2] != src[2]
+                    if target[0] < src[0] or target[1] < src[1]:
+                        b.autofill(g.sheet, src, target, False)
+                    else:
+                        b.fill_series(g.sheet, target, not vertical, "linear", "day", 1.0)
+                else:
+                    b.autofill(g.sheet, src, target, not ctrl)
+        except ValueError as e:
+            self.dialogs.message(str(e))
+            return
+        g.sel.ranges = [target]
+        g.refresh()
+        self.update_title()
+
+    def act_fill_series(self):
+        from . import fill_ui
+        fill_ui.series_dialog(self)
+
+    def act_fill_justify(self):
+        """Fill ▸ Justify: the text of the selection's first column, rewrapped to the
+        selection's width, one line per cell."""
+        import textwrap
+        g = self.grid
+        b = self.book
+        r1, c1, r2, c2 = g.sel.ranges[-1]
+        ext = b.used_extent(g.sheet) or (r1, c1)
+        r2 = min(r2, max(ext[0], r1))
+        words = " ".join(b.display(g.sheet, r, c1) for r in range(r1, r2 + 1) if b.display(g.sheet, r, c1)).split()
+        if not words:
+            return
+        if any(b.is_formula(g.sheet, r, c1) or isinstance(b.value(g.sheet, r, c1), float) for r in range(r1, r2 + 1)):
+            self.dialogs.message("Cannot justify numbers or formulas.")
+            return
+        width_px = sum(b.col_px(g.sheet, c) for c in range(c1, c2 + 1))
+        chars = max(1, int((width_px - 5) / b.mdw(g.sheet) * 1.1))
+        lines = textwrap.wrap(" ".join(words), chars)
+        with b.group("Fill Justify"):
+            for i, r in enumerate(range(r1, max(r2, r1 + len(lines) - 1) + 1)):
+                b.set_input(g.sheet, r, c1, lines[i] if i < len(lines) else "")
+        g.refresh()
+        self.update_title()
+
+    def act_flash_fill(self):
+        g = self.grid
+        r, c = g.sel.active
+        try:
+            n = self.book.flash_fill(g.sheet, r, c)
+        except ValueError as e:
+            self.dialogs.message(str(e), "Flash Fill")
+            return
+        self.status.extra.set_text("Flash Fill changed %d cells." % n)
+        g.refresh()
+        self.update_title()
+
     # ------------------------------------------------------------ find
     def act_find(self):
         from . import find_ui

@@ -686,6 +686,17 @@ impl Book {
             cairo_rectangle(cr, x, y, w - 1.0, h - 1.0);
             cairo_stroke(cr);
         }
+        // where the fill handle is being dragged
+        if let Some(ft) = &p.fill_target {
+            let (x, y, w, h) = area(&expand(ft));
+            rgb(cr, 0x7F7F7F);
+            cairo_set_line_width(cr, 1.0);
+            let d = [3.0f64, 2.0];
+            cairo_set_dash(cr, d.as_ptr(), 2, 0.0);
+            cairo_rectangle(cr, x - 0.5, y - 0.5, w, h);
+            cairo_stroke(cr);
+            cairo_set_dash(cr, std::ptr::null(), 0, 0.0);
+        }
         // the copy marquee
         if let Some(cp) = &p.copy {
             let (x, y, w, h) = area(&expand(cp));

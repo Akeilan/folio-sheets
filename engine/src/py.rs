@@ -81,6 +81,7 @@ fn view_params(d: &Bound<'_, PyDict>) -> ViewParams {
         p.arrows = v.into_iter().map(|(r, t, c)| (rect(r), t, c)).collect();
     }
     p.dark = get(d, "dark").unwrap_or(false);
+    p.fill_target = get::<R4>(d, "fill_target").map(rect);
     p
 }
 
@@ -765,6 +766,23 @@ impl PyBook {
         let o = paste_opts(opts)?;
         let area = clip.clip_area();
         self.b.paste_from(&clip, 0, area, dst_s, rect(dst), o).map(|r| tup(&r)).map_err(verr)
+    }
+
+    // ---- fill
+    #[pyo3(signature = (s, src, target, series=true, formats_only=false, values_only=false))]
+    fn autofill(&mut self, s: usize, src: R4, target: R4, series: bool, formats_only: bool, values_only: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.autofill(s, rect(src), rect(target), series, formats_only, values_only).map_err(verr)
+    }
+    #[pyo3(signature = (s, rg, by_rows, kind, unit="day", step=1.0, stop=None, trend=false))]
+    #[allow(clippy::too_many_arguments)]
+    fn fill_series(&mut self, s: usize, rg: R4, by_rows: bool, kind: &str, unit: &str, step: f64, stop: Option<f64>, trend: bool) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.fill_series(s, rect(rg), by_rows, kind, unit, step, stop, trend).map_err(verr)
+    }
+    fn flash_fill(&mut self, s: usize, row: u32, col: u32) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.flash_fill(s, row, col).map_err(verr)
     }
 
     // ---- calculation
