@@ -1355,6 +1355,120 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.sheet_changed()
         self.update_title()
 
+    # ------------------------------------------------------------ insert / delete cells
+    def _struct_ranges(self, rows):
+        """The selection's row (or column) spans, last first so earlier ones don't move."""
+        g = self.grid
+        spans = sorted({(rg[0], rg[2]) if rows else (rg[1], rg[3]) for rg in g.sel.ranges}, reverse=True)
+        return spans
+
+    def _struct(self, label, fn):
+        g = self.grid
+        if g.editing() and g.commit_edit() is False:
+            return False
+        if self.book.sheet_info(g.sheet)["kind"] != "work":
+            self.dialogs.message("This command works on worksheets only.")
+            return False
+        try:
+            with self.book.group(label):
+                fn()
+        except ValueError as e:
+            self.dialogs.message(str(e))
+            return False
+        g.copy_range = None
+        g.refresh()
+        self.update_title()
+        return True
+
+    def act_insert_rows(self):
+        g = self.grid
+        self._struct("Insert Rows", lambda: [self.book.insert_rows(g.sheet, a, b - a + 1)
+                                               for a, b in self._struct_ranges(True)])
+
+    def act_delete_rows(self):
+        g = self.grid
+        self._struct("Delete Rows", lambda: [self.book.delete_rows(g.sheet, a, b - a + 1)
+                                               for a, b in self._struct_ranges(True)])
+
+    def act_insert_columns(self):
+        g = self.grid
+        self._struct("Insert Columns", lambda: [self.book.insert_cols(g.sheet, a, b - a + 1)
+                                                  for a, b in self._struct_ranges(False)])
+
+    def act_delete_columns(self):
+        g = self.grid
+        self._struct("Delete Columns", lambda: [self.book.delete_cols(g.sheet, a, b - a + 1)
+                                                  for a, b in self._struct_ranges(False)])
+
+    def _cells_choice(self, title, options):
+        """Insert/Delete dialog: one of options [(label, key)]; None when cancelled."""
+        d = Gtk.Dialog(title=title, transient_for=self, modal=True)
+        d.add_button("OK", Gtk.ResponseType.OK)
+        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        d.set_default_response(Gtk.ResponseType.OK)
+        box = d.get_content_area()
+        box.set_border_width(12)
+        box.set_spacing(6)
+        box.pack_start(Gtk.Label(label=title.rstrip(".") + ":", xalign=0), False, False, 0)
+        group = None
+        buttons = []
+        for label, key in options:
+            b = Gtk.RadioButton.new_with_mnemonic_from_widget(group, label)
+            group = group or b
+            buttons.append((b, key))
+            box.pack_start(b, False, False, 0)
+        d.show_all()
+        r = d.run()
+        choice = next((k for b, k in buttons if b.get_active()), None)
+        d.destroy()
+        return choice if r == Gtk.ResponseType.OK else None
+
+    @staticmethod
+    def _whole_rows(rg):
+        return rg[1] == 0 and rg[3] >= MAX_COLS - 1
+
+    @staticmethod
+    def _whole_cols(rg):
+        return rg[0] == 0 and rg[2] >= MAX_ROWS - 1
+
+    def act_insert_cells(self):
+        g = self.grid
+        rgs = list(g.sel.ranges)
+        if all(self._whole_rows(r) for r in rgs):
+            return self.act_insert_rows()
+        if all(self._whole_cols(r) for r in rgs):
+            return self.act_insert_columns()
+        if len(rgs) > 1:
+            self.dialogs.message("This command cannot be used on multiple selections.")
+            return
+        how = self._cells_choice("Insert", [("Shift cells _right", "right"), ("Shift cells _down", "down"),
+                                            ("Entire _row", "row"), ("Entire _column", "col")])
+        if how == "row":
+            return self.act_insert_rows()
+        if how == "col":
+            return self.act_insert_columns()
+        if how:
+            self._struct("Insert Cells", lambda: self.book.insert_cells(g.sheet, tuple(rgs[0]), how == "down"))
+
+    def act_delete_cells(self):
+        g = self.grid
+        rgs = list(g.sel.ranges)
+        if all(self._whole_rows(r) for r in rgs):
+            return self.act_delete_rows()
+        if all(self._whole_cols(r) for r in rgs):
+            return self.act_delete_columns()
+        if len(rgs) > 1:
+            self.dialogs.message("This command cannot be used on multiple selections.")
+            return
+        how = self._cells_choice("Delete", [("Shift cells _left", "left"), ("Shift cells _up", "up"),
+                                            ("Entire _row", "row"), ("Entire _column", "col")])
+        if how == "row":
+            return self.act_delete_rows()
+        if how == "col":
+            return self.act_delete_columns()
+        if how:
+            self._struct("Delete Cells", lambda: self.book.delete_cells(g.sheet, tuple(rgs[0]), how == "up"))
+
     def act_insert_sheet(self):
         g = self.grid
         at = g.sheet if self.app.settings.get("insert_sheet_before", False) else g.sheet + 1

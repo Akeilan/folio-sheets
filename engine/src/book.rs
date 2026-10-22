@@ -75,6 +75,7 @@ pub struct SheetMeta {
 /// The cell data of a sheet, swapped whole by structural edits.
 #[derive(Clone, Debug)]
 pub struct Body {
+    pub pieces: Vec<crate::sheet::Piece>,
     pub cells: std::collections::BTreeMap<(u32, u32), Cell>,
     pub rows: std::collections::BTreeMap<u32, RowInfo>,
     pub cols: Vec<ColSpan>,
@@ -422,6 +423,7 @@ impl Book {
                 let b = *body;
                 let sh = &mut self.sheets[s];
                 let old = Body {
+                    pieces: std::mem::replace(&mut sh.pieces, b.pieces),
                     cells: std::mem::replace(&mut sh.cells, b.cells),
                     rows: std::mem::replace(&mut sh.rows, b.rows),
                     cols: std::mem::replace(&mut sh.cols, b.cols),
@@ -1572,11 +1574,13 @@ pub fn is_volatile(e: &Expr) -> bool {
 }
 
 /// The same adjustment with `here` set to the sheet a formula lives on.
-fn rebase<'a>(how: &Adjust<'a>, here: &'a str) -> Adjust<'a> {
+pub fn rebase<'a>(how: &Adjust<'a>, here: &'a str) -> Adjust<'a> {
     match how {
         Adjust::Shift(a, b) => Adjust::Shift(*a, *b),
         Adjust::Rows { sheet, at, n, .. } => Adjust::Rows { sheet, here, at: *at, n: *n },
         Adjust::Cols { sheet, at, n, .. } => Adjust::Cols { sheet, here, at: *at, n: *n },
+        Adjust::RowsIn { sheet, at, n, c1, c2, .. } => Adjust::RowsIn { sheet, here, at: *at, n: *n, c1: *c1, c2: *c2 },
+        Adjust::ColsIn { sheet, at, n, r1, r2, .. } => Adjust::ColsIn { sheet, here, at: *at, n: *n, r1: *r1, r2: *r2 },
         Adjust::RenameSheet(a, b) => Adjust::RenameSheet(a, b),
         Adjust::DeleteSheet(a) => Adjust::DeleteSheet(a),
         Adjust::Move { sheet, src, dr, dc, .. } => Adjust::Move { sheet, here, src: *src, dr: *dr, dc: *dc },

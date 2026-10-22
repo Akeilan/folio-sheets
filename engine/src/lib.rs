@@ -20,6 +20,7 @@ pub mod xlsx;
 pub mod view;
 pub mod render;
 pub mod book_fmt;
+pub mod book_struct;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]
