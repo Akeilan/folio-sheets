@@ -55,6 +55,15 @@ Number formats
   Ctrl+Shift+%            Percent
   Ctrl+Shift+^            Scientific
 
+Cell formatting
+  Ctrl+1                  Format Cells
+  Ctrl+Shift+F / P        Format Cells, Font tab
+  Ctrl+B / I / U          Bold / italic / underline
+  Ctrl+5                  Strikethrough
+  Ctrl+Shift+&            Outline border
+  Ctrl+Shift+_            Remove borders
+  Esc                     Cancel Format Painter
+
 Sheets
   Shift+F11               Insert a sheet
   Double-click a tab      Rename the sheet

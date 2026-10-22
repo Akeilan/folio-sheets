@@ -14,7 +14,9 @@ from .dialogs import Dialogs
 from . import fn_dialogs
 from .core import check_formula
 from .formula_edit import FormulaAssist
+from .formatting import FormattingMixin
 from .formulabar import FormulaBar
+from .history import HistoryBook
 from .grid import GridView
 from .ribbon import Ribbon
 from .sheettabs import SheetTabs
@@ -24,7 +26,7 @@ NATIVE = (".xlsx", ".xlsm", ".xltx", ".xltm")
 IMPORT = (".xls", ".ods", ".xlsb", ".fods", ".sxc")
 
 
-class SheetWindow(Gtk.ApplicationWindow):
+class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def __init__(self, app, path=None):
         Gtk.ApplicationWindow.__init__(self, application=app)
         self.app = app
@@ -122,7 +124,7 @@ class SheetWindow(Gtk.ApplicationWindow):
         tpl = self.app.blank_template()
         if tpl is None:
             raise RuntimeError("the blank workbook template is missing")
-        self.book = Book.open(tpl)
+        self.book = self._wrap(Book.open(tpl))
         self.path = None
         self.untitled = self.app.next_untitled()
         self._after_load()
@@ -150,11 +152,25 @@ class SheetWindow(Gtk.ApplicationWindow):
             if self.book is None:
                 self.new_book()
             return
-        self.book = book
+        self.book = self._wrap(book)
         if self.path is None:
             self.untitled = os.path.splitext(os.path.basename(path))[0]
         self.app.add_recent(path)
         self._after_load()
+
+    def _wrap(self, book):
+        hb = HistoryBook(book)
+        hb.on_switch = self._book_switched
+        return hb
+
+    def _book_switched(self):
+        """Undo/redo stepped across a formatting command: the engine Book changed."""
+        g = self.grid
+        g.copy_range = None
+        if g.sheet >= self.book.sheet_count:
+            g.sheet = self.book.sheet_count - 1
+        self.tabs.rebuild()
+        self.update_title()
 
     def _import_text(self, path):
         """CSV/TSV: values typed into a blank workbook (the Text Import
@@ -266,6 +282,13 @@ class SheetWindow(Gtk.ApplicationWindow):
         r.update("bold", "true" if st.get("bold") else "false")
         r.update("italic", "true" if st.get("italic") else "false")
         r.update("underline", "true" if st.get("underline") else "false")
+        r.update("wrap-text", "true" if st.get("wrap") else "false")
+        try:
+            ar, ac = self.grid.sel.active
+            merged = any(m[0] <= ar <= m[2] and m[1] <= ac <= m[3] for m in (self.book.merges(self.grid.sheet) or []))
+        except Exception:
+            merged = False
+        r.update("merge-center", "true" if merged else "false")
         h = st.get("halign") or ""
         v = st.get("valign") or "bottom"
         for k in ("left", "center", "right"):
@@ -373,8 +396,9 @@ class SheetWindow(Gtk.ApplicationWindow):
             for r in range(rg[0], rg[2] + 1):
                 for c in range(rg[1], rg[3] + 1):
                     cells.append((r, c))
-        for r, c in cells:
-            self.book.set_input(g.sheet, r, c, text)
+        with self.book.group("Typing"):
+            for r, c in cells:
+                self.book.set_input(g.sheet, r, c, text)
         g.refresh()
 
     # ------------------------------------------------------------ commands
@@ -393,8 +417,15 @@ class SheetWindow(Gtk.ApplicationWindow):
         if self.grid.editing() and cmd.split(":", 1)[0] not in keep:
             if self.grid.commit_edit() is False:
                 return
+        base = cmd.split(":", 1)[0]
+        grouping = self.book is not None and base not in ("undo", "redo")
         try:
-            fn(arg) if arg is not None else fn()
+            if grouping:
+                # whatever engine edits one command makes, one undo step takes back
+                with self.book.group(commands.label(cmd)):
+                    fn(arg) if arg is not None else fn()
+            else:
+                fn(arg) if arg is not None else fn()
         except NotImplementedError:
             self.not_yet(cmd)
 
@@ -660,8 +691,15 @@ class SheetWindow(Gtk.ApplicationWindow):
 
     def _fill(self, dr, dc):
         g = self.grid
+        ext = self.book.used_extent(g.sheet) or (0, 0)
         for rg in g.sel.ranges:
             r1, c1, r2, c2 = rg
+            # whole rows or columns: only as far as the sheet has data
+            r2 = min(r2, max(ext[0], r1 + 1)) if r2 - r1 > 100000 else r2
+            c2 = min(c2, max(ext[1], c1 + 1)) if c2 - c1 > 1000 else c2
+            if (r2 - r1 + 1) * (c2 - c1 + 1) > 200000:
+                self.dialogs.message("The selection is too large to fill.")
+                return
             if dr:
                 src_r = r1 if dr > 0 else r2
                 rows = range(r1 + 1, r2 + 1) if dr > 0 else range(r1, r2)
@@ -1539,8 +1577,15 @@ class SheetWindow(Gtk.ApplicationWindow):
                 if kv in quick:
                     self.apply_number_format(quick[kv])
                     return True
-            if ch == "f" and shift:
+            if ch in ("f", "p") and shift:
                 self.run("font-dialog")
+                return True
+            # Ctrl+Shift+& outline border, Ctrl+Shift+_ no border
+            if shift and not g.editing() and kv in (Gdk.KEY_ampersand, Gdk.KEY_7):
+                self.run("border-outside")
+                return True
+            if shift and not g.editing() and kv in (Gdk.KEY_underscore, Gdk.KEY_minus):
+                self.run("border-none")
                 return True
             if kv == Gdk.KEY_F4:
                 self.run("close")
@@ -1682,6 +1727,8 @@ class SheetWindow(Gtk.ApplicationWindow):
             g.start_edit(initial="")
             return True
         if kv == Gdk.KEY_Escape:
+            if self.painter:
+                self.painter = None
             if g.copy_range is not None:
                 self.cancel_copy()
             g.extend_mode = g.add_mode = False
