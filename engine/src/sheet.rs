@@ -155,6 +155,10 @@ pub struct Sheet {
     pub arrays: HashMap<(u32, u32), Rect>,
     /// the AutoFilter range and its column filters
     pub autofilter: Option<crate::book_data::AutoFilter>,
+    /// charts and other objects over the cells
+    pub objects: Vec<crate::drawing::Obj>,
+    /// the drawing part as read (None when the sheet had none, or it couldn't be read)
+    pub drawing: Option<crate::drawing::DrawingFile>,
     // ---- file
     pub part: String,
     pub prolog: String,
@@ -193,6 +197,8 @@ impl Sheet {
             ghosts: BTreeMap::new(),
             arrays: HashMap::new(),
             autofilter: None,
+            objects: Vec::new(),
+            drawing: None,
             part: String::new(),
             prolog: String::new(),
             root_open: String::new(),

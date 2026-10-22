@@ -59,6 +59,10 @@ extern "C" {
     pub fn cairo_move_to(cr: *mut cairo_t, x: c_double, y: c_double);
     pub fn cairo_line_to(cr: *mut cairo_t, x: c_double, y: c_double);
     pub fn cairo_rel_line_to(cr: *mut cairo_t, x: c_double, y: c_double);
+    pub fn cairo_curve_to(cr: *mut cairo_t, x1: c_double, y1: c_double, x2: c_double, y2: c_double, x3: c_double, y3: c_double);
+    pub fn cairo_set_line_join(cr: *mut cairo_t, j: c_int);
+    pub fn cairo_arc_negative(cr: *mut cairo_t, xc: c_double, yc: c_double, r: c_double, a1: c_double, a2: c_double);
+    pub fn cairo_stroke_preserve(cr: *mut cairo_t);
     pub fn cairo_arc(cr: *mut cairo_t, xc: c_double, yc: c_double, r: c_double, a1: c_double, a2: c_double);
     pub fn cairo_set_source_rgb(cr: *mut cairo_t, r: c_double, g: c_double, b: c_double);
     pub fn cairo_set_source_rgba(cr: *mut cairo_t, r: c_double, g: c_double, b: c_double, a: c_double);

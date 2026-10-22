@@ -26,6 +26,10 @@ pub mod book_find;
 pub mod book_clip;
 pub mod book_fill;
 pub mod flashfill;
+pub mod chart;
+pub mod drawing;
+pub mod chart_render;
+pub mod book_chart;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

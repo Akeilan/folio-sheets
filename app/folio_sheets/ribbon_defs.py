@@ -386,15 +386,30 @@ def build_ribbon(win):
     ])
     B.group(t, "Charts", [
         B.big("Recommended\nCharts", "r-recommended-charts", "recommended-charts", "R"),
-        [[B.icon("r-chart-column-sm", None, "C", "Insert Column or Bar Chart", menu=[("Column and bar charts...", "chart-column")]),
-          B.icon("r-chart-line-sm", None, "N", "Insert Line or Area Chart", menu=[("Line and area charts...", "chart-line")]),
-          B.icon("r-chart-pie-sm", None, "Q", "Insert Pie or Doughnut Chart", menu=[("Pie and doughnut charts...", "chart-pie")])],
+        [[B.icon("r-chart-column-sm", None, "C", "Insert Column or Bar Chart", menu=[
+            ("#", "2-D Column"), ("Clustered Column", "chart-column:col"), ("Stacked Column", "chart-column:col-stacked"),
+            ("100% Stacked Column", "chart-column:col-percent"), ("#", "2-D Bar"), ("Clustered Bar", "chart-column:bar"),
+            ("Stacked Bar", "chart-column:bar-stacked"), ("100% Stacked Bar", "chart-column:bar-percent"), None,
+            ("More Column Charts...", "chart-column")]),
+          B.icon("r-chart-line-sm", None, "N", "Insert Line or Area Chart", menu=[
+            ("#", "2-D Line"), ("Line", "chart-line:line"), ("Stacked Line", "chart-line:line-stacked"),
+            ("100% Stacked Line", "chart-line:line-percent"), ("Line with Markers", "chart-line:line-markers"),
+            ("#", "2-D Area"), ("Area", "chart-line:area"), ("Stacked Area", "chart-line:area-stacked"),
+            ("100% Stacked Area", "chart-line:area-percent"), None, ("More Line Charts...", "chart-line")]),
+          B.icon("r-chart-pie-sm", None, "Q", "Insert Pie or Doughnut Chart", menu=[
+            ("#", "2-D Pie"), ("Pie", "chart-pie:pie"), ("#", "Doughnut"), ("Doughnut", "chart-pie:doughnut"), None,
+            ("More Pie Charts...", "chart-pie")])],
          [B.icon("r-chart-hierarchy-sm", None, "I", "Insert Hierarchy Chart", menu=[("Treemap and sunburst...", "chart-hierarchy")]),
           B.icon("r-chart-statistic-sm", None, "S1", "Insert Statistic Chart", menu=[("Histogram and box & whisker...", "chart-statistic")]),
-          B.icon("r-chart-scatter-sm", None, "D", "Insert Scatter or Bubble Chart", menu=[("Scatter and bubble charts...", "chart-scatter")])],
+          B.icon("r-chart-scatter-sm", None, "D", "Insert Scatter (X, Y) Chart", menu=[
+            ("#", "Scatter"), ("Scatter", "chart-scatter:scatter"), ("Scatter with Smooth Lines", "chart-scatter:scatter-smooth"),
+            ("Scatter with Straight Lines", "chart-scatter:scatter-lines"), None, ("More Scatter Charts...", "chart-scatter")])],
          [B.icon("r-chart-waterfall-sm", None, "S2", "Insert Waterfall, Funnel, Stock, Surface or Radar Chart",
                  menu=[("Waterfall, funnel, stock, surface, radar...", "chart-waterfall")]),
-          B.icon("r-chart-combo-sm", None, "O", "Insert Combo Chart", menu=[("Combo charts...", "chart-combo")])]],
+          B.icon("r-chart-combo-sm", None, "O", "Insert Combo Chart", menu=[
+            ("Clustered Column - Line", "chart-combo:combo"),
+            ("Clustered Column - Line on Secondary Axis", "chart-combo:combo-secondary"), None,
+            ("Create Custom Combo Chart...", "chart-combo")])]],
         B.big("PivotChart", "r-pivot-chart", "pivot-chart", "V"),
     ], launcher="charts-dialog", launcher_keytip="K")
     B.group(t, "Sparklines", [
@@ -660,5 +675,33 @@ def build_ribbon(win):
     t = r.building(Tab("Help", "Y"))
     B.group(t, "Help", [B.big("Help", "r-help", "help", "H")])
     r.add_tab(t)
+
+    # ================================================================ Chart Design (contextual)
+    t = r.building(Tab("Chart Design", "JC", contextual=True))
+    B.group(t, "Chart Layouts", [
+        B.big("Add Chart\nElement", "r-chart-add-element", None, "A", menu=[
+            ("#", "Chart Title"), ("None", "chart-add-element:title:none"), ("Above Chart", "chart-add-element:title:auto"),
+            ("#", "Axis Titles"), ("Primary Horizontal", "chart-add-element:axis-title-x:on"),
+            ("Primary Vertical", "chart-add-element:axis-title-y:on"),
+            ("No Axis Titles", "chart-add-element:axis-title-x:off"),
+            ("#", "Data Labels"), ("Show", "chart-add-element:labels:on"), ("None", "chart-add-element:labels:off"),
+            ("#", "Gridlines"), ("Primary Major Horizontal", "chart-add-element:gridlines:on"),
+            ("No Gridlines", "chart-add-element:gridlines:off"),
+            ("#", "Legend"), ("None", "chart-add-element:legend:none"), ("Right", "chart-add-element:legend:r"),
+            ("Top", "chart-add-element:legend:t"), ("Left", "chart-add-element:legend:l"),
+            ("Bottom", "chart-add-element:legend:b")]),
+    ])
+    B.group(t, "Chart Styles", [
+        B.big("Change\nColors", "r-chart-colors", None, "H", menu=[("#", "Colorful"), ("Colorful Palette", "chart-colors:0"),
+            ("#", "Monochromatic")] + [("Monochrome %d" % k, "chart-colors:%d" % k) for k in range(1, 7)]),
+        B.big("Format\nChart", "r-chart-format", "chart-format", "F"),
+    ])
+    B.group(t, "Data", [
+        B.big("Switch\nRow/Column", "r-chart-switch", "chart-switch-row-col", "W"),
+        B.big("Select\nData", "r-chart-select-data", "chart-select-data", "E"),
+    ])
+    B.group(t, "Type", [B.big("Change\nChart Type", "r-chart-change-type", "chart-change-type", "C")])
+    r.add_tab(t)
+    r.show_contextual("Chart Design", False)
     r.building(None)
     r.select(r.tabs[0])

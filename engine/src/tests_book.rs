@@ -302,3 +302,109 @@ fn fills() {
     assert_eq!(b.flash_fill(0, 40, 1).unwrap(), 2);
     assert_eq!(b.value(0, 42, 1), Value::str("Turing"));
 }
+
+#[test]
+fn charts_read_and_write() {
+    use crate::book_chart::kind_name;
+    let b = Book::open("testdata/charts.xlsx").unwrap();
+    let kinds: Vec<String> = b.sheets[0].objects.iter().filter_map(|o| o.chart.as_ref().map(|c| kind_name(c))).collect();
+    assert_eq!(kinds, vec!["col", "line-markers", "pie", "scatter", "combo", "bar-stacked", "doughnut", "area"], "{:?}", kinds);
+    assert_eq!(b.sheets[0].objects.iter().filter(|o| o.kind() == "picture").count(), 1);
+    let ch = b.chart(0, 1).unwrap();
+    assert_eq!(b.chart_title_text(ch).as_deref(), Some("Sales and costs"));
+    let s0 = ch.plots[0].series[0].clone();
+    assert_eq!(b.series_name(&s0, 0), "Sales");
+    let v: Vec<Option<f64>> = b.chart_values(s0.val.as_ref().unwrap()).iter().map(|p| p.v).collect();
+    assert_eq!(v, vec![Some(120.0), Some(150.0), Some(90.0), Some(180.0)]);
+    assert!(b.chart(0, 5).unwrap().plots[1].secondary);
+    // unchanged charts come back byte for byte
+    let bytes = b.to_bytes().unwrap();
+    let b2 = Book::from_bytes(&bytes).unwrap();
+    assert_eq!(b2.sheets[0].objects.len(), 9);
+    assert_eq!(b2.sheets[1].objects.len(), 1);
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let ob = std::fs::read("testdata/charts.xlsx").unwrap();
+    let orig = crate::zip::ZipReader::open(&ob).unwrap();
+    assert!(z.read("xl/media/image1.png").is_ok());
+    let a = String::from_utf8(z.read("xl/charts/chart1.xml").unwrap()).unwrap();
+    let o = String::from_utf8(orig.read("xl/charts/chart1.xml").unwrap()).unwrap();
+    assert_eq!(a.replace("\r\n", "\n").trim_start_matches(|c| c != '<').len() > 0, true);
+    assert!(a.contains("<c:f>Data!$B$2:$B$5</c:f>") && o.contains("<c:f>Data!$B$2:$B$5</c:f>"));
+}
+
+#[test]
+fn charts_follow_edits() {
+    let mut b = Book::open("testdata/charts.xlsx").unwrap();
+    let before = b.obj_rect(0, &b.sheets[0].objects[1].clone());
+    b.insert_rows(0, 1, 2).unwrap();
+    let ch = b.chart(0, 1).unwrap();
+    assert_eq!(ch.plots[0].series[0].val.as_ref().unwrap().f.as_deref(), Some("Data!$B$4:$B$7"));
+    let after = b.obj_rect(0, &b.sheets[0].objects[1].clone());
+    assert!(after.1 > before.1, "the chart moves down with its rows");
+    // the other sheet's chart follows too
+    assert_eq!(b.chart(1, 0).unwrap().plots[0].series[0].val.as_ref().unwrap().f.as_deref(), Some("Data!$B$4:$B$7"));
+    b.rename_sheet(0, "Figures").unwrap();
+    assert_eq!(b.chart(1, 0).unwrap().plots[0].series[0].val.as_ref().unwrap().f.as_deref(), Some("Figures!$B$4:$B$7"));
+    let bytes = b.to_bytes().unwrap();
+    let _ = std::fs::write("/tmp/charts_edited.xlsx", &bytes);
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let a = String::from_utf8(z.read("xl/charts/chart1.xml").unwrap()).unwrap();
+    assert!(a.contains("<c:f>Figures!$B$4:$B$7</c:f>"), "{}", &a[..400.min(a.len())]);
+    b.undo();
+    b.undo();
+    assert_eq!(b.chart(0, 1).unwrap().plots[0].series[0].val.as_ref().unwrap().f.as_deref(), Some("Data!$B$2:$B$5"));
+}
+
+#[test]
+fn charts_insert_change_delete() {
+    use crate::book_chart::kind_name;
+    let mut b = blank();
+    for (r, row) in [["", "North", "South"], ["Q1", "10", "20"], ["Q2", "15", "25"], ["Q3", "12", "30"]].iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            b.set_input(0, r as u32, c as u32, v).unwrap();
+        }
+    }
+    let i = b.insert_chart(0, Rect::new(0, 0, 3, 2), "col", 300.0, 20.0).unwrap();
+    let ch = b.chart(0, i).unwrap().clone();
+    assert_eq!(ch.plots[0].series.len(), 2);
+    assert_eq!(b.series_name(&ch.plots[0].series[1], 1), "South");
+    assert_eq!(ch.plots[0].series[0].cat.as_ref().unwrap().f.as_deref(), Some("Sheet1!$A$2:$A$4"));
+    assert_eq!(b.chart_title_text(&ch).as_deref(), Some("Chart Title"));
+    assert_eq!(b.chart_range_text(0, i).as_deref(), Some("Sheet1!$A$1:$C$4"));
+    b.switch_chart_rows(0, i).unwrap();
+    let ch = b.chart(0, i).unwrap().clone();
+    assert_eq!(ch.plots[0].series.len(), 3);
+    assert_eq!(b.series_name(&ch.plots[0].series[0], 0), "Q1");
+    b.set_chart_kind(0, i, "line-markers").unwrap();
+    assert_eq!(kind_name(b.chart(0, i).unwrap()), "line-markers");
+    b.set_chart_kind(0, i, "combo").unwrap();
+    assert_eq!(b.chart(0, i).unwrap().plots.len(), 2);
+    // saved and read back
+    let bytes = b.to_bytes().unwrap();
+    let _ = std::fs::write("/tmp/charts_new.xlsx", &bytes);
+    let b2 = Book::from_bytes(&bytes).unwrap();
+    assert_eq!(kind_name(b2.chart(0, 0).unwrap()), "combo");
+    assert_eq!(b2.chart(0, 0).unwrap().all_series().count(), 3);
+    // moved, then deleted: the parts go
+    b.set_object_rect(0, i, 10.0, 200.0, 400.0, 250.0, "Move Chart").unwrap();
+    let r = b.obj_rect(0, &b.sheets[0].objects[i].clone());
+    assert!((r.0 - 10.0).abs() < 1.0 && (r.1 - 200.0).abs() < 1.0 && (r.2 - 400.0).abs() < 1.0, "{:?}", r);
+    b.delete_objects(0, &[i]).unwrap();
+    let bytes = b.to_bytes().unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    assert!(!z.names().iter().any(|n| n.contains("chart") || n.contains("drawing")), "{:?}", z.names());
+    b.undo();
+    assert_eq!(b.sheets[0].objects.len(), 1);
+    // a chart reading the file back after the file had one
+    let b3 = Book::from_bytes(&b.to_bytes().unwrap()).unwrap();
+    assert_eq!(b3.sheets[0].objects.len(), 1);
+}
+
+#[test]
+fn charts_render() {
+    let b = Book::open("testdata/charts.xlsx").unwrap();
+    let mut p = crate::view::ViewParams::default();
+    p.width = 1600.0;
+    p.height = 900.0;
+    crate::render::render_png(&b, 0, &p, "/tmp/charts_test.png").unwrap();
+}

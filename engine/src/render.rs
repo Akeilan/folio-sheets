@@ -47,9 +47,9 @@ fn mix(a: u32, b: u32, t: f64) -> u32 {
     out
 }
 
-struct Pen {
-    layout: *mut PangoLayout,
-    fonts: HashMap<(String, u64, bool, bool, u8), crate::layout::FontDesc>,
+pub(crate) struct Pen {
+    pub(crate) layout: *mut PangoLayout,
+    pub(crate) fonts: HashMap<(String, u64, bool, bool, u8), crate::layout::FontDesc>,
 }
 
 impl Pen {
@@ -59,7 +59,7 @@ impl Pen {
     }
 
     /// Lay out text in a font; attributes for underline/strike. Returns the logical size.
-    fn set(&mut self, text: &str, f: &FontSpec, zoom: f64, wrap: Option<f64>) -> (f64, f64) {
+    pub(crate) fn set(&mut self, text: &str, f: &FontSpec, zoom: f64, wrap: Option<f64>) -> (f64, f64) {
         let d = self.font(f, zoom);
         unsafe {
             let l = self.layout;
@@ -88,18 +88,18 @@ impl Pen {
         }
     }
 
-    fn width(&mut self, text: &str, f: &FontSpec, zoom: f64) -> f64 {
+    pub(crate) fn width(&mut self, text: &str, f: &FontSpec, zoom: f64) -> f64 {
         self.set(text, f, zoom, None).0
     }
 
-    fn show(&mut self, cr: *mut cairo_t, x: f64, y: f64) {
+    pub(crate) fn show(&mut self, cr: *mut cairo_t, x: f64, y: f64) {
         unsafe {
             cairo_move_to(cr, x, y);
             pango_cairo_show_layout(cr, self.layout);
         }
     }
 
-    fn set_align(&mut self, a: i32) {
+    pub(crate) fn set_align(&mut self, a: i32) {
         unsafe { pango_layout_set_alignment(self.layout, a) }
     }
 }
@@ -145,6 +145,7 @@ impl Book {
                 self.paint_cells(s, cr, p, &g, &bands, &rows, &cols, &mut pen);
                 self.paint_filter_buttons(s, cr, p, &rows, &cols);
                 self.paint_overlays(s, cr, p, &g, &rows, &cols);
+                self.paint_objects(s, cr, p, &g, &mut pen);
                 cairo_restore(cr);
             }
         }
@@ -157,8 +158,82 @@ impl Book {
             rgb(cr, 0x9A9A9A);
             rect(cr, g.col_spans[0].1 - 1.0, g.hh, 1.0, p.height - g.hh);
         }
+        self.paint_object_selection(s, cr, p, &g);
         if p.show_headers {
             self.paint_headers(s, cr, p, &g, &mut pen);
+        }
+        cairo_restore(cr);
+    }
+
+    /// An object's rectangle on screen.
+    pub fn obj_screen_rect(&self, s: usize, p: &ViewParams, g: &Geometry, o: &crate::drawing::Obj) -> (f64, f64, f64, f64) {
+        use crate::drawing::{Anchor, EMU};
+        let z = p.zoom;
+        let pt = |m: &crate::drawing::Marker| (self.screen_x(s, p, g, m.col) + m.col_off as f64 / EMU * z, self.screen_y(s, p, g, m.row) + m.row_off as f64 / EMU * z);
+        match &o.anchor {
+            Anchor::Two { from, to, .. } => {
+                let (x1, y1) = pt(from);
+                let (x2, y2) = pt(to);
+                (x1, y1, (x2 - x1).max(0.0), (y2 - y1).max(0.0))
+            }
+            Anchor::One { from, cx, cy } => {
+                let (x1, y1) = pt(from);
+                (x1, y1, *cx as f64 / EMU * z, *cy as f64 / EMU * z)
+            }
+            Anchor::Abs { x, y, cx, cy } => (g.hw + *x as f64 / EMU * z, g.hh + *y as f64 / EMU * z, *cx as f64 / EMU * z, *cy as f64 / EMU * z),
+        }
+    }
+
+    unsafe fn paint_objects(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, pen: &mut Pen) {
+        for o in &self.sheets[s].objects {
+            let (x, y, w, h) = self.obj_screen_rect(s, p, g, o);
+            if x > p.width || y > p.height || x + w < 0.0 || y + h < 0.0 || w < 1.0 || h < 1.0 {
+                continue;
+            }
+            match &o.chart {
+                Some(ch) => self.paint_chart(ch, cr, x, y, w, h, p.zoom, pen),
+                None => {
+                    // pictures and shapes aren't drawn yet: a placeholder frame
+                    rgba(cr, 0x808080, 0.08);
+                    rect(cr, x, y, w, h);
+                    rgb(cr, 0xA0A0A0);
+                    cairo_set_line_width(cr, 1.0);
+                    cairo_rectangle(cr, x + 0.5, y + 0.5, w - 1.0, h - 1.0);
+                    cairo_stroke(cr);
+                }
+            }
+        }
+    }
+
+    unsafe fn paint_object_selection(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry) {
+        let sh = &self.sheets[s];
+        cairo_save(cr);
+        cairo_rectangle(cr, g.hw, g.hh, p.width - g.hw, p.height - g.hh);
+        cairo_clip(cr);
+        for &i in &p.sel_objects {
+            if let Some(o) = sh.objects.get(i) {
+                let (x, y, w, h) = self.obj_screen_rect(s, p, g, o);
+                rgb(cr, ACCENT);
+                cairo_set_line_width(cr, 1.0);
+                cairo_rectangle(cr, x.round() + 0.5, y.round() + 0.5, w.round() - 1.0, h.round() - 1.0);
+                cairo_stroke(cr);
+                for (hx, hy) in handles(x, y, w, h) {
+                    rgb(cr, 0xFFFFFF);
+                    cairo_arc(cr, hx, hy, 4.0, 0.0, 2.0 * std::f64::consts::PI);
+                    cairo_fill_preserve(cr);
+                    rgb(cr, ACCENT);
+                    cairo_stroke(cr);
+                }
+            }
+        }
+        if let Some((x, y, w, h)) = p.obj_preview {
+            rgb(cr, 0x404040);
+            cairo_set_line_width(cr, 1.0);
+            let d = [3.0f64, 3.0];
+            cairo_set_dash(cr, d.as_ptr(), 2, 0.0);
+            cairo_rectangle(cr, x.round() + 0.5, y.round() + 0.5, w.round(), h.round());
+            cairo_stroke(cr);
+            cairo_set_dash(cr, d.as_ptr(), 0, 0.0);
         }
         cairo_restore(cr);
     }
@@ -944,8 +1019,23 @@ pub fn render_png(book: &Book, s: usize, p: &ViewParams, path: &str) -> Result<(
     Ok(())
 }
 
+impl Book {
+    /// Draw a chart on its own (dialog previews, printing).
+    pub unsafe fn paint_chart_at(&self, ch: &crate::chart::Chart, cr: *mut cairo_t, x: f64, y: f64, w: f64, h: f64, z: f64) {
+        let mut pen = Pen { layout: pango_cairo_create_layout(cr), fonts: HashMap::new() };
+        self.paint_chart(ch, cr, x, y, w, h, z, &mut pen);
+    }
+}
+
 /// Where a cell's filter button goes: (x, y, size).
 pub fn filter_button(x: f64, y: f64, w: f64, h: f64, z: f64) -> (f64, f64, f64) {
     let bs = (16.0 * z).round().min(h - 2.0).min(w - 2.0).max(6.0);
     (x + w - bs - 2.0, y + h - bs - 2.0, bs)
 }
+
+/// The eight sizing handles: nw, n, ne, e, se, s, sw, w.
+pub fn handles(x: f64, y: f64, w: f64, h: f64) -> [(f64, f64); 8] {
+    [(x, y), (x + w / 2.0, y), (x + w, y), (x + w, y + h / 2.0), (x + w, y + h), (x + w / 2.0, y + h), (x, y + h), (x, y + h / 2.0)]
+}
+
+pub const HANDLE_NAMES: [&str; 8] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
