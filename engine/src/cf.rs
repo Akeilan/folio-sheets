@@ -940,6 +940,9 @@ impl<'a> Ctx for ViewCtx<'a> {
     fn is_subtotal(&self, sheet: usize, r: u32, c: u32) -> bool {
         <Book as Ctx>::is_subtotal(self.b, sheet, r, c)
     }
+    fn table_ref(&self, text: &str, sheet: usize, r: u32, c: u32) -> Option<(usize, Rect)> {
+        crate::tables::resolve(&self.b.sheets, text, sheet, Some((r, c)))
+    }
 }
 
 #[allow(dead_code)]

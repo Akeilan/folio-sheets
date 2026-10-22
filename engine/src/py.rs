@@ -723,14 +723,22 @@ impl PyBook {
         self.sheet(s)?;
         self.b.remove_duplicates(s, rect(rg), &cols, header).map_err(verr)
     }
-    fn autofilter<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Option<Bound<'py, PyDict>>> {
+    /// The filter a header cell belongs to (at), or the sheet's AutoFilter.
+    #[pyo3(signature = (s, at=None))]
+    fn autofilter<'py>(&self, py: Python<'py>, s: usize, at: Option<(u32, u32)>) -> PyResult<Option<Bound<'py, PyDict>>> {
         self.sheet(s)?;
-        let af = match &self.b.sheets[s].autofilter {
+        let o = match self.b.filter_owner(s, at) {
+            Some(o) => o,
+            None => return Ok(None),
+        };
+        let af = match self.b.owner_filter(s, o) {
             Some(a) => a,
             None => return Ok(None),
         };
+        let af = &af;
         let d = PyDict::new_bound(py);
         d.set_item("ref", tup(&af.rect))?;
+        d.set_item("table", match o { crate::book_data::FOwner::Table(i) => Some(i), _ => None })?;
         let cols = PyDict::new_bound(py);
         for fc in &af.cols {
             let f = PyDict::new_bound(py);
@@ -762,8 +770,10 @@ impl PyBook {
     }
     /// Filter one column (offset in the range): {"values": [...], "blank": bool} |
     /// {"custom": [(op, val)...], "and": bool} | {"top10": (top, percent, n)} | None to clear.
-    fn filter_column(&mut self, s: usize, col: u32, spec: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+    #[pyo3(signature = (s, col, spec=None, at=None))]
+    fn filter_column(&mut self, s: usize, col: u32, spec: Option<&Bound<'_, PyDict>>, at: Option<(u32, u32)>) -> PyResult<()> {
         self.sheet(s)?;
+        let o = self.b.filter_owner(s, at).ok_or_else(|| PyValueError::new_err("There's no filter on this sheet."))?;
         let kind = match spec {
             None => None,
             Some(d) => {
@@ -778,19 +788,88 @@ impl PyBook {
                 }
             }
         };
-        self.b.filter_column(s, col, kind).map_err(verr)
+        self.b.filter_column_at(s, o, col, kind).map_err(verr)
     }
-    fn clear_filters(&mut self, s: usize) -> PyResult<()> {
+    #[pyo3(signature = (s, at=None))]
+    fn clear_filters(&mut self, s: usize, at: Option<(u32, u32)>) -> PyResult<()> {
         self.sheet(s)?;
-        self.b.clear_filters(s).map_err(verr)
+        let o = self.b.filter_owner(s, at).ok_or_else(|| PyValueError::new_err("There's no filter on this sheet."))?;
+        self.b.clear_filters_at(s, o).map_err(verr)
     }
     fn reapply_filter(&mut self, s: usize) -> PyResult<()> {
         self.sheet(s)?;
         self.b.reapply_filter(s).map_err(verr)
     }
-    fn filter_values(&self, s: usize, col: u32) -> PyResult<(Vec<String>, bool)> {
+    #[pyo3(signature = (s, col, at=None))]
+    fn filter_values(&self, s: usize, col: u32, at: Option<(u32, u32)>) -> PyResult<(Vec<String>, bool)> {
         self.sheet(s)?;
-        Ok(self.b.filter_values(s, col))
+        Ok(match self.b.filter_owner(s, at) {
+            Some(o) => self.b.filter_values_at(s, o, col),
+            None => (vec![], false),
+        })
+    }
+
+    // ---- tables
+    fn tables<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let mut out = Vec::new();
+        for t in &self.b.sheets[s].tables {
+            let d = PyDict::new_bound(py);
+            d.set_item("name", &t.name)?;
+            d.set_item("ref", tup(&t.rect))?;
+            d.set_item("data", tup(&t.data()))?;
+            d.set_item("header", t.header)?;
+            d.set_item("totals", t.totals)?;
+            d.set_item("style", t.style.clone())?;
+            d.set_item("first_col", t.first_col)?;
+            d.set_item("last_col", t.last_col)?;
+            d.set_item("row_stripes", t.row_stripes)?;
+            d.set_item("col_stripes", t.col_stripes)?;
+            d.set_item("filter_button", t.filter_button)?;
+            d.set_item("columns", t.cols.iter().map(|c| c.name.clone()).collect::<Vec<_>>())?;
+            d.set_item("totals_fn", t.cols.iter().map(|c| c.totals_fn.clone()).collect::<Vec<_>>())?;
+            out.push(d);
+        }
+        Ok(out)
+    }
+    fn table_at(&self, s: usize, r: u32, c: u32) -> PyResult<Option<usize>> {
+        self.sheet(s)?;
+        Ok(self.b.table_at(s, r, c))
+    }
+    fn create_table(&mut self, s: usize, rg: R4, has_headers: bool, style: &str) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.create_table(s, rect(rg), has_headers, style).map_err(verr)
+    }
+    fn convert_table(&mut self, s: usize, i: usize) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.convert_table(s, i).map_err(verr)
+    }
+    fn set_table_option(&mut self, s: usize, i: usize, what: &str, on: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_table_option(s, i, what, on).map_err(verr)
+    }
+    #[pyo3(signature = (s, i, style=None))]
+    fn set_table_style(&mut self, s: usize, i: usize, style: Option<&str>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_table_style(s, i, style).map_err(verr)
+    }
+    fn set_table_total(&mut self, s: usize, i: usize, col: usize, func: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_table_total(s, i, col, func).map_err(verr)
+    }
+    fn rename_table(&mut self, s: usize, i: usize, name: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.rename_table(s, i, name).map_err(verr)
+    }
+    fn resize_table(&mut self, s: usize, i: usize, rg: R4) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.resize_table(s, i, rect(rg)).map_err(verr)
+    }
+    /// A thumbnail of a table style (the gallery).
+    fn render_table_style(&self, cr: &Bound<'_, PyAny>, style: &str, w: f64, h: f64) -> PyResult<()> {
+        let ctx = cairo_ptr(cr)?;
+        unsafe { self.b.paint_table_style(ctx, style, w, h) };
+        Ok(())
     }
 
     // ---- find
@@ -1009,6 +1088,10 @@ impl PyBook {
         self.sheet(s)?;
         self.b.set_row_px(s, r1, r2, px);
         Ok(())
+    }
+    fn row_hidden(&self, s: usize, r: u32) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.sheets[s].row_hidden(r))
     }
     fn set_rows_hidden(&mut self, s: usize, r1: u32, r2: u32, hidden: bool) -> PyResult<()> {
         self.sheet(s)?;

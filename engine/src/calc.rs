@@ -25,6 +25,10 @@ pub trait Ctx {
     fn rand(&mut self) -> f64;
     /// a cell that is itself a SUBTOTAL/AGGREGATE (skipped by those functions)
     fn is_subtotal(&self, sheet: usize, r: u32, c: u32) -> bool;
+    /// the cells a structured reference names, read from cell (r, c)
+    fn table_ref(&self, _text: &str, _sheet: usize, _r: u32, _c: u32) -> Option<(usize, Rect)> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -326,7 +330,10 @@ impl<'a> Eval<'a> {
                     other => other,
                 }
             }
-            Expr::Struct(_) => Res::err(XlErr::Ref),
+            Expr::Struct(text) => match self.ctx.table_ref(text, self.sheet, self.row, self.col) {
+                Some((s, rc)) => Res::R(vec![Area { sheet: s, rect: rc }]),
+                None => Res::err(XlErr::Ref),
+            },
             Expr::Ext(_) => Res::err(XlErr::Ref),
         }
     }

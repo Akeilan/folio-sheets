@@ -327,16 +327,26 @@ impl Book {
                 None => vec![HitPart::S("out")],
             };
         }
-        // an AutoFilter button
-        if let Some(af) = &self.sheets[s].autofilter {
-            if let (Some(r), Some(c)) = (self.band_row(&g, y), self.band_col(&g, x)) {
-                if r == af.rect.r1 && c >= af.rect.c1 && c <= af.rect.c2 {
+        // a filter button (sheet AutoFilter or a table's header)
+        if let (Some(r), Some(c)) = (self.band_row(&g, y), self.band_col(&g, x)) {
+            for (hr, c1, c2, _) in self.filter_headers(s) {
+                if r == hr && c >= c1 && c <= c2 {
                     let (_, ry, rh) = *g.rows.iter().find(|x| x.0 == r).unwrap();
                     let (_, cx, cw) = *g.cols.iter().find(|x| x.0 == c).unwrap();
                     let (bx, by, bs) = crate::render::filter_button(cx, ry, cw, rh, p.zoom);
                     if x >= bx && x <= bx + bs && y >= by && y <= by + bs {
                         return vec![HitPart::S("filterbtn"), HitPart::N(r), HitPart::N(c)];
                     }
+                }
+            }
+            // the totals drop-down beside the active cell
+            let (ar, ac) = p.active;
+            if c == ac + 1 && r == ar && self.sheets[s].tables.iter().any(|t| t.totals_row() == Some(ar) && ac >= t.rect.c1 && ac <= t.rect.c2) {
+                let (_, ry, rh) = *g.rows.iter().find(|x| x.0 == r).unwrap();
+                let (_, cx, _) = *g.cols.iter().find(|x| x.0 == c).unwrap();
+                let (_, by, bs) = crate::render::filter_button(0.0, ry, 40.0, rh, p.zoom);
+                if x >= cx + 2.0 && x <= cx + 2.0 + bs && y >= by && y <= by + bs {
+                    return vec![HitPart::S("totalsbtn"), HitPart::N(ar), HitPart::N(ac)];
                 }
             }
         }

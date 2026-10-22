@@ -316,12 +316,16 @@ def build_ribbon(win):
           B.icon("r-decimal-decrease-sm", "decimal-decrease", "9", "Decrease Decimal")]],
     ], launcher="number-dialog", launcher_keytip="FM")
 
+    def table_menu():
+        from . import table_ui
+        return table_ui.gallery(win, lambda n: win.run("format-as-table:" + n))
+
     def cf_menu():
         from . import cf_ui
         return cf_ui.popover(win)
     B.group(t, "Styles", [
         B.big("Conditional\nFormatting", "r-conditional-formatting", None, "L", menu=cf_menu),
-        B.big("Format as\nTable", "r-format-as-table", None, "T", menu=[("Light, Medium and Dark styles...", "format-as-table")]),
+        B.big("Format as\nTable", "r-format-as-table", None, "T", menu=table_menu),
         B.big("Cell\nStyles", "r-cell-styles", None, "J", menu=[("Cell styles gallery...", "cell-styles")]),
     ])
     format_menu = [("#", "Cell Size"), ("Row Height...", "row-height"), ("AutoFit Row Height", "autofit-rows"),
@@ -700,5 +704,7 @@ def build_ribbon(win):
     B.group(t, "Type", [B.big("Change\nChart Type", "r-chart-change-type", "chart-change-type", "C")])
     r.add_tab(t)
     r.show_contextual("Chart Design", False)
+    from . import table_ui
+    table_ui.build_tab(win, B)
     r.building(None)
     r.select(r.tabs[0])

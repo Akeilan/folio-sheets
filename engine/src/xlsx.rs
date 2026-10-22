@@ -20,6 +20,8 @@ const T_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/re
 const T_META: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata";
 const T_DRAWING: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
 const T_CHART: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+const T_TABLE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table";
+const CT_TABLE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
 const CT_DRAWING: &str = "application/vnd.openxmlformats-officedocument.drawing+xml";
 const CT_CHART: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
 const CT_WORKSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
@@ -251,6 +253,7 @@ impl Book {
                             sh.raw_part = Some(d.clone());
                         } else {
                             load_drawing(&mut sh, &parts, &b.styles.theme);
+                            load_tables(&mut sh, &parts);
                         }
                     }
                     None => sh.error = Some("the sheet's part is missing".into()),
@@ -325,6 +328,44 @@ fn read_rels(part: &str, parts: &[(String, Vec<u8>)]) -> Vec<(String, String, St
         }
     }
     out
+}
+
+/// The sheet's tables, from its table parts (kept as read when one can't be read).
+fn load_tables(sh: &mut Sheet, parts: &[(String, Vec<u8>)]) {
+    let idx = match sh.pieces.iter().position(|p| matches!(p, Piece::Raw(t, _) if t == "tableParts")) {
+        Some(i) => i,
+        None => return,
+    };
+    let raw = match &sh.pieces[idx] {
+        Piece::Raw(_, x) => x.clone(),
+        _ => return,
+    };
+    let e = match xml::parse(&raw) {
+        Ok((_, e)) => e,
+        Err(_) => return,
+    };
+    let rels = read_rels(&sh.part, parts);
+    let mut tables = Vec::new();
+    for tp in e.elems() {
+        let rid = match tp.attrs.iter().find(|(k, _)| xml::local(k) == "id" && k.contains(':')) {
+            Some((_, v)) => v.clone(),
+            None => return,
+        };
+        let target = match rels.iter().find(|r| r.0 == rid) {
+            Some(r) => r.2.clone(),
+            None => return,
+        };
+        let text = match find_part(parts, &target).and_then(|d| xml::decode(d).ok()) {
+            Some(t) => t,
+            None => return,
+        };
+        match crate::tables::read_table(&target, &text) {
+            Some(t) => tables.push(t),
+            None => return,
+        }
+    }
+    sh.tables = tables;
+    sh.pieces[idx] = Piece::Known("tableParts".into());
 }
 
 /// Charts and other objects of a sheet, from its drawing part (kept as read when it
@@ -1043,12 +1084,30 @@ impl Book {
         let mut used_parts: std::collections::HashSet<String> = std::collections::HashSet::new();
         let base = if dir.is_empty() { "xl".to_string() } else { dir.clone() };
         let mut drawing_rids: Vec<Option<String>> = vec![None; self.sheets.len()];
+        let mut table_rids: Vec<Vec<String>> = vec![vec![]; self.sheets.len()];
         for (i, sh) in self.sheets.iter().enumerate() {
-            if sh.raw_part.is_some() || (sh.objects.is_empty() && sh.drawing.is_none()) {
+            if sh.raw_part.is_some() {
+                continue;
+            }
+            let has_d = !(sh.objects.is_empty() && sh.drawing.is_none());
+            let has_t = !sh.tables.is_empty() || sh.pieces.iter().any(|p| matches!(p, Piece::Known(t) if t == "tableParts"));
+            if !has_d && !has_t {
                 continue;
             }
             let (part, _) = &sheet_parts[i];
-            drawing_rids[i] = self.write_drawing_parts(sh, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut used_parts);
+            let srels_name = rels_name(part);
+            let (srels_pro, mut srels) = self.file.parts.iter().find(|(n, _)| *n == srels_name).and_then(|(_, d)| xml::parse_bytes(d).ok())
+                .unwrap_or_else(|| (String::new(), Element::with_attrs("Relationships", &[("xmlns", "http://schemas.openxmlformats.org/package/2006/relationships")])));
+            let before = srels.to_string();
+            if has_d {
+                drawing_rids[i] = self.write_drawing_parts(sh, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut used_parts, &mut srels);
+            }
+            if has_t {
+                table_rids[i] = self.write_table_parts(sh, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut used_parts, &mut srels);
+            }
+            if srels.to_string() != before {
+                out.push((srels_name, xml::document(&srels_pro, &srels).into_bytes()));
+            }
         }
         // worksheets
         for (i, sh) in self.sheets.iter().enumerate() {
@@ -1057,7 +1116,7 @@ impl Book {
                 out.push((part.clone(), raw.clone()));
                 continue;
             }
-            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref());
+            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref(), &table_rids[i]);
             out.push((part.clone(), x.into_bytes()));
         }
         // shared strings
@@ -1130,11 +1189,66 @@ impl Book {
         Ok(z.finish())
     }
 
+    /// Write a sheet's table parts and their relationships; the ids the worksheet names.
+    #[allow(clippy::too_many_arguments)]
+    fn write_table_parts(&self, sh: &Sheet, sheet_part: &str, base: &str, out: &mut Vec<(String, Vec<u8>)>, dropped: &mut Vec<String>,
+                         ct: &mut Element, taken: &mut std::collections::HashSet<String>, used: &mut std::collections::HashSet<String>,
+                         srels: &mut Element) -> Vec<String> {
+        // the old table relationships go; the tables still here are written again
+        let old: Vec<(String, String)> = srels.elems().filter(|e| e.attr("Type").map(|t| t.ends_with("/table")).unwrap_or(false))
+            .filter_map(|e| Some((e.attr("Id")?.to_string(), resolve(sheet_part, e.attr("Target")?)))).collect();
+        srels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Type").map(|t| t.ends_with("/table")).unwrap_or(false)));
+        let live: Vec<&str> = sh.tables.iter().filter_map(|t| t.part.as_deref()).collect();
+        for (_, p) in &old {
+            if !live.contains(&p.as_str()) && !used.contains(p) {
+                dropped.push(p.clone());
+                dropped.push(rels_name(p));
+                remove_override(ct, p);
+            }
+        }
+        let mut ids: Vec<String> = srels.elems().filter_map(|e| e.attr("Id").map(|s| s.to_string())).collect();
+        let mut out_ids = Vec::new();
+        for t in &sh.tables {
+            let part = match &t.part {
+                Some(p) if !used.contains(p) => p.clone(),
+                _ => {
+                    let mut k = 1;
+                    loop {
+                        let p = format!("{}/tables/table{}.xml", base, k);
+                        if !taken.contains(&p) {
+                            taken.insert(p.clone());
+                            break p;
+                        }
+                        k += 1;
+                    }
+                }
+            };
+            used.insert(part.clone());
+            out.push((part.clone(), crate::tables::write_table(t).into_bytes()));
+            set_override(ct, &part, CT_TABLE);
+            let rid = old.iter().find(|(_, p)| *p == part).map(|(i, _)| i.clone()).filter(|i| !ids.contains(i)).unwrap_or_else(|| {
+                let mut k = 1;
+                loop {
+                    let id = format!("rId{}", k);
+                    if !ids.contains(&id) {
+                        break id;
+                    }
+                    k += 1;
+                }
+            });
+            ids.push(rid.clone());
+            srels.push(Element::with_attrs("Relationship", &[("Id", &rid), ("Type", T_TABLE), ("Target", &relative(sheet_part, &part))]));
+            out_ids.push(rid);
+        }
+        out_ids
+    }
+
     /// Write a sheet's drawing part, its charts and the sheet's relationship to it.
     /// Returns the relationship id the worksheet names (None: no drawing any more).
     #[allow(clippy::too_many_arguments)]
     fn write_drawing_parts(&self, sh: &Sheet, sheet_part: &str, base: &str, out: &mut Vec<(String, Vec<u8>)>, dropped: &mut Vec<String>,
-                           ct: &mut Element, taken: &mut std::collections::HashSet<String>, used: &mut std::collections::HashSet<String>) -> Option<String> {
+                           ct: &mut Element, taken: &mut std::collections::HashSet<String>, used: &mut std::collections::HashSet<String>,
+                           srels: &mut Element) -> Option<String> {
         let fresh = |stem: &str, taken: &mut std::collections::HashSet<String>| -> String {
             let mut k = 1;
             loop {
@@ -1146,10 +1260,6 @@ impl Book {
                 k += 1;
             }
         };
-        // the sheet's relationships
-        let srels_name = rels_name(sheet_part);
-        let (srels_pro, mut srels) = self.file.parts.iter().find(|(n, _)| *n == srels_name).and_then(|(_, d)| xml::parse_bytes(d).ok())
-            .unwrap_or_else(|| (String::new(), Element::with_attrs("Relationships", &[("xmlns", "http://schemas.openxmlformats.org/package/2006/relationships")])));
         let old = sh.drawing.as_ref();
         let old_rid = old.and_then(|d| srels.elems().find(|e| e.attr("Type").map(|t| t.ends_with("/drawing")).unwrap_or(false)
             && e.attr("Target").map(|t| resolve(sheet_part, t) == d.part).unwrap_or(false)).and_then(|e| e.attr("Id")).map(|s| s.to_string()));
@@ -1194,7 +1304,6 @@ impl Book {
             }
             if let Some(rid) = &old_rid {
                 srels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Id") == Some(rid)));
-                out.push((srels_name, xml::document(&srels_pro, &srels).into_bytes()));
             }
             return None;
         }
@@ -1288,7 +1397,6 @@ impl Book {
                 id
             }
         };
-        out.push((srels_name, xml::document(&srels_pro, &srels).into_bytes()));
         Some(rid)
     }
 
@@ -1408,7 +1516,7 @@ impl Book {
         xml::document(&pro, &wb)
     }
 
-    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>) -> String {
+    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>, table_rids: &[String]) -> String {
         let sh = &self.sheets[i];
         let mut out = String::with_capacity(4096 + sh.cells.len() * 40);
         if sh.root_open.is_empty() {
@@ -1436,6 +1544,9 @@ impl Book {
         }
         if drawing_rid.is_some() && !pieces.iter().any(|x| matches!(x, Piece::Known(t) | Piece::Raw(t, _) if t == "drawing")) {
             pieces.push(Piece::Known("drawing".into()));
+        }
+        if !table_rids.is_empty() && !pieces.iter().any(|x| matches!(x, Piece::Known(t) | Piece::Raw(t, _) if t == "tableParts")) {
+            pieces.push(Piece::Known("tableParts".into()));
         }
         let rank = |p: &Piece| -> usize {
             let t = match p {
@@ -1506,6 +1617,15 @@ impl Book {
                     "autoFilter" => {
                         if let Some(af) = &sh.autofilter {
                             crate::book_data::write_autofilter(af, &pfx, &mut out);
+                        }
+                    }
+                    "tableParts" => {
+                        if !table_rids.is_empty() {
+                            out.push_str(&format!("<{}tableParts count=\"{}\">", pfx, table_rids.len()));
+                            for rid in table_rids {
+                                out.push_str(&format!("<{}tablePart r:id=\"{}\"/>", pfx, esc_attr(rid)));
+                            }
+                            out.push_str(&format!("</{}tableParts>", pfx));
                         }
                     }
                     "drawing" => {
@@ -1719,7 +1839,14 @@ impl Book {
         let mut t_attr: Option<&str> = None;
         let mut cm: Option<u32> = None;
         if let Some(f) = f {
-            let text = formula::to_file_text(&f.text);
+            let text = if f.text.contains('[') {
+                // references inside a table are written with the table's name
+                let here = crate::tables::table_at(&self.sheets, self.sheets.iter().position(|x| std::ptr::eq(x, sh)).unwrap_or(0), r, c)
+                    .map(|i| sh.tables[i].name.clone());
+                formula::to_file_text(&crate::tables::to_file(&f.text, here.as_deref()))
+            } else {
+                formula::to_file_text(&f.text)
+            };
             match &f.kind {
                 FKind::DataTable(raw) => body.push_str(raw),
                 FKind::Array(rc) => {

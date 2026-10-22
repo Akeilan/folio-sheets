@@ -145,6 +145,7 @@ impl Book {
                 self.paint_cells(s, cr, p, &g, &bands, &rows, &cols, &mut pen);
                 self.paint_filter_buttons(s, cr, p, &rows, &cols);
                 self.paint_overlays(s, cr, p, &g, &rows, &cols);
+                self.paint_totals_button(s, cr, p, &rows, &cols);
                 self.paint_objects(s, cr, p, &g, &mut pen);
                 cairo_restore(cr);
             }
@@ -286,6 +287,17 @@ impl Book {
                 }
             }
         }
+        // ---- table styles of the cells in view
+        let mut tcm: HashMap<(u32, u32), crate::tables::TCell> = HashMap::new();
+        for tb in sh.tables.iter().filter(|x| x.rect.intersects(&view) && x.style.is_some()) {
+            for &(r, _, _) in rows {
+                for &(c, _, _) in cols {
+                    if tb.rect.contains(r, c) {
+                        tcm.insert((r, c), self.table_cell(tb, r, c));
+                    }
+                }
+            }
+        }
         // ---- fills
         let mut filled: HashMap<(u32, u32), u32> = HashMap::new();
         for &(r, y, h) in rows {
@@ -295,10 +307,11 @@ impl Book {
                     None => (sh.style_at(r, c), (x, y, w, h)),
                 };
                 let cf_fill = cfm.get(&match merge_of(r, c) { Some(m) => (m.r1, m.c1), None => (r, c) }).and_then(|o| o.scale.or(o.dxf.fill));
-                if xf == 0 && cf_fill.is_none() {
+                let t_fill = tcm.get(&(r, c)).and_then(|x| x.fill);
+                if xf == 0 && cf_fill.is_none() && t_fill.is_none() {
                     continue;
                 }
-                if let Some(col) = cf_fill.or_else(|| self.fill_color(self.styles.xf(xf))) {
+                if let Some(col) = cf_fill.or_else(|| self.fill_color(self.styles.xf(xf))).or(t_fill) {
                     filled.insert((r, c), col);
                     if merge_of(r, c).map(|m| (m.r1.max(rmin), m.c1.max(cmin)) == (r, c)).unwrap_or(true) {
                         rgb(cr, col);
@@ -410,7 +423,19 @@ impl Book {
                 if bw <= 0.0 || bh <= 0.0 {
                     continue;
                 }
-                let cfo = if cfm.is_empty() { None } else { cfm.get(&(r, c)).cloned().or_else(|| if bands.cols.contains_key(&c) { None } else { self.cf_at(s, r, c, &blocks) }) };
+                let mut cfo = if cfm.is_empty() { None } else { cfm.get(&(r, c)).cloned().or_else(|| if bands.cols.contains_key(&c) { None } else { self.cf_at(s, r, c, &blocks) }) };
+                if let Some(tc) = tcm.get(&(r, c)) {
+                    // the table style under the cell's own font colour and the rules
+                    let mut o = cfo.take().unwrap_or_default();
+                    let own = crate::layout::font_of(&self.styles, xf).color;
+                    if o.dxf.color.is_none() && own == 0x000000 {
+                        o.dxf.color = tc.color;
+                    }
+                    if o.dxf.bold.is_none() && tc.bold {
+                        o.dxf.bold = Some(true);
+                    }
+                    cfo = Some(o);
+                }
                 if cfo.as_ref().map(|o| o.hide_value).unwrap_or(false) {
                     continue;
                 }
@@ -451,6 +476,16 @@ impl Book {
         }
         for t in texts {
             t.draw(cr, pen);
+        }
+        // ---- table borders (the cells' own come over them)
+        for (&(r, c), tc) in tcm.iter() {
+            let (x, w) = match bands.cols.get(&c) { Some(v) => *v, None => continue };
+            let (y, h) = match bands.rows.get(&r) { Some(v) => *v, None => continue };
+            let b = &tc.borders;
+            if let Some((st, col)) = b[0] { line(cr, st, col, x - 0.5, y, x - 0.5, y + h, z); }
+            if let Some((st, col)) = b[1] { line(cr, st, col, x + w - 0.5, y, x + w - 0.5, y + h, z); }
+            if let Some((st, col)) = b[2] { line(cr, st, col, x - 1.0, y - 0.5, x + w, y - 0.5, z); }
+            if let Some((st, col)) = b[3] { line(cr, st, col, x - 1.0, y + h - 0.5, x + w, y + h - 0.5, z); }
         }
         // ---- borders
         for &(r, y, h) in rows {
@@ -535,21 +570,59 @@ impl Book {
     }
 
     /// The AutoFilter drop-down buttons in the header row.
+    /// The filter drop-downs: (header row, first column, last column, filtered columns).
+    pub fn filter_headers(&self, s: usize) -> Vec<(u32, u32, u32, Vec<u32>)> {
+        let sh = &self.sheets[s];
+        let mut out = Vec::new();
+        if let Some(af) = &sh.autofilter {
+            out.push((af.rect.r1, af.rect.c1, af.rect.c2, af.cols.iter().map(|f| af.rect.c1 + f.col).collect()));
+        }
+        for t in &sh.tables {
+            if t.filter_button && t.header {
+                let f = t.filter.as_ref().map(|f| f.cols.iter().map(|x| t.rect.c1 + x.col).collect()).unwrap_or_default();
+                out.push((t.rect.r1, t.rect.c1, t.rect.c2, f));
+            }
+        }
+        out
+    }
+
+    unsafe fn paint_totals_button(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, rows: &[(u32, f64, f64)], cols: &[(u32, f64, f64)]) {
+        // the drop-down of the active cell in a table's total row
+        let (ar, ac) = p.active;
+        if let Some(t) = self.sheets[s].tables.iter().find(|t| t.totals_row() == Some(ar) && ac >= t.rect.c1 && ac <= t.rect.c2) {
+            let _ = t;
+            if let (Some(row), Some(col)) = (rows.iter().find(|x| x.0 == ar), cols.iter().find(|x| x.0 == ac)) {
+                let (_, by, bs) = filter_button(0.0, row.1, 40.0, row.2, p.zoom);
+                let bx = col.1 + col.2 + 2.0;
+                rgb(cr, 0xFFFFFF);
+                rect(cr, bx, by, bs, bs);
+                rgb(cr, 0xA0A0A0);
+                cairo_set_line_width(cr, 1.0);
+                cairo_rectangle(cr, bx + 0.5, by + 0.5, bs - 1.0, bs - 1.0);
+                cairo_stroke(cr);
+                rgb(cr, 0x444444);
+                let (cx, cy) = (bx + bs / 2.0, by + bs / 2.0);
+                cairo_move_to(cr, cx - bs * 0.25, cy - bs * 0.1);
+                cairo_line_to(cr, cx + bs * 0.25, cy - bs * 0.1);
+                cairo_line_to(cr, cx, cy + bs * 0.18);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            }
+        }
+    }
+
     unsafe fn paint_filter_buttons(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, rows: &[(u32, f64, f64)], cols: &[(u32, f64, f64)]) {
-        let af = match &self.sheets[s].autofilter {
-            Some(a) => a,
-            None => return,
-        };
-        let row = match rows.iter().find(|(r, _, _)| *r == af.rect.r1) {
+        for (hr, c1, c2, filtered_cols) in self.filter_headers(s) {
+        let row = match rows.iter().find(|(r, _, _)| *r == hr) {
             Some(x) => *x,
-            None => return,
+            None => continue,
         };
         for &(c, x, w) in cols {
-            if c < af.rect.c1 || c > af.rect.c2 {
+            if c < c1 || c > c2 {
                 continue;
             }
             let (bx, by, bs) = filter_button(x, row.1, w, row.2, p.zoom);
-            let filtered = af.cols.iter().any(|f| f.col == c - af.rect.c1);
+            let filtered = filtered_cols.contains(&c);
             rgb(cr, 0xFFFFFF);
             rect(cr, bx, by, bs, bs);
             rgb(cr, 0xA0A0A0);
@@ -580,6 +653,7 @@ impl Book {
                 cairo_close_path(cr);
                 cairo_fill(cr);
             }
+        }
         }
     }
 

@@ -157,6 +157,8 @@ pub struct Sheet {
     pub autofilter: Option<crate::book_data::AutoFilter>,
     /// charts and other objects over the cells
     pub objects: Vec<crate::drawing::Obj>,
+    /// tables (Format as Table)
+    pub tables: Vec<crate::tables::Table>,
     /// the drawing part as read (None when the sheet had none, or it couldn't be read)
     pub drawing: Option<crate::drawing::DrawingFile>,
     // ---- file
@@ -198,6 +200,7 @@ impl Sheet {
             arrays: HashMap::new(),
             autofilter: None,
             objects: Vec::new(),
+            tables: Vec::new(),
             drawing: None,
             part: String::new(),
             prolog: String::new(),

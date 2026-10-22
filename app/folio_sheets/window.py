@@ -260,6 +260,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             self.update_ribbon_state(st)
         self.status.update_aggregates()
         self.update_calc_status()
+        self.sync_table_tab()
         title_dirty = self.book.modified
         if getattr(self, "_last_dirty", None) != title_dirty:
             self._last_dirty = title_dirty
@@ -1397,6 +1398,75 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 b.set_input(g.sheet, r, c1, lines[i] if i < len(lines) else "")
         g.refresh()
         self.update_title()
+
+    # ------------------------------------------------------------ tables
+    def act_format_as_table(self, style=None):
+        from . import table_ui
+        table_ui.create(self, style or table_ui.DEFAULT_STYLE)
+
+    def act_table(self):
+        from . import table_ui
+        table_ui.create(self, table_ui.DEFAULT_STYLE)
+
+    def act_table_convert(self):
+        from . import table_ui
+        i = table_ui.current(self)
+        if i is None:
+            return
+        self.book.convert_table(self.grid.sheet, i)
+        self.grid.refresh()
+        self.update_title()
+        self.on_selection_changed()
+
+    def act_table_resize(self):
+        from . import table_ui
+        i = table_ui.current(self)
+        if i is not None:
+            table_ui.resize(self, i)
+            self.on_selection_changed()
+
+    def act_table_option(self, arg=None):
+        from . import table_ui
+        i = table_ui.current(self)
+        if i is None or not arg:
+            return
+        key, _, val = arg.partition(":")
+        t = self.book.tables(self.grid.sheet)[i]
+        on = (val == "1") if val else not t.get(key, False)
+        try:
+            self.book.set_table_option(self.grid.sheet, i, key, on)
+        except ValueError as e:
+            self.dialogs.message(str(e))
+        self.grid.refresh()
+        self.update_title()
+        self.sync_table_tab()
+
+    def act_table_style(self, name=None):
+        from . import table_ui
+        i = table_ui.current(self)
+        if i is None:
+            return
+        self.book.set_table_style(self.grid.sheet, i, None if name in (None, "none") else name)
+        self.grid.refresh()
+        self.update_title()
+
+    def sync_table_tab(self):
+        g = self.grid
+        if self.book is None or not hasattr(self, "table_checks"):
+            return
+        i = self.book.table_at(g.sheet, *g.sel.active)
+        self.ribbon.show_contextual("Table Design", i is not None)
+        if i is None:
+            return
+        t = self.book.tables(g.sheet)[i]
+        self.syncing_checks = True
+        try:
+            for key, chk in self.table_checks.items():
+                chk.set_active(bool(t[key]))
+            if not self.table_name.has_focus():
+                self.table_name.set_text(t["name"])
+        finally:
+            self.syncing_checks = False
 
     # ------------------------------------------------------------ conditional formatting
     def act_conditional_formatting(self, arg=None):

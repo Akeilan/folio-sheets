@@ -40,6 +40,11 @@ fn sheet_idx(sheets: &[Sheet], name: &str) -> Option<usize> {
     sheets.iter().position(|s| s.name.eq_ignore_ascii_case(name))
 }
 
+thread_local! {
+    /// the cell whose formula collect_areas is reading (for [@Column] references)
+    pub static HERE_CELL: std::cell::Cell<(u32, u32)> = const { std::cell::Cell::new((0, 0)) };
+}
+
 /// The areas a formula reads (names expanded).
 pub fn collect_areas(e: &Expr, sheets: &[Sheet], names: &[Name], here: usize, out: &mut Vec<(usize, Rect)>, depth: u32) {
     if depth > 20 {
@@ -120,6 +125,12 @@ pub fn collect_areas(e: &Expr, sheets: &[Sheet], names: &[Name], here: usize, ou
             collect_areas(f, sheets, names, here, out, depth + 1);
             for a in args {
                 collect_areas(a, sheets, names, here, out, depth + 1);
+            }
+        }
+        Expr::Struct(text) => {
+            let cell = HERE_CELL.with(|h| h.get());
+            if let Some(x) = crate::tables::resolve(sheets, text, here, Some(cell)) {
+                out.push(x);
             }
         }
         _ => {}
@@ -204,6 +215,7 @@ impl Deps {
         self.all.insert(k);
         let mut areas = Vec::new();
         if let Some(e) = &f.expr {
+            HERE_CELL.with(|h| h.set((k.1, k.2)));
             collect_areas(e, sheets, names, k.0, &mut areas, 0);
             if f.volatile || uses_volatile_name(e, sheets, names, k.0, 0) {
                 self.volatile.insert(k);
@@ -861,6 +873,9 @@ fn cell_format_code(code: &str) -> String {
 }
 
 impl Ctx for Book {
+    fn table_ref(&self, text: &str, sheet: usize, r: u32, c: u32) -> Option<(usize, Rect)> {
+        crate::tables::resolve(&self.sheets, text, sheet, Some((r, c)))
+    }
     fn value(&mut self, sheet: usize, r: u32, c: u32) -> Value {
         if sheet >= self.sheets.len() {
             return Value::Err(XlErr::Ref);
