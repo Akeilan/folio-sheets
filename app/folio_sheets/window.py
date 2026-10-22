@@ -599,14 +599,25 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if self.grid.editing():
             self.grid.cancel_edit()
             return
+        s = self.book.undo_sheet()
         if self.book.undo() is None:
             return
-        self.grid.refresh()
+        self._back_to(s)
 
     def act_redo(self):
+        s = self.book.redo_sheet()
         if self.book.redo() is None:
             return
-        self.grid.refresh()
+        self._back_to(s)
+
+    def _back_to(self, s):
+        """After undo/redo: show the sheet the step changed."""
+        g = self.grid
+        if s is not None and s < self.book.sheet_count and s != g.sheet:
+            g.set_sheet(s)
+            self.tabs.rebuild()
+        g.refresh()
+        self.update_title()
 
     # clipboard (text values for now)
     def _clipboard(self):
@@ -813,10 +824,16 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 b.set_input(s, r2, c, "=%s(%s)" % (fn, ref_text(r1, c, r2 - 1, c)))
         elif r2 > r1 or c1 == c2:
             row = r2 + 1
+            if row >= MAX_ROWS:
+                self.dialogs.message("There's no room below the selection for the totals.")
+                return
             for c in range(c1, c2 + 1):
                 b.set_input(s, row, c, "=%s(%s)" % (fn, ref_text(r1, c, r2, c)))
         else:
             col = c2 + 1
+            if col >= MAX_COLS:
+                self.dialogs.message("There's no room to the right of the selection for the totals.")
+                return
             for r in range(r1, r2 + 1):
                 b.set_input(s, r, col, "=%s(%s)" % (fn, ref_text(r, c1, r, c2)))
         g.refresh()

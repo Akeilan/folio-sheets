@@ -1,0 +1,22 @@
+[package]
+name = "folio_sheets_core"
+version = "1.0.0"
+edition = "2021"
+description = "Folio Sheets calculation and file engine"
+
+[lib]
+name = "folio_sheets_core"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["python"]
+python = ["dep:pyo3"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py310", "extension-module"], optional = true }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"

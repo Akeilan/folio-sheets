@@ -48,6 +48,7 @@ for r in range(8):
     for c in range(5):
         win.book.set_input(0, r, c, str(r + c) if c else "=B%d+1" % (r + 1))
 win.book.mark_saved()
+base_steps = len(win.book.undo_labels())
 start_inputs = [[win.book.input(0, r, c) for c in range(5)] for r in range(8)]
 sels = [[(1, 1, 3, 3)], [(0, 2, 1048575, 2)], [(4, 0, 4, 16383)], [(2, 2, 2, 2)], [(0, 0, 1, 1), (5, 3, 6, 4)]]
 import inspect  # noqa: E402
@@ -88,11 +89,10 @@ for i, cmd in enumerate(cmds + extra):
 print("ran %d command runs, %d dialogs, %d not-yet" % (ran, len(seen), len(set(win.missing_log))), flush=True)
 # back to the start
 n = 0
-while win.book.can_undo and n < 20000:
+while win.book.can_undo and len(win.book.undo_labels()) > base_steps and n < 20000:
     win.run("undo")
     n += 1
 same = [[win.book.input(0, r, c) for c in range(5)] for r in range(8)] == start_inputs
-# the engine keeps the last 200 steps, so the very start may be out of reach
 print("undo all (%d steps): data back to the start: %s" % (n, same), flush=True)
 same = same or not win.book.can_undo
 print("not yet:", sorted(set(win.missing_log)))
