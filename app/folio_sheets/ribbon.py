@@ -247,15 +247,6 @@ class SplitButton(Gtk.Box, Control):
         self.main.connect("clicked", self.run)
         self.arrow.connect("clicked", lambda *_: self.open_menu())
 
-    def apply_state(self, value):
-        on = value == "true"
-        for w in (self.main, self.arrow):
-            ctx = w.get_style_context()
-            if on:
-                ctx.add_class("checked")
-            else:
-                ctx.remove_class("checked")
-
     def set_swatch(self, color):
         """Recolour the icon's colour bar (Fill Color, Font Color)."""
         if color is None or not isinstance(self.icon_widget, Gtk.Image):

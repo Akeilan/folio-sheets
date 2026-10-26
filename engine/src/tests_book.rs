@@ -1105,3 +1105,97 @@ fn wrapped_objects_survive_saving() {
     assert!(d.contains("Keep Me") && d.contains("Requires=\"a14\""), "{}", d);
     assert!(d.contains("xdr14:contentPart"));
 }
+
+#[test]
+fn shapes_text_boxes_and_wordart() {
+    let mut b = Book::new_empty();
+    let r = b.insert_shape(0, "roundRect", 100.0, 100.0, 200.0, 80.0, false, false).unwrap();
+    let l = b.insert_shape(0, "straightConnector1", 50.0, 300.0, 150.0, 40.0, false, true).unwrap();
+    let t = b.insert_text_box(0, 400.0, 100.0, 160.0, 60.0, "Hello").unwrap();
+    let w = b.insert_wordart(0, 3, "Title", 300.0, 400.0).unwrap();
+    assert_eq!(b.sheets[0].objects[r].name, "Rectangle: Rounded Corners 1");
+    assert_eq!(b.sheets[0].objects[t].name, "TextBox 1");
+    assert_eq!(b.sheets[0].objects[w].name, "TextBox 2");
+    b.edit_shape(0, &[r], "Shape Fill", |x| crate::shape::set_fill(x, Some(0x00B050))).unwrap();
+    b.edit_shape(0, &[r], "Typing", |x| crate::shape::set_text(x, "Inside")).unwrap();
+    assert_eq!(b.shape_view(0, r).unwrap().fill, Some((0x00B050, 1.0)));
+    b.undo();
+    assert_eq!(b.shape_view(0, r).unwrap().text(), "");
+    b.redo();
+    let p = std::env::temp_dir().join("fs-shapes.xlsx");
+    b.save(p.to_str().unwrap()).unwrap();
+    let b2 = Book::open(p.to_str().unwrap()).unwrap();
+    assert_eq!(b2.sheets[0].objects.len(), 4);
+    let v = b2.shape_view(0, r).unwrap();
+    assert_eq!(v.geom, "roundRect");
+    assert_eq!(v.text(), "Inside");
+    assert_eq!(v.fill, Some((0x00B050, 1.0)));
+    let lv = b2.shape_view(0, l).unwrap();
+    assert!(lv.connector && lv.tail && lv.flip_v);
+    assert_eq!(b2.shape_view(0, t).unwrap().text(), "Hello");
+    let wv = b2.shape_view(0, w).unwrap();
+    assert!(wv.paras[0].runs[0].outline.is_some() && wv.fill.is_none());
+    // order
+    assert_eq!(b.reorder_object(0, 0, 100).unwrap(), 3);
+    assert_eq!(b.sheets[0].objects[3].name, "Rectangle: Rounded Corners 1");
+}
+
+#[test]
+fn sparklines_round_trip() {
+    let mut b = Book::new_empty();
+    for r in 0..3u32 {
+        for c in 0..5u32 {
+            b.set_input(0, r, c, &format!("{}", (r as i32 + 1) * (c as i32 - 2))).unwrap();
+        }
+    }
+    let loc = crate::cellref::parse_range("F1:F3").unwrap();
+    let g = b.add_sparklines(0, "line", "A1:E3", loc).unwrap();
+    assert_eq!(b.sparkline_at(0, 1, 5), Some((g, 1)));
+    let gs = b.sparkline_groups(0);
+    assert_eq!(gs[0].items[2].0, "Sheet1!A3:E3");
+    assert_eq!(b.sparkline_values(0, "Sheet1!A2:E2"), vec![Some(-4.0), Some(-2.0), Some(0.0), Some(2.0), Some(4.0)]);
+    b.edit_sparkline_group(0, g, |x| { x.kind = "column".into(); x.high = true; }).unwrap();
+    assert!(b.add_sparklines(0, "line", "A1:E3", crate::cellref::parse_range("G1:H3").unwrap()).is_err());
+    let p = std::env::temp_dir().join("fs-spark.xlsx");
+    b.save(p.to_str().unwrap()).unwrap();
+    let b2 = Book::open(p.to_str().unwrap()).unwrap();
+    let gs = b2.sparkline_groups(0);
+    assert_eq!(gs.len(), 1);
+    assert_eq!(gs[0].kind, "column");
+    assert!(gs[0].high);
+    let mut b3 = b2;
+    b3.insert_rows(0, 0, 1).unwrap();
+    assert_eq!(b3.sparkline_groups(0)[0].items[0], ("Sheet1!A2:E2".to_string(), (1, 5)));
+    b3.undo();
+    b3.clear_sparklines(0, crate::cellref::parse_range("F2").unwrap(), false).unwrap();
+    assert_eq!(b3.sparkline_groups(0)[0].items.len(), 2);
+    b3.undo();
+    assert_eq!(b3.sparkline_groups(0)[0].items.len(), 3);
+    b3.clear_sparklines(0, crate::cellref::parse_range("F2").unwrap(), true).unwrap();
+    assert!(b3.sparkline_groups(0).is_empty());
+}
+
+#[test]
+fn equations_round_trip() {
+    let mut b = Book::new_empty();
+    let i = b.insert_equation(0, "x=(−b±√(b^2−4ac))/2a", 100.0, 100.0).unwrap();
+    assert_eq!(b.equation_linear(0, i).as_deref(), Some("x=(−b±√(b^2−4ac))/2a"));
+    let (_, _, w, h) = b.obj_rect(0, &b.sheets[0].objects[i]);
+    assert!(w > 60.0 && h > 30.0, "{} {}", w, h);
+    b.set_equation(0, i, "a^2+b^2=c^2").unwrap();
+    let (_, _, w2, _) = b.obj_rect(0, &b.sheets[0].objects[i]);
+    assert!(w2 < w + 1.0);
+    b.undo();
+    assert_eq!(b.equation_linear(0, i).as_deref(), Some("x=(−b±√(b^2−4ac))/2a"));
+    let p = std::env::temp_dir().join("fs-math.xlsx");
+    b.save(p.to_str().unwrap()).unwrap();
+    // as Office keeps it: Office Math in a Choice, plain text in the Fallback
+    let bytes = std::fs::read(&p).unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let d = String::from_utf8(z.read("xl/drawings/drawing1.xml").unwrap()).unwrap();
+    assert!(d.contains("Requires=\"a14\"") && d.contains("<mc:Fallback>") && d.contains("m:oMathPara"), "{}", d);
+    let fb = &d[d.find("<mc:Fallback>").unwrap()..];
+    assert!(!fb.contains("oMath") && fb.contains("2a</a:t>"));
+    let b2 = Book::open(p.to_str().unwrap()).unwrap();
+    assert_eq!(b2.equation_linear(0, 0).as_deref(), Some("x=(−b±√(b^2−4ac))/2a"));
+}

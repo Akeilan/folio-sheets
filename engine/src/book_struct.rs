@@ -298,8 +298,22 @@ impl Book {
             Piece::Raw(tag, x) if matches!(tag.as_str(), "conditionalFormatting" | "dataValidations" | "hyperlinks" | "ignoredErrors" | "autoFilter" | "protectedRanges" | "rowBreaks" | "colBreaks") => {
                 Piece::Raw(tag.clone(), adjust_piece(x, &sh, &how, &name))
             }
+            Piece::Raw(tag, x) if tag == "extLst" && x.contains("sparklineGroup") => {
+                // sparklines move with their cells; ones whose cell went are deleted
+                let one = vec![p.clone()];
+                let mut gs = crate::sparkline::read_groups(&one);
+                for g in gs.iter_mut() {
+                    g.items = g.items.iter().filter_map(|(f, (r, c))| {
+                        let (r2, c2) = sh.map(*r, *c)?;
+                        Some((formula::adjust(f, &rebase(&how, &name)), (r2, c2)))
+                    }).collect();
+                }
+                gs.retain(|g| !g.items.is_empty());
+                crate::sparkline::with_groups(&one, &gs).into_iter().next().unwrap_or(Piece::Raw(tag.clone(), String::new()))
+            }
             other => other.clone(),
         }).filter_map(|p| match p {
+            Piece::Raw(_, x) if x.is_empty() => None,
             Piece::Raw(tag, x) if x.contains(GONE) => drop_gone(&x).map(|x| Piece::Raw(tag, x)),
             other => Some(other),
         }).collect();

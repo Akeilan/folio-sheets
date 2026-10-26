@@ -269,7 +269,7 @@ fn parse_sqref(s: &str) -> Vec<Rect> {
     s.split_whitespace().filter_map(|t| parse_range(&t.replace('$', ""))).collect()
 }
 
-fn fingerprint(pieces: &[Piece]) -> u64 {
+pub(crate) fn fingerprint(pieces: &[Piece]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for p in pieces {
         if let Piece::Raw(t, x) = p {

@@ -99,6 +99,7 @@ extern "C" {
     pub fn pango_layout_set_width(l: *mut PangoLayout, w: c_int);
     pub fn pango_layout_set_wrap(l: *mut PangoLayout, w: c_int);
     pub fn pango_layout_set_alignment(l: *mut PangoLayout, a: c_int);
+    pub fn pango_cairo_layout_path(cr: *mut cairo_t, l: *mut PangoLayout);
     pub fn pango_layout_set_attributes(l: *mut PangoLayout, a: *mut PangoAttrList);
     pub fn pango_layout_get_pixel_size(l: *mut PangoLayout, w: *mut c_int, h: *mut c_int);
     pub fn pango_layout_get_extents(l: *mut PangoLayout, ink: *mut PangoRectangle, logical: *mut PangoRectangle);
