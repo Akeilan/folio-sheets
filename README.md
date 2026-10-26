@@ -12,6 +12,29 @@ Build:
     engine/build.sh          # Rust tests + release build -> engine/out/folio_sheets_core.so
     ./build-deb.sh [outdir]  # the .deb (uses engine/out unless FOLIO_SHEETS_ENGINE is set)
 
+## 0.8.0 — the rest of the P2 list
+
+- View > Window: New Window on the same workbook (Book1:2), Arrange All, View Side by Side
+  with Synchronous Scrolling, Reset Window Position, Hide / Unhide, Split (panes that scroll
+  on their own; drag or double-click the bars). `windows_ui.py`; engine `pane_top/pane_left`.
+- Draw Border, Draw Border Grid, Erase Border (a pen over the cells; Esc puts it down); the
+  Borders button repeats the last border; Fill / Font Color show the colour they will use.
+- Protect Sheet and Protect Workbook: SHA-512 hashed passwords (old 16-bit hashes still
+  open), the 15 permissions, Lock Cell and Hidden take effect, structure locked. Every
+  command is gated, and a safety net takes back any step that reached a locked cell.
+  `protect_ui.py`, engine `protect.rs` (kept out of undo).
+- Text to Columns and the Text Import Wizard: delimited or fixed width, a format per column
+  (General / Text / Date order / skip), destination, separators. .txt opens through it.
+- Group and Outline (`outline.rs`, `outline_ui.py`): Group / Ungroup (Alt+Shift+Right /
+  Left), outline bars with level and +/- buttons, Show / Hide Detail, Auto Outline, Clear
+  Outline, Subtotal with Replace and Remove All.
+- Spelling (F7, Hunspell) and Thesaurus (Shift+F7, MyThes), offline; the package recommends
+  hunspell-en-us and mythes-en-us.
+- Fixed: text from scrolled-away columns drawn inside frozen panes.
+
+Tests: `window_audit`, `protect_audit` (walks every command on a protected sheet),
+`text_audit`, `outline_audit`, `proofing_audit`, and more checks in `format_audit`.
+
 ## 0.7.0 — data validation and hyperlinks
 
 - Data > Data Validation (Settings, Input Message, Error Alert), the Stop / Warning /
