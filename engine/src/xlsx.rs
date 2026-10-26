@@ -263,6 +263,16 @@ impl Book {
                             load_tables(&mut sh, &parts);
                             load_comments(&mut sh, &parts, &persons);
                             load_links(&mut sh, &parts);
+                            for p in sh.pieces.iter_mut() {
+                                if let Piece::Raw(t, x) = p {
+                                    if t == "sheetProtection" {
+                                        if let Ok((_, e)) = xml::parse(x) {
+                                            sh.protection = Some(e.attrs.clone());
+                                            *p = Piece::Known("sheetProtection".into());
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     None => sh.error = Some("the sheet's part is missing".into()),
@@ -1594,6 +1604,15 @@ impl Book {
             Some(i) => wb.name[..=i].to_string(),
             None => String::new(),
         };
+        // Protect Workbook, when changed while open
+        if let Some(prot) = &self.wb_protection {
+            wb.remove_children("workbookProtection");
+            if let Some(attrs) = prot {
+                let mut e = Element::new(&format!("{}workbookProtection", pfx));
+                e.attrs = attrs.clone();
+                wb.insert_ordered(e, &WB_ORDER);
+            }
+        }
         // workbookPr
         if self.date1904 || wb.child("workbookPr").is_some() {
             if wb.child("workbookPr").is_none() {
@@ -1718,6 +1737,9 @@ impl Book {
                 pieces.push(Piece::Known(tag.to_string()));
             }
         }
+        if sh.protection.is_some() && !have(&pieces, "sheetProtection") {
+            pieces.push(Piece::Known("sheetProtection".into()));
+        }
         if drawing_rid.is_some() && !pieces.iter().any(|x| matches!(x, Piece::Known(t) | Piece::Raw(t, _) if t == "drawing")) {
             pieces.push(Piece::Known("drawing".into()));
         }
@@ -1821,6 +1843,15 @@ impl Book {
                     "drawing" => {
                         if let Some(rid) = drawing_rid {
                             out.push_str(&format!("<{}drawing r:id=\"{}\"/>", pfx, esc_attr(rid)));
+                        }
+                    }
+                    "sheetProtection" => {
+                        if let Some(attrs) = &sh.protection {
+                            out.push_str(&format!("<{}sheetProtection", pfx));
+                            for (k, v) in attrs {
+                                out.push_str(&format!(" {}=\"{}\"", k, esc_attr(v)));
+                            }
+                            out.push_str("/>");
                         }
                     }
                     "mergeCells" => {

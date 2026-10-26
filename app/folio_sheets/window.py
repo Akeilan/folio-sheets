@@ -318,6 +318,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.status.show_zoom(st.zoom * 100)
         self.sync_checks()
         self.ribbon.update("split", "true" if getattr(st, "split", False) else "false")
+        from . import protect_ui
+        protect_ui.after(self)
         self.grid.refresh()
 
     def sync_checks(self):
@@ -337,7 +339,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if not g.editing():
             r, c = g.sel.active
             self.formula_bar.namebox.show_text(a1(r, c))
-            self.formula_bar.show_text(self.book.input(g.sheet, r, c))
+            from .protect_ui import hides_formula
+            self.formula_bar.show_text("" if hides_formula(self, r, c) else self.book.input(g.sheet, r, c))
             st = self.book.cell_style(g.sheet, r, c)
             self.update_ribbon_state(st)
         self.dv.update_message()
@@ -472,6 +475,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         """Ctrl+Enter: the typed entry goes into every selected cell."""
         g = self.grid
         text = g.editor.text()
+        from .protect_ui import may_change_cells
+        if not may_change_cells(self):
+            return
         checked = self.validate_entry(text)
         if checked is None:
             return
@@ -510,6 +516,13 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             if self.grid.commit_edit() is False:
                 return
         base = cmd.split(":", 1)[0]
+        from . import protect_ui
+        if self.book is not None and not protect_ui.gate(self, cmd):
+            return
+        guard = self.book is not None and protect_ui.protected(self) and base not in protect_ui.FREE
+        if guard:
+            h0 = self.book.history_state
+            self._approved = protect_ui.need_of(base) is not None
         grouping = self.book is not None and base not in ("undo", "redo")
         try:
             if grouping:
@@ -520,6 +533,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 fn(arg) if arg is not None else fn()
         except NotImplementedError:
             self.not_yet(cmd)
+        if guard:
+            protect_ui.after_command(self, base, h0)
 
     def not_yet(self, cmd):
         label = commands.label(cmd)
@@ -633,7 +648,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def store_view_state(self):
         """Selections, scroll positions, zoom and panes go back into the
         file (only where they changed)."""
-        for i, st in self.grid.states.items():
+        for i, st in list(self.grid.states.items()):
+            if i >= self.book.sheet_count:
+                # a sheet that undo took away again
+                self.grid.states.pop(i, None)
+                continue
             try:
                 self.book.set_view(i, {
                     "top_row": st.top_row, "left_col": st.left_col, "zoom": int(round(st.zoom * 100)),
@@ -1363,6 +1382,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         """End of a drag on a column or row border."""
         g = self.grid
         kind, idx, x0, y0 = drag[:4]
+        from .protect_ui import protected, allows, refuse
+        if protected(self) and not allows(self, "formatColumns" if kind == "colresize" else "formatRows"):
+            self.size_tip(None)
+            refuse(self)
+            return
         z = g.state().zoom
         self.size_tip(None)
         if kind == "colresize":
@@ -1527,6 +1551,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def fill_handle(self, src, target, ctrl=False):
         """The fill handle was dragged from src over target (Ctrl: copy instead of a
         series; a single number counts up instead)."""
+        from .protect_ui import may_change_cells
+        if not may_change_cells(self, [tuple(target)]):
+            return
         g = self.grid
         b = self.book
         src, target = tuple(src), tuple(target)
@@ -2568,6 +2595,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return True
         if kv == Gdk.KEY_BackSpace:
             r, c = g.sel.active
+            from .protect_ui import may_change_cells
+            if not may_change_cells(self, [(r, c, r, c)]):
+                return True
             self.book.clear_contents(g.sheet, [(r, c, r, c)])
             g.start_edit(initial="")
             return True

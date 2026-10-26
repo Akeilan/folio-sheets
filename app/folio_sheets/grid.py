@@ -845,6 +845,11 @@ class GridView(Gtk.Box):
             if prev is not None:
                 x, y, w, h = prev
                 label = "Move Chart" if d[2] == "body" else "Size Chart"
+                from .protect_ui import protected, allows
+                if protected(self.win) and not allows(self.win, "objects"):
+                    self.refresh()
+                    self.win.dialogs.message("The chart you're trying to change is on a protected sheet.")
+                    return True
                 try:
                     self.book.place_object(self.sheet, d[1], float(x), float(y), float(w), float(h), self.params(), label)
                 except ValueError as e:
@@ -875,6 +880,9 @@ class GridView(Gtk.Box):
     def select_cell(self, r, c, refresh=True, extend=False):
         r = min(max(r, 0), MAX_ROWS - 1)
         c = min(max(c, 0), MAX_COLS - 1)
+        from .protect_ui import may_select
+        if not extend and not may_select(self.win, r, c):
+            return          # a protected sheet that doesn't let this cell be selected
         if extend:
             self.sel.extend_to(r, c)
             self.ensure_visible(r, c)
@@ -944,6 +952,9 @@ class GridView(Gtk.Box):
         if info["kind"] not in ("work", "macro"):
             return
         r, c = self.sel.active
+        from .protect_ui import may_change_cells
+        if not may_change_cells(self.win, [(r, c, r, c)]):
+            return
         self.ensure_visible(r, c)
         self.area.queue_draw()
         self.editor.cell = (r, c)

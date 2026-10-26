@@ -122,6 +122,9 @@ pub struct Book {
     pub styles: Styles,
     pub names: Vec<Name>,
     pub date1904: bool,
+    /// Protect Workbook set while open: Some(None) = taken off, Some(Some(attrs)) = on;
+    /// None = as the file has it.
+    pub wb_protection: Option<Option<Vec<(String, String)>>>,
     pub calc: CalcSettings,
     pub active: usize,
     pub file: crate::xlsx::FileParts,
@@ -166,6 +169,7 @@ impl Book {
             styles: Styles::parse(None).expect("default styles"),
             names: vec![],
             date1904: false,
+            wb_protection: None,
             calc: CalcSettings::default(),
             active: 0,
             file: crate::xlsx::FileParts::default(),
