@@ -70,8 +70,8 @@
   border-bottom: 1px solid @ribbon_line;
   padding: 2px 4px 0 4px;
 }
-.folio-group { padding: 2px 4px 0 4px; }
-.folio-caption { color: @caption_fg; font-size: 0.85em; padding: 1px 0 3px 0; }
+.folio-group { padding: 1px 4px 0 4px; }
+.folio-caption { color: @caption_fg; font-size: 0.85em; padding: 1px 0 1px 0; }
 .folio-sep { background: @ribbon_line; min-width: 1px; margin: 6px 2px 6px 2px; }
 .folio-launcher { padding: 0 2px; min-height: 0; min-width: 0; }
 

@@ -109,8 +109,16 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         GLib.idle_add(self.grid.area.grab_focus)
 
     # ------------------------------------------------------------ QAT
-    QAT = [("save", "qat-save", "Save (Ctrl+S)"), ("undo", "r-undo-sm", "Undo (Ctrl+Z)"),
-           ("redo", "r-redo-sm", "Redo (Ctrl+Y)")]
+    # every command the Quick Access Toolbar can hold, in its menu's order
+    QAT_ALL = [("new", "qat-new", "New (Ctrl+N)", "New"), ("open", "r-browse", "Open (Ctrl+O)", "Open"),
+               ("save", "qat-save", "Save (Ctrl+S)", "Save"), ("undo", "r-undo-sm", "Undo (Ctrl+Z)", "Undo"),
+               ("redo", "r-redo-sm", "Redo (Ctrl+Y)", "Redo"), ("print", "qat-print", "Print (Ctrl+P)", "Print")]
+    QAT_DEFAULT = ["save", "undo", "redo"]
+
+    @property
+    def QAT(self):
+        on = self.app.settings.get("qat", self.QAT_DEFAULT)
+        return [(k, i, t) for k, i, t, _n in self.QAT_ALL if k in on]
 
     def build_qat(self):
         for c in self.qat.get_children():
@@ -122,7 +130,39 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             b.set_focus_on_click(False)
             b.connect("clicked", lambda _b, k=key: self.run(k))
             self.qat.pack_start(b, False, False, 0)
+        # the customise menu (suite spec): tick commands on or off
+        mb = Gtk.MenuButton()
+        mb.set_relief(Gtk.ReliefStyle.NONE)
+        mb.set_focus_on_click(False)
+        mb.set_tooltip_text("Customize Quick Access Toolbar")
+        mb.add(Gtk.Label(label="\u25be"))
+        menu = Gtk.Menu()
+        head = Gtk.MenuItem(label="Customize Quick Access Toolbar")
+        head.set_sensitive(False)
+        menu.append(head)
+        on = self.app.settings.get("qat", self.QAT_DEFAULT)
+        for k, _i, _t, name in self.QAT_ALL:
+            mi = Gtk.CheckMenuItem(label=name)
+            mi.set_active(k in on)
+            mi.connect("toggled", lambda m, k=k: GLib.idle_add(lambda: (self.set_qat(k, m.get_active()), False)[1]))
+            menu.append(mi)
+        menu.show_all()
+        mb.set_popup(menu)
+        self.qat_menu_button = mb
+        self.qat.pack_start(mb, False, False, 0)
         self.qat.show_all()
+
+    def set_qat(self, key, on):
+        cur = [k for k in self.app.settings.get("qat", self.QAT_DEFAULT) if k != key]
+        if on:
+            cur.append(key)
+        self.app.settings["qat"] = [k for k, *_ in self.QAT_ALL if k in cur]
+        try:
+            self.app.save_settings()
+        except OSError:
+            pass
+        for w in self.app.windows:
+            w.build_qat()
 
     # ------------------------------------------------------------ books
     def new_book(self):
