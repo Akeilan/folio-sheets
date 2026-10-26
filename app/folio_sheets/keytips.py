@@ -87,7 +87,7 @@ class KeyTips:
                 self.targets[tip] = ("tab", t)
                 self._badge(t.button, tip, below=True)
         # quick access toolbar: 1, 2, 3 ...
-        for i, b in enumerate(self.win.qat.get_children(), start=1):
+        for i, b in enumerate([c for c in self.win.qat.get_children() if not isinstance(c, Gtk.MenuButton)], start=1):
             self.targets[str(i)] = ("button", b)
             self._pop_badge(b, str(i))
         return True
