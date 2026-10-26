@@ -24,7 +24,7 @@ LABELS = {
     "font-name": "Font", "font-size": "Font Size", "font-grow": "Increase Font Size",
     "font-shrink": "Decrease Font Size", "bold": "Bold", "italic": "Italic",
     "underline": "Underline", "double-underline": "Double Underline", "strikethrough": "Strikethrough",
-    "borders": "Borders", "border-bottom": "Bottom Border", "border-top": "Top Border",
+    "borders": "Borders", "border-last": "Borders", "border-bottom": "Bottom Border", "border-top": "Top Border",
     "border-left": "Left Border", "border-right": "Right Border", "border-none": "No Border",
     "border-all": "All Borders", "border-outside": "Outside Borders",
     "border-thick-outside": "Thick Outside Borders", "border-bottom-double": "Bottom Double Border",

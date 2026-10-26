@@ -114,6 +114,27 @@ def exists(name):
     return pixbuf(name, 16) is not None
 
 
+def swatch_pixbuf(name, size, color):
+    """An own icon with its colour bar (the rect at the bottom) in `color` (0xRRGGBB)."""
+    import re
+    path = os.path.join(OWN, name + ".svg")
+    try:
+        with open(path) as f:
+            svg = f.read()
+    except OSError:
+        return pixbuf(name, size)
+    hexc = "#%06x" % (color & 0xFFFFFF)
+    svg2, n = re.subn(r'(<rect x="1" y="13"[^>]*fill=")#[0-9a-fA-F]{6}', lambda m: m.group(1) + hexc, svg)
+    if not n:
+        return pixbuf(name, size)
+    from gi.repository import GdkPixbuf
+    loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+    loader.set_size(size, size)
+    loader.write(svg2.encode())
+    loader.close()
+    return loader.get_pixbuf()
+
+
 def image(name, size):
     pb = pixbuf(name, size)
     if pb is None:
