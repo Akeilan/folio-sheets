@@ -858,7 +858,9 @@ class GridView(Gtk.Box):
             prev, self.obj_preview = self.obj_preview, None
             if prev is not None:
                 x, y, w, h = prev
-                label = "Move Chart" if d[2] == "body" else "Size Chart"
+                kinds = {o["kind"] for o in self.book.objects(self.sheet)}
+                noun = "Chart" if kinds <= {"chart"} else ("Picture" if kinds <= {"picture"} else "Object")
+                label = ("Move %s" if d[2] == "body" else "Size %s") % noun
                 from .protect_ui import protected, allows
                 if protected(self.win) and not allows(self.win, "objects"):
                     self.refresh()

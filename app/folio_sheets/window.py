@@ -837,6 +837,29 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import clip_ui
         clip_ui.paste_special(self)
 
+    def act_paste_picture(self):
+        from . import clip_ui
+        clip_ui.paste_picture(self)
+
+    def act_copy_picture(self):
+        from . import clip_ui
+        if not clip_ui._copy_picture_object(self):
+            raise NotImplementedError
+
+    def act_pictures(self):
+        from . import clip_ui
+        d = Gtk.FileChooserNative(title="Insert Picture", transient_for=self, action=Gtk.FileChooserAction.OPEN)
+        f = Gtk.FileFilter()
+        f.set_name("Pictures")
+        for pat in ("*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp", "*.tif", "*.tiff", "*.ico"):
+            f.add_pattern(pat)
+            f.add_pattern(pat.upper())
+        d.add_filter(f)
+        path = d.get_filename() if d.run() == Gtk.ResponseType.ACCEPT else None
+        d.destroy()
+        if path:
+            clip_ui.insert_picture_file(self, path)
+
     # editing
     def act_clear_contents(self):
         g = self.grid
@@ -2467,7 +2490,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 for i in list(g.sel_objects):
                     r = self.book.object_screen_rect(g.sheet, i, p)
                     if r:
-                        self.book.place_object(g.sheet, i, r[0] + dx * step, r[1] + dy * step, r[2], r[3], p, "Move Chart")
+                        kind = self.book.objects(g.sheet)[i]["kind"]
+                        label = {"chart": "Move Chart", "picture": "Move Picture"}.get(kind, "Move Object")
+                        self.book.place_object(g.sheet, i, r[0] + dx * step, r[1] + dy * step, r[2], r[3], p, label)
                 g.refresh()
                 self.update_title()
                 return True
