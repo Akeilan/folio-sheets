@@ -243,6 +243,45 @@ impl Book {
         (sh.objects.len() as u32 + 2, format!("{} {}", base, n))
     }
 
+    /// Insert a picture (PNG, JPEG, GIF or BMP bytes) with its top left at sheet pixels (x, y),
+    /// at its own size but no wider or taller than max_w by max_h. Returns its index.
+    pub fn insert_picture(&mut self, s: usize, bytes: Vec<u8>, x: f64, y: f64, max_w: f64, max_h: f64) -> Result<usize, String> {
+        if s >= self.sheets.len() || self.sheets[s].kind != "work" {
+            return Err("Pictures can be inserted on worksheets only.".into());
+        }
+        let pic = crate::picture::Picture::new(bytes).ok_or("This isn't a picture Sheets can read (PNG, JPEG, GIF or BMP).")?;
+        let (pw, ph) = (pic.w as f64, pic.h as f64);
+        let k = (max_w / pw).min(max_h / ph).min(1.0).max(1e-6);
+        let (w, h) = ((pw * k).max(1.0), (ph * k).max(1.0));
+        let (id, name) = self.next_object_name(s, "Picture");
+        // pictures move with cells but keep their size, as in the desktop spreadsheet
+        let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: Some("oneCell".into()) };
+        let anchor = self.anchor_at(s, &like, x, y, w, h);
+        let emu = crate::drawing::EMU;
+        let obj = Obj {
+            anchor,
+            body: crate::drawing::picture_body(id, &name, (w * emu).round() as i64, (h * emu).round() as i64),
+            chart: None,
+            name,
+            part: None,
+            picture: Some(Rc::new(pic)),
+            pic_part: None,
+        };
+        let mut objs = self.sheets[s].objects.clone();
+        objs.push(obj);
+        let i = objs.len() - 1;
+        self.begin("Insert Picture", s);
+        self.record(Delta::Objects(s, objs));
+        self.commit();
+        Ok(i)
+    }
+
+    /// A picture object's file bytes and type ("png", "jpeg", ...).
+    pub fn picture_bytes(&self, s: usize, i: usize) -> Option<(&[u8], &'static str)> {
+        let p = self.sheets.get(s)?.objects.get(i)?.picture.as_ref()?;
+        Some((&p.bytes, p.ext))
+    }
+
     /// Insert a chart at sheet pixels (x, y), w by h. Returns its index.
     pub fn add_chart(&mut self, s: usize, ch: Chart, x: f64, y: f64, w: f64, h: f64) -> Result<usize, String> {
         if s >= self.sheets.len() || self.sheets[s].kind != "work" {
@@ -251,7 +290,7 @@ impl Book {
         let (id, name) = self.next_object_name(s, "Chart");
         let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: None };
         let anchor = self.anchor_at(s, &like, x, y, w, h);
-        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None };
+        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
         let i = objs.len() - 1;

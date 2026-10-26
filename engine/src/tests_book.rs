@@ -927,3 +927,48 @@ fn outline() {
     c.set_detail(0, true, 4, true).unwrap();
     assert!(!c.line(0, true, 2).hidden, "showing from the shared summary row shows all of it");
 }
+
+#[test]
+fn pictures_insert_save_reopen() {
+    let dir = std::env::temp_dir().join(format!("fs-pic-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut b = blank();
+    // a 40 x 20 PNG and a JPEG made by our own encoders
+    let mut px = Vec::new();
+    for y in 0..20u32 {
+        for x in 0..40u32 {
+            px.extend_from_slice(&[(x * 6) as u8, (y * 12) as u8, 90, 255]);
+        }
+    }
+    let png = crate::png::encode(40, 20, &px, 6);
+    let jpg = crate::jpeg::encode(40, 20, &px, 90);
+    let i = b.insert_picture(0, png.clone(), 100.0, 50.0, 1e9, 1e9).unwrap();
+    let k = b.insert_picture(0, jpg.clone(), 300.0, 50.0, 20.0, 20.0).unwrap();
+    assert_eq!((i, k), (0, 1));
+    assert_eq!(b.sheets[0].objects[0].kind(), "picture");
+    let r0 = b.obj_rect(0, &b.sheets[0].objects[0]);
+    assert!((r0.2 - 40.0).abs() < 0.5 && (r0.3 - 20.0).abs() < 0.5, "{:?}", r0);
+    let r1 = b.obj_rect(0, &b.sheets[0].objects[1]);
+    assert!((r1.2 - 20.0).abs() < 0.5 && (r1.3 - 10.0).abs() < 0.5, "fits the limit keeping proportions {:?}", r1);
+    assert!(b.insert_picture(0, b"not a picture".to_vec(), 0.0, 0.0, 1e9, 1e9).is_err());
+    // undo takes it back
+    assert_eq!(b.undo().unwrap().0, "Insert Picture");
+    assert_eq!(b.sheets[0].objects.len(), 1);
+    b.redo();
+    let path = dir.join("pics.xlsx");
+    b.save(path.to_str().unwrap()).unwrap();
+    let b2 = Book::open(path.to_str().unwrap()).unwrap();
+    assert_eq!(b2.sheets[0].objects.len(), 2);
+    assert_eq!(b2.picture_bytes(0, 0).map(|(d, e)| (d.to_vec(), e)), Some((png.clone(), "png")));
+    assert_eq!(b2.picture_bytes(0, 1).map(|(d, e)| (d.to_vec(), e)), Some((jpg.clone(), "jpeg")));
+    assert_eq!(b2.sheets[0].objects[1].picture.as_ref().unwrap().size(), Some((40, 20)));
+    let q = b2.obj_rect(0, &b2.sheets[0].objects[0]);
+    assert!((q.0 - r0.0).abs() < 0.5 && (q.2 - r0.2).abs() < 0.5, "{:?} vs {:?}", q, r0);
+    // and once more: the pictures read from the file are kept as they are
+    let mut b3 = b2;
+    let p2 = dir.join("pics2.xlsx");
+    b3.save(p2.to_str().unwrap()).unwrap();
+    let b4 = Book::open(p2.to_str().unwrap()).unwrap();
+    assert_eq!(b4.picture_bytes(0, 1).map(|(d, _)| d.to_vec()), Some(jpg));
+    let _ = std::fs::remove_dir_all(&dir);
+}

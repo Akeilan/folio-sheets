@@ -1643,6 +1643,15 @@ impl PyBook {
         self.sheet(s)?;
         self.b.delete_objects(s, &which).map_err(verr)
     }
+    #[pyo3(signature = (s, data, x, y, max_w=1e9, max_h=1e9))]
+    fn insert_picture(&mut self, s: usize, data: Vec<u8>, x: f64, y: f64, max_w: f64, max_h: f64) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.insert_picture(s, data, x, y, max_w, max_h).map_err(verr)
+    }
+    fn picture_bytes<'py>(&self, py: Python<'py>, s: usize, i: usize) -> PyResult<Option<(Bound<'py, pyo3::types::PyBytes>, String)>> {
+        self.sheet(s)?;
+        Ok(self.b.picture_bytes(s, i).map(|(b, e)| (pyo3::types::PyBytes::new_bound(py, b), e.to_string())))
+    }
     fn insert_chart(&mut self, s: usize, rg: R4, kind: &str, x: f64, y: f64) -> PyResult<usize> {
         self.sheet(s)?;
         self.b.insert_chart(s, rect(rg), kind, x, y).map_err(verr)

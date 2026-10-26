@@ -35,6 +35,9 @@ pub struct Obj {
     pub name: String,
     /// the chart part this came from
     pub part: Option<String>,
+    /// a picture's image, and the media part it was read from (None when new)
+    pub picture: Option<Rc<crate::picture::Picture>>,
+    pub pic_part: Option<String>,
 }
 
 /// A sheet's drawing part as read.
@@ -64,6 +67,9 @@ impl Obj {
     pub fn kind(&self) -> &'static str {
         if self.chart.is_some() {
             return "chart";
+        }
+        if self.picture.is_some() {
+            return "picture";
         }
         for n in &self.body {
             if let Node::Elem(e) = n {
@@ -97,6 +103,48 @@ impl Obj {
         find(&self.body)
     }
 
+    /// The picture's image reference id (a:blip r:embed).
+    pub fn blip_rid(&self) -> Option<String> {
+        fn find(n: &[Node]) -> Option<String> {
+            for x in n {
+                if let Node::Elem(e) = x {
+                    if e.local() == "blip" {
+                        if let Some((_, v)) = e.attrs.iter().find(|(k, _)| xml::local(k) == "embed") {
+                            return Some(v.clone());
+                        }
+                    }
+                    if let Some(r) = find(&e.children) {
+                        return Some(r);
+                    }
+                }
+            }
+            None
+        }
+        find(&self.body)
+    }
+
+    pub fn set_blip_rid(&mut self, rid: &str) {
+        fn walk(n: &mut [Node], rid: &str) -> bool {
+            for x in n.iter_mut() {
+                if let Node::Elem(e) = x {
+                    if e.local() == "blip" {
+                        for a in e.attrs.iter_mut() {
+                            if xml::local(&a.0) == "embed" {
+                                a.1 = rid.to_string();
+                                return true;
+                            }
+                        }
+                    }
+                    if walk(&mut e.children, rid) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        walk(&mut self.body, rid);
+    }
+
     pub fn set_chart_rid(&mut self, rid: &str) {
         fn walk(n: &mut [Node], rid: &str) -> bool {
             for x in n.iter_mut() {
@@ -123,7 +171,7 @@ impl Obj {
 /// Read a drawing part. Charts whose parts can be read become charts; anything else is
 /// kept as it is.
 pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, bool)>, get: &dyn Fn(&str) -> Option<String>,
-                    theme: &[u32; 12]) -> Result<(DrawingFile, Vec<Obj>), String> {
+                    get_bytes: &dyn Fn(&str) -> Option<Vec<u8>>, theme: &[u32; 12]) -> Result<(DrawingFile, Vec<Obj>), String> {
     let (prolog, root) = xml::parse(text)?;
     let mut objs = Vec::new();
     for a in root.elems() {
@@ -154,8 +202,24 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
             _ => continue,
         };
         let body: Vec<Node> = a.children.iter().filter(|n| !matches!(n, Node::Elem(e) if matches!(e.local(), "from" | "to" | "ext" | "pos"))).cloned().collect();
-        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None };
+        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None };
         o.name = find_name(&o.body).unwrap_or_default();
+        // a picture: its image from the media part
+        let is_pic = o.body.iter().any(|n| matches!(n, Node::Elem(e) if e.local() == "pic"));
+        if is_pic {
+            if let Some(rid) = o.blip_rid() {
+                if let Some((_, _, target, ext)) = rels.iter().find(|r| r.0 == rid && r.1.ends_with("/image")) {
+                    if !*ext {
+                        if let Some(b) = get_bytes(target) {
+                            if crate::picture::sniff(&b).is_some() {
+                                o.picture = Some(Rc::new(crate::picture::Picture::lazy(b)));
+                                o.pic_part = Some(target.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if let Some(rid) = o.chart_rid() {
             if let Some((_, _, target, _)) = rels.iter().find(|r| r.0 == rid && r.1.ends_with("/chart")) {
                 if let Some(t) = get(target) {
@@ -194,6 +258,13 @@ fn write_marker(tag: &str, m: &Marker, out: &mut String) {
 pub fn chart_frame(id: u32, name: &str) -> Vec<Node> {
     let s = format!("<x><xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"{}\" name=\"{}\"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"rId1\"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></x>",
         id, xml::escape_attr(name));
+    xml::parse(&s).map(|(_, e)| e.children).unwrap_or_default()
+}
+
+/// The anchor body of a new picture (its image reference is set when written).
+pub fn picture_body(id: u32, name: &str, cx: i64, cy: i64) -> Vec<Node> {
+    let s = format!("<x><xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"{}\" name=\"{}\"/><xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:embed=\"rId1\"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></x>",
+        id, xml::escape_attr(name), cx, cy);
     xml::parse(&s).map(|(_, e)| e.children).unwrap_or_default()
 }
 

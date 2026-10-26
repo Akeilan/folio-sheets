@@ -12,6 +12,18 @@ Build:
     engine/build.sh          # Rust tests + release build -> engine/out/folio_sheets_core.so
     ./build-deb.sh [outdir]  # the .deb (uses engine/out unless FOLIO_SHEETS_ENGINE is set)
 
+## 0.9.0 — pictures, and copy and paste with the other apps
+
+- Pictures on the sheet: Insert > Pictures (PNG, JPEG, GIF, BMP as they are; other types
+  converted to PNG), Paste of a picture another program copied (Draw, Gable's Copy View,
+  a browser), Paste > Picture; select, move, size, delete, Copy / Cut (other programs get
+  the picture). Drawn by the engine with its own PNG/JPEG/GIF/BMP decoders; saved as
+  pictures in the .xlsx (Excel and LibreOffice read them), and pictures in opened files are
+  drawn now instead of a grey frame.
+- A copied range also goes to other programs as an HTML table (with the text as before).
+
+Tests: `pictures_audit`, and a Rust test of insert / save / reopen.
+
 ## 0.8.0 — the rest of the P2 list
 
 - View > Window: New Window on the same workbook (Book1:2), Arrange All, View Side by Side

@@ -366,6 +366,21 @@ impl Book {
             if x > p.width || y > p.height || x + w < 0.0 || y + h < 0.0 || w < 1.0 || h < 1.0 {
                 continue;
             }
+            if let Some(pic) = &o.picture {
+                if let Some((px, pw, ph)) = pic.argb() {
+                    cairo_save(cr);
+                    let surf = cairo_image_surface_create_for_data(px.as_ptr() as *mut u8, 0, pw as i32, ph as i32, (pw * 4) as i32);
+                    cairo_rectangle(cr, x, y, w, h);
+                    cairo_clip(cr);
+                    cairo_translate(cr, x, y);
+                    cairo_scale(cr, w / pw as f64, h / ph as f64);
+                    cairo_set_source_surface(cr, surf, 0.0, 0.0);
+                    cairo_paint(cr);
+                    cairo_restore(cr);
+                    cairo_surface_destroy(surf);
+                    continue;
+                }
+            }
             match &o.chart {
                 Some(ch) => self.paint_chart(ch, cr, x, y, w, h, p.zoom, pen),
                 None => {

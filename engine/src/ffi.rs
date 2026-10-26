@@ -80,6 +80,8 @@ extern "C" {
     pub fn cairo_image_surface_get_width(s: *mut cairo_surface_t) -> c_int;
     pub fn cairo_image_surface_get_height(s: *mut cairo_surface_t) -> c_int;
     pub fn cairo_surface_destroy(s: *mut cairo_surface_t);
+    pub fn cairo_image_surface_create_for_data(data: *mut u8, format: c_int, w: c_int, h: c_int, stride: c_int) -> *mut cairo_surface_t;
+    pub fn cairo_set_source_surface(cr: *mut cairo_t, s: *mut cairo_surface_t, x: c_double, y: c_double);
     pub fn cairo_surface_flush(s: *mut cairo_surface_t);
     pub fn cairo_surface_write_to_png(s: *mut cairo_surface_t, path: *const c_char) -> c_int;
     pub fn cairo_pattern_create_linear(x0: c_double, y0: c_double, x1: c_double, y1: c_double) -> *mut cairo_pattern_t;

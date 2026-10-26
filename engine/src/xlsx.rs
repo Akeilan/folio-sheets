@@ -20,6 +20,7 @@ const T_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/re
 const T_META: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata";
 const T_DRAWING: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
 const T_CHART: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+const T_IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const T_TABLE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table";
 const CT_TABLE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
 const CT_DRAWING: &str = "application/vnd.openxmlformats-officedocument.drawing+xml";
@@ -462,7 +463,8 @@ fn load_drawing(sh: &mut Sheet, parts: &[(String, Vec<u8>)], theme: &[u32; 12]) 
     };
     let drels = read_rels(&target, parts);
     let read = |p: &str| -> Option<String> { get(p).and_then(|d| xml::decode(d).ok()) };
-    if let Ok((df, objs)) = crate::drawing::read_drawing(&target, &text, drels, &read, theme) {
+    let read_bytes = |p: &str| -> Option<Vec<u8>> { get(p).map(|d| d.to_vec()) };
+    if let Ok((df, objs)) = crate::drawing::read_drawing(&target, &text, drels, &read, &read_bytes, theme) {
         sh.objects = objs;
         sh.drawing = Some(df);
         sh.pieces[idx] = Piece::Known("drawing".into());
@@ -1510,6 +1512,35 @@ impl Book {
         let mut objs = sh.objects.clone();
         let mut ids: Vec<String> = drels.iter().map(|r| r.0.clone()).collect();
         for o in objs.iter_mut() {
+            // a new picture: its image becomes a media part
+            if o.chart.is_none() {
+                if let (Some(pic), None) = (&o.picture, &o.pic_part) {
+                    let ext = if pic.ext == "jpeg" { "jpeg" } else { pic.ext };
+                    let mut k = 1;
+                    let media = loop {
+                        let p = format!("{}/media/image{}.{}", base, k, ext);
+                        if !taken.contains(&p) {
+                            taken.insert(p.clone());
+                            break p;
+                        }
+                        k += 1;
+                    };
+                    out.push((media.clone(), pic.bytes.clone()));
+                    set_default(ct, ext, crate::picture::content_type(ext));
+                    let mut k = 1;
+                    let rid = loop {
+                        let id = format!("rId{}", k);
+                        if !ids.contains(&id) {
+                            ids.push(id.clone());
+                            break id;
+                        }
+                        k += 1;
+                    };
+                    drels.push((rid.clone(), T_IMAGE.into(), media, false));
+                    o.set_blip_rid(&rid);
+                }
+                continue;
+            }
             let ch = match &o.chart {
                 Some(c) => c.clone(),
                 None => continue,
