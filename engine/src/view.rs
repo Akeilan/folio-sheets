@@ -40,6 +40,8 @@ pub struct ViewParams {
     pub print: bool,
     /// page break preview: the print area and page breaks over the cells
     pub page_breaks: bool,
+    /// Circle Invalid Data: the cells to ring in red
+    pub dv_circles: Vec<(u32, u32)>,
 }
 
 impl Default for ViewParams {
@@ -70,6 +72,7 @@ impl Default for ViewParams {
             edit_note: None,
             print: false,
             page_breaks: false,
+            dv_circles: Vec::new(),
         }
     }
 }
@@ -350,8 +353,17 @@ impl Book {
                     }
                 }
             }
-            // the totals drop-down beside the active cell
+            // the validation list's drop-down beside the active cell
             let (ar, ac) = p.active;
+            if c == ac + 1 && r == ar && self.dv_dropdown_at(s, ar, ac) {
+                let (_, ry, rh) = *g.rows.iter().find(|x| x.0 == r).unwrap();
+                let (_, cx, _) = *g.cols.iter().find(|x| x.0 == c).unwrap();
+                let (_, by, bs) = crate::render::filter_button(0.0, ry, 40.0, rh, p.zoom);
+                if x >= cx + 2.0 && x <= cx + 2.0 + bs && y >= by && y <= by + bs {
+                    return vec![HitPart::S("dvbtn"), HitPart::N(ar), HitPart::N(ac)];
+                }
+            }
+            // the totals drop-down beside the active cell
             if c == ac + 1 && r == ar && self.sheets[s].tables.iter().any(|t| t.totals_row() == Some(ar) && ac >= t.rect.c1 && ac <= t.rect.c2) {
                 let (_, ry, rh) = *g.rows.iter().find(|x| x.0 == r).unwrap();
                 let (_, cx, _) = *g.cols.iter().find(|x| x.0 == c).unwrap();

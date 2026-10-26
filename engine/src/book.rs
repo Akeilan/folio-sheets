@@ -155,6 +155,7 @@ pub struct Book {
     pub(crate) calc_depth: u32,
     pub layout: crate::layout::Layout,
     pub(crate) cf_cache: std::cell::RefCell<HashMap<usize, (u64, std::rc::Rc<Vec<crate::cf::CfBlock>>)>>,
+    pub(crate) dv_cache: std::cell::RefCell<HashMap<usize, (u64, std::rc::Rc<Vec<crate::validation::DvRule>>)>>,
     pub(crate) cf_stats: std::cell::RefCell<HashMap<(usize, usize, usize), ((u64, u64), std::rc::Rc<crate::cf::Stats>)>>,
 }
 
@@ -194,6 +195,7 @@ impl Book {
             calc_depth: 0,
             layout: crate::layout::Layout::default(),
             cf_cache: Default::default(),
+            dv_cache: Default::default(),
             cf_stats: Default::default(),
         };
         b.sheets.push(Sheet::new(1, "Sheet1"));

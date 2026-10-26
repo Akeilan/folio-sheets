@@ -190,6 +190,7 @@ class GridView(Gtk.Box):
             "hover_note": self.hover_note,
             "page_breaks": st.view_mode == "pageBreakPreview",
             "edit_note": self.edit_note,
+            "dv_circles": self.win.dv.circles_for(self.sheet),
         }
         if extra:
             p.update(extra)
@@ -501,6 +502,11 @@ class GridView(Gtk.Box):
             rect = self.book.cell_rect(self.sheet, h[1], h[2], self.params())
             filter_menu(self.win, h[2], rect, row=h[1])
             return True
+        if kind == "dvbtn":
+            self.select_cell(h[1], h[2], refresh=True)
+            rect = self.book.cell_rect(self.sheet, h[1], h[2], self.params())
+            self.win.dv.dropdown(h[1], h[2], rect)
+            return True
         if kind == "totalsbtn":
             from .table_ui import totals_menu
             rect = self.book.cell_rect(self.sheet, h[1], h[2], self.params())
@@ -770,12 +776,14 @@ class GridView(Gtk.Box):
         self.editor.style_for(st, self.state().zoom)
         text = self.book.input(self.sheet, r, c) if initial is None else initial
         self.editor.set_text(text)
+        self.win.dv.close_popup()
         self.editor.show()
         self.place_editor()
         self.editor.grab_focus()
         self.win.edit_started(text)
 
     def place_editor(self):
+        self.win.dv.place()
         if not self.editing():
             return
         r, c = self.editor.cell
@@ -809,6 +817,9 @@ class GridView(Gtk.Box):
         if self.win.formula_bar.view.has_focus():
             text = self.win.formula_bar.text()
         checked = self.win.validate_entry(text)
+        if checked is False:
+            self.cancel_edit()
+            return False
         if checked is None:
             (self.win.formula_bar.view if self.edit_sheet != self.sheet else self.editor).grab_focus()
             return False
@@ -821,6 +832,7 @@ class GridView(Gtk.Box):
         except Exception as e:
             self.win.formula_error(text, e)
         self.win.edit_ended()
+        self.win.dv.recheck_circles()
         self.area.grab_focus()
         if move is not None:
             self._after_commit_move(*move)

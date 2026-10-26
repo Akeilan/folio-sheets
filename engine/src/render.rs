@@ -150,6 +150,7 @@ impl Book {
                     }
                     self.paint_overlays(s, cr, p, &g, &rows, &cols);
                     self.paint_totals_button(s, cr, p, &rows, &cols);
+                    self.paint_dv(s, cr, p, &rows, &cols);
                 }
                 self.paint_objects(s, cr, p, &g, &mut pen);
                 cairo_restore(cr);
@@ -765,6 +766,45 @@ impl Book {
                 cairo_line_to(cr, cx, cy + bs * 0.18);
                 cairo_close_path(cr);
                 cairo_fill(cr);
+            }
+        }
+    }
+
+    /// The validation list's drop-down beside the active cell, and Circle Invalid Data's rings.
+    unsafe fn paint_dv(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, rows: &[(u32, f64, f64)], cols: &[(u32, f64, f64)]) {
+        let (ar, ac) = p.active;
+        if p.editing.is_none() && self.dv_dropdown_at(s, ar, ac) {
+            if let (Some(row), Some(col)) = (rows.iter().find(|x| x.0 == ar), cols.iter().find(|x| x.0 == ac)) {
+                let (_, by, bs) = filter_button(0.0, row.1, 40.0, row.2, p.zoom);
+                let bx = col.1 + col.2 + 2.0;
+                rgb(cr, 0xF3F3F3);
+                rect(cr, bx, by, bs, bs);
+                rgb(cr, 0xA0A0A0);
+                cairo_set_line_width(cr, 1.0);
+                cairo_rectangle(cr, bx + 0.5, by + 0.5, bs - 1.0, bs - 1.0);
+                cairo_stroke(cr);
+                rgb(cr, 0x444444);
+                let (cx, cy) = (bx + bs / 2.0, by + bs / 2.0);
+                cairo_move_to(cr, cx - bs * 0.25, cy - bs * 0.1);
+                cairo_line_to(cr, cx + bs * 0.25, cy - bs * 0.1);
+                cairo_line_to(cr, cx, cy + bs * 0.18);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            }
+        }
+        if !p.dv_circles.is_empty() {
+            rgb(cr, 0xE00000);
+            cairo_set_line_width(cr, 1.5 * p.zoom.max(0.5));
+            for (r, c) in &p.dv_circles {
+                if let (Some(row), Some(col)) = (rows.iter().find(|x| x.0 == *r), cols.iter().find(|x| x.0 == *c)) {
+                    let (x, y, w, h) = (col.1, row.1, col.2, row.2);
+                    cairo_save(cr);
+                    cairo_translate(cr, x + w / 2.0, y + h / 2.0);
+                    cairo_scale(cr, w / 2.0 + 3.0, h / 2.0 + 3.0);
+                    cairo_arc(cr, 0.0, 0.0, 1.0, 0.0, std::f64::consts::TAU);
+                    cairo_restore(cr);
+                    cairo_stroke(cr);
+                }
             }
         }
     }

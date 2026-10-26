@@ -1208,7 +1208,7 @@ impl Book {
     }
 
     /// The worksheet's element prefix ("x:" in prefixed files).
-    fn with_prefix(&self, s: usize, xml_text: &str) -> String {
+    pub(crate) fn with_prefix(&self, s: usize, xml_text: &str) -> String {
         let ro = self.sheets[s].root_open.trim_start_matches('<');
         let n = &ro[..ro.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(ro.len())];
         match n.find(':') {

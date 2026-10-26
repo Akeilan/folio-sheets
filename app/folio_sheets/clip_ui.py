@@ -193,7 +193,7 @@ def _html_rows():
 
 # ------------------------------------------------------------------ Paste Special
 PASTE = [("All", "all"), ("Formulas", "formulas"), ("Values", "values"), ("Formats", "formats"),
-         ("All except borders", "noborders"), ("Column widths", "widths"),
+         ("Validation", "validation"), ("All except borders", "noborders"), ("Column widths", "widths"),
          ("Formulas and number formats", "formulas_numfmt"), ("Values and number formats", "values_numfmt")]
 OPERATIONS = [("None", "none"), ("Add", "add"), ("Subtract", "sub"), ("Multiply", "mul"), ("Divide", "div")]
 

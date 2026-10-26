@@ -24,6 +24,8 @@ pub enum What {
     ValuesNumfmt,
     /// everything, and the source's column widths
     AllWidths,
+    /// only the data validation rules
+    Validation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -148,21 +150,40 @@ impl Book {
         if cut && src_s == dst_s && o.what == What::All && !o.transpose {
             return self.move_cells(src_s, src, dst.r1, dst.c1);
         }
+        if o.what == What::Validation {
+            let (h, w) = (src.rows() as u32, src.cols() as u32);
+            let out = if dst.r1 == dst.r2 && dst.c1 == dst.c2 {
+                Rect::new(dst.r1, dst.c1, (dst.r1 + h - 1).min(MAX_ROWS - 1), (dst.c1 + w - 1).min(MAX_COLS - 1))
+            } else {
+                dst
+            };
+            self.begin("Paste Validation", dst_s);
+            self.copy_validation(src_s, src, dst_s, out);
+            self.commit();
+            return Ok(out);
+        }
         let block = snapshot(&self.sheets[src_s], src);
         let with_cf = src_s == dst_s && !o.transpose && matches!(o.what, What::All | What::Formats | What::NoBorders | What::AllWidths);
-        if with_cf {
+        // validation comes along with everything (any sheet), not with formats alone
+        let with_dv = !o.transpose && matches!(o.what, What::All | What::NoBorders | What::AllWidths);
+        if with_cf || with_dv {
             self.begin_group("Paste", dst_s);
         }
         let out = self.paste_block(&block, None, dst_s, dst, o, if src_s == dst_s { None } else { Some(&block.src_sheet_name) }, "Paste");
         let out = match out {
             Ok(o) => o,
             Err(e) => {
-                if with_cf {
+                if with_cf || with_dv {
                     self.end_group();
                 }
                 return Err(e);
             }
         };
+        if with_dv {
+            self.begin("Paste", dst_s);
+            self.copy_validation(src_s, src, dst_s, out);
+            self.commit();
+        }
         if with_cf {
             // conditional formats come along (tiled like the cells)
             self.begin("Paste", dst_s);
@@ -180,6 +201,8 @@ impl Book {
                 r += h;
             }
             self.commit();
+        }
+        if with_cf || with_dv {
             self.end_group();
         }
         if cut {
@@ -191,6 +214,9 @@ impl Book {
 
     /// Paste a block from another workbook (a copy that came through the clipboard).
     pub fn paste_from(&mut self, other: &Book, src_s: usize, src: Rect, dst_s: usize, dst: Rect, o: PasteOpts) -> Result<Rect, String> {
+        if o.what == What::Validation {
+            return Err("Validation can only be pasted from this workbook.".into());
+        }
         let src = other.clip_rect(src_s, src);
         let mut block = snapshot(&other.sheets[src_s], src);
         // a clipboard workbook keeps the values the formulas had where they were copied
