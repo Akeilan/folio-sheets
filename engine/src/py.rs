@@ -392,6 +392,15 @@ impl PyBook {
     fn can_redo(&self) -> bool {
         !self.b.redo_stack.is_empty()
     }
+    /// Changes with every step taken (and with undo and redo).
+    #[getter]
+    fn history_state(&self) -> u64 {
+        self.b.state as u64
+    }
+    /// After a step was taken back because it wasn't allowed: it can't be redone.
+    fn forget_redo(&mut self) {
+        self.b.redo_stack.clear();
+    }
     #[getter]
     fn version(&self) -> u64 {
         self.b.edits
@@ -1408,6 +1417,25 @@ impl PyBook {
             }
             None => Ok(None),
         }
+    }
+    fn sheet_protection(&self, s: usize) -> PyResult<Option<Vec<(String, String)>>> {
+        self.sheet(s)?;
+        Ok(self.b.sheet_protection(s))
+    }
+    fn set_sheet_protection(&mut self, s: usize, attrs: Option<Vec<(String, String)>>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_sheet_protection(s, attrs);
+        Ok(())
+    }
+    fn workbook_protection(&self) -> Option<Vec<(String, String)>> {
+        self.b.workbook_protection()
+    }
+    fn set_workbook_protection(&mut self, attrs: Option<Vec<(String, String)>>) {
+        self.b.set_workbook_protection(attrs)
+    }
+    fn locked_in(&self, s: usize, ranges: Vec<R4>) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.locked_in(s, &rects(ranges)))
     }
     fn formula_link(&self, s: usize, r: u32, c: u32) -> PyResult<Option<String>> {
         self.sheet(s)?;

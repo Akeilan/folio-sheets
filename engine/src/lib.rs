@@ -33,6 +33,7 @@ pub mod book_chart;
 pub mod cf;
 pub mod validation;
 pub mod links;
+pub mod protect;
 pub mod cf_icons;
 pub mod tables;
 pub mod notes;

@@ -69,6 +69,11 @@ class FormattingMixin:
             return False
         g = self.grid
         ranges = ranges or self.style_ranges()
+        from .protect_ui import may_format, protected
+        if protected(self):
+            if not may_format(self, ranges):
+                return False
+            self._approved = True
         try:
             changed = self.book.restyle(g.sheet, [tuple(r) for r in ranges], ops, label)
         except ValueError as e:
@@ -473,6 +478,19 @@ class FormattingMixin:
         self.links.follow()
 
     # ------------------------------------------------------------ protection
+    def act_protect_sheet(self):
+        from . import protect_ui
+        protect_ui.protect_sheet(self)
+
+    def act_unprotect_sheet(self):
+        from . import protect_ui
+        if protect_ui.protected(self):
+            protect_ui.unprotect_sheet(self)
+
+    def act_protect_workbook(self):
+        from . import protect_ui
+        protect_ui.protect_workbook(self)
+
     def act_lock_cell(self):
         spec = self.active_spec()
         self.apply_style("Lock Cell", {"protection": {"locked": not spec["protection"]["locked"]}})

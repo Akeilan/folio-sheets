@@ -335,6 +335,10 @@ class FilterMenu(Gtk.Popover):
                 self.win.dialogs.message("Select at least one value to show.")
                 return
         self.popdown()
+        from .protect_ui import protected, allows, refuse
+        if protected(self.win) and not allows(self.win, "autoFilter"):
+            refuse(self.win)
+            return
         _run(self.win, "Filter", lambda: b.filter_column(s, self.off, spec, self.at))
 
     def clear(self):

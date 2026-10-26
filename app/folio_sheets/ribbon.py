@@ -153,6 +153,7 @@ class RibbonButton(Gtk.Button, Control):
             lab.set_line_wrap(True)
             lab.set_max_width_chars(10)
             box.pack_start(lab, False, False, 0)
+            self.label_widget = lab
             self.add(box)
         elif size == "small":
             box = Gtk.Box(spacing=4)
@@ -173,6 +174,14 @@ class RibbonButton(Gtk.Button, Control):
             ctx.add_class("checked")
         else:
             ctx.remove_class("checked")
+
+    def set_label_text(self, text):
+        """A command whose name follows its state (Protect Sheet / Unprotect Sheet)."""
+        lab = getattr(self, "label_widget", None)
+        if lab is not None:
+            lab.set_text(text)
+        self.label = text
+        self.set_tooltip_text(" ".join(text.split()))
 
 
 class SplitButton(Gtk.Box, Control):

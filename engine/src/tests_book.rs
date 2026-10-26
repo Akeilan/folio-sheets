@@ -833,3 +833,41 @@ fn hyperlinks() {
     assert_eq!(b2.formula_link(0, 30, 1).as_deref(), Some("https://x.org"));
     assert!(b2.formula_link(0, 30, 0).is_none());
 }
+
+#[test]
+fn protection() {
+    let mut b = blank();
+    assert!(b.locked_in(0, &[Rect::new(0, 0, 3, 3)]), "cells are locked by default");
+    b.restyle_ops(0, &[Rect::new(0, 0, 1, 1)], &[crate::book_fmt::StyleOp::Change(crate::styles::Change { locked: Some(false), ..Default::default() })], "Lock Cell").unwrap();
+    assert!(!b.locked_in(0, &[Rect::new(0, 0, 1, 1)]));
+    assert!(b.locked_in(0, &[Rect::new(0, 0, 2, 1)]));
+    // whole columns unlocked
+    b.restyle_ops(0, &[Rect::new(0, 5, crate::cellref::MAX_ROWS - 1, 5)], &[crate::book_fmt::StyleOp::Change(crate::styles::Change { locked: Some(false), ..Default::default() })], "Lock Cell").unwrap();
+    assert!(!b.locked_in(0, &[Rect::new(0, 5, crate::cellref::MAX_ROWS - 1, 5)]));
+    assert!(b.locked_in(0, &[Rect::new(0, 5, crate::cellref::MAX_ROWS - 1, 6)]));
+    let v = b.edits;
+    b.set_sheet_protection(0, Some(vec![("sheet".into(), "1".into()), ("objects".into(), "1".into())]));
+    assert!(b.edits > v);
+    b.set_input(0, 9, 9, "x").unwrap();
+    b.undo();
+    assert!(b.sheet_protection(0).is_some(), "undo doesn't unprotect");
+    b.set_workbook_protection(Some(vec![("lockStructure".into(), "1".into())]));
+    let bytes = b.to_bytes().unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let ws = String::from_utf8_lossy(&z.read("xl/worksheets/sheet1.xml").unwrap()).to_string();
+    let wb = String::from_utf8_lossy(&z.read("xl/workbook.xml").unwrap()).to_string();
+    assert!(ws.contains("<sheetProtection sheet=\"1\" objects=\"1\"/>"), "{}", ws);
+    assert!(ws.find("sheetProtection").unwrap() < ws.find("pageMargins").unwrap_or(usize::MAX), "in schema order");
+    assert!(wb.contains("<workbookProtection lockStructure=\"1\"/>"), "{}", wb);
+    let mut b2 = Book::from_bytes(&bytes).unwrap();
+    assert_eq!(b2.sheet_protection(0).unwrap()[0], ("sheet".to_string(), "1".to_string()));
+    assert_eq!(b2.workbook_protection().unwrap()[0].0, "lockStructure");
+    assert!(!b2.locked_in(0, &[Rect::new(0, 0, 1, 1)]), "Lock Cell survives saving");
+    b2.set_sheet_protection(0, None);
+    b2.set_workbook_protection(None);
+    let bytes = b2.to_bytes().unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let ws = String::from_utf8_lossy(&z.read("xl/worksheets/sheet1.xml").unwrap()).to_string();
+    let wb = String::from_utf8_lossy(&z.read("xl/workbook.xml").unwrap()).to_string();
+    assert!(!ws.contains("sheetProtection") && !wb.contains("workbookProtection"));
+}

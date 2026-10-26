@@ -475,6 +475,9 @@ class DvUi:
     def store_pick(self, r, c, item):
         win = self.win
         g = win.grid
+        from .protect_ui import may_change_cells
+        if not may_change_cells(win, [(r, c, r, c)]):
+            return
         with win.book.group("Typing"):
             # a list item is text as it stands, even one that looks like a formula
             v = "'" + item if item[:1] in ("=", "+", "-") and not _is_number(item) else item

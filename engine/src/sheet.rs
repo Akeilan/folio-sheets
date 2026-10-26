@@ -166,6 +166,9 @@ pub struct Sheet {
     pub comments_file: Option<crate::notes::CommentsFile>,
     /// Fit to pages (sheetPr/pageSetUpPr fitToPage)
     pub fit_to_page: bool,
+    /// Protect Sheet: the <sheetProtection> attributes, or None. Kept out of the undo
+    /// history (undo must not take protection off).
+    pub protection: Option<Vec<(String, String)>>,
     /// the drawing part as read (None when the sheet had none, or it couldn't be read)
     pub drawing: Option<crate::drawing::DrawingFile>,
     // ---- file
@@ -212,6 +215,7 @@ impl Sheet {
             threads: BTreeMap::new(),
             comments_file: None,
             fit_to_page: false,
+            protection: None,
             drawing: None,
             part: String::new(),
             prolog: String::new(),
