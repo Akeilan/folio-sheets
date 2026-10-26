@@ -23,6 +23,17 @@ STANDARD_COLORS = [0xC00000, 0xFF0000, 0xFFC000, 0xFFFF00, 0x92D050, 0x00B050, 0
                    0x0070C0, 0x002060, 0x7030A0]
 
 
+def _remember(win, attr, w):
+    setattr(win, attr, w)
+    return w
+
+
+def _color_button(win, btn):
+    if not hasattr(win, "color_buttons"):
+        win.color_buttons = []
+    win.color_buttons.append(btn)
+    return btn
+
 def tint(rgb, t):
     r, g, b = ((rgb >> 16) & 255) / 255, ((rgb >> 8) & 255) / 255, (rgb & 255) / 255
     h, l, s = colorsys.rgb_to_hls(r, g, b)
@@ -274,11 +285,12 @@ def build_ribbon(win):
           B.icon("r-italic-sm", "italic", "2", "Italic (Ctrl+I)", state="italic"),
           B.icon("r-underline-sm", "underline", "3", "Underline (Ctrl+U)", state="underline",
                  menu=[("Underline", "underline", "r-underline-sm"), ("Double Underline", "double-underline")]),
-          B.icon("r-borders-sm", "border-bottom", "B", "Borders", menu=border_menu),
-          SplitButton(r, None, "r-fill-color-sm", "fill-color:last", fill_menu, size="icon",
-                      keytip="H", tooltip="Fill Color"),
-          SplitButton(r, None, "r-font-color-sm", "font-color:last", fc_menu, size="icon",
-                      keytip="FC", tooltip="Font Color")]],
+          _remember(win, "borders_button", B.icon("r-borders-sm", "border-last", "B", "Borders: Bottom Border",
+                                                   menu=border_menu)),
+          _color_button(win, SplitButton(r, None, "r-fill-color-sm", "fill-color:last", fill_menu, size="icon",
+                                         keytip="H", tooltip="Fill Color")),
+          _color_button(win, SplitButton(r, None, "r-font-color-sm", "font-color:last", fc_menu, size="icon",
+                                         keytip="FC", tooltip="Font Color"))]],
     ], launcher="font-dialog", launcher_keytip="FN")
 
     orient_menu = [("Angle Counterclockwise", "orientation:45"), ("Angle Clockwise", "orientation:135"),

@@ -167,6 +167,7 @@ class FormattingMixin:
             c = int(arg, 16)
         if c is not None:
             self.last_font_color = c
+            self.show_last_colors()
         self.apply_style("Font Color", {"font": {"color": c}})
 
     def act_fill_color(self, arg="last"):
@@ -182,12 +183,66 @@ class FormattingMixin:
             c = int(arg, 16)
         if c is not None:
             self.last_fill = c
+            self.show_last_colors()
         self.apply_style("Fill Color", {"fill": {"pattern": "solid", "fg": c} if c is not None else None})
 
     # ------------------------------------------------------------ borders
     def _border(self, preset, label):
         pen = getattr(self, "border_pen", (THIN, None))
+        self.set_border_mode(None)
+        self.last_border = (preset, label)
+        self.ribbon_border_remembered()
         self.restyle(label, [("preset", preset, pen[0], pen[1])])
+
+    def show_last_colors(self):
+        """The Fill Color and Font Color buttons show the colour they will apply."""
+        for btn in getattr(self, "color_buttons", []):
+            btn.set_swatch(self.last_fill if btn.action.startswith("fill-color") else self.last_font_color)
+
+    def act_border_last(self):
+        """The Borders button: the border picked last (Bottom Border at first)."""
+        preset, label = getattr(self, "last_border", ("bottom", "Bottom Border"))
+        self._border(preset, label)
+
+    def ribbon_border_remembered(self):
+        preset, label = getattr(self, "last_border", ("bottom", "Bottom Border"))
+        btn = getattr(self, "borders_button", None)
+        if btn is not None:
+            btn.set_tooltip_text("Borders: %s" % label)
+
+    # ---- Draw Border, Draw Border Grid, Erase Border: a pen over the cells
+    BORDER_MODES = {"draw": ("outside", "Draw Border"), "grid": ("all", "Draw Border Grid"),
+                    "erase": ("none", "Erase Border")}
+
+    def set_border_mode(self, mode):
+        """None, "draw", "grid" or "erase"; the grid then draws borders where it is dragged."""
+        if getattr(self, "border_mode", None) == mode:
+            return
+        self.border_mode = mode
+        g = self.grid
+        g.border_drag = None
+        g.area.queue_draw()
+        if mode is None:
+            self.status.extra.set_text("")
+        else:
+            self.status.extra.set_text("%s: drag over the cells. Esc to stop." % self.BORDER_MODES[mode][1])
+
+    def apply_border_pen(self, rg):
+        mode = getattr(self, "border_mode", None)
+        if mode is None:
+            return
+        preset, label = self.BORDER_MODES[mode]
+        pen = getattr(self, "border_pen", (THIN, None))
+        self.restyle(label, [("preset", preset, pen[0], pen[1])], [tuple(rg)])
+
+    def act_border_draw(self):
+        self.set_border_mode(None if getattr(self, "border_mode", None) == "draw" else "draw")
+
+    def act_border_draw_grid(self):
+        self.set_border_mode(None if getattr(self, "border_mode", None) == "grid" else "grid")
+
+    def act_border_erase(self):
+        self.set_border_mode(None if getattr(self, "border_mode", None) == "erase" else "erase")
 
     def act_border_bottom(self):
         self._border("bottom", "Bottom Border")
@@ -236,6 +291,8 @@ class FormattingMixin:
         c = self._pick_color("Line Color", pen[1] or 0)
         if c is not None:
             self.border_pen = (pen[0], c)
+            if getattr(self, "border_mode", None) in (None, "erase"):
+                self.set_border_mode("draw")    # picking a pen picks up the pen
             self.status.extra.set_text("Borders now draw in #%06X." % c)
 
     def act_border_line_style(self, style=None):
@@ -246,6 +303,8 @@ class FormattingMixin:
             if style is None:
                 return
         self.border_pen = (style, pen[1])
+        if getattr(self, "border_mode", None) in (None, "erase"):
+            self.set_border_mode("draw")
         self.status.extra.set_text("Borders now draw with the %s line." % style)
 
     # ------------------------------------------------------------ alignment

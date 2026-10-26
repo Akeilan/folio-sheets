@@ -559,6 +559,87 @@ _b2 = _Book.open(_p)
 check("column and row formatting reach empty cells after saving",
       _b2.cell_style(S, 700, 20)["bold"] and _b2.cell_style(S, 30, 99)["italic"])
 
+# ---- Draw Border, Draw Border Grid, Erase Border; the buttons remember (SH-15)
+class _Ev:
+    def __init__(self, x, y, button=1, kind=Gdk.EventType.BUTTON_PRESS, state=0):
+        self.x, self.y, self.button, self.type, self.state = x, y, button, kind, state
+
+    def get_state(self):
+        return self.state
+
+
+def _drag(r0, c0, r1, c1):
+    g.ensure_visible(r1, c1)
+    g.ensure_visible(r0, c0)
+    pump(0.02)
+    a = b.cell_rect(S, r0, c0, g.params())
+    z = b.cell_rect(S, r1, c1, g.params())
+    g.on_press(g.area, _Ev(a[0] + 4, a[1] + 4))
+    g._drag_to(z[0] + 4, z[1] + 4)
+    pumped = g.border_drag
+    g.on_release(g.area, _Ev(z[0] + 4, z[1] + 4))
+    pump(0.02)
+    return pumped
+
+
+def _edges(r, c):
+    return {k for k in ("left", "right", "top", "bottom") if k in spec(r, c)["border"]}
+
+
+g.select_range((40, 0, 40, 0), (40, 0))
+win.run("border-draw")
+check("Draw Border turns the pen on", win.border_mode == "draw")
+pre = _drag(41, 1, 43, 3)
+check("dragging shows where it will draw", tuple(pre) == (41, 1, 43, 3), pre)
+check("and draws the outline of the cells", _edges(41, 1) == {"left", "top"} and _edges(43, 3) == {"right", "bottom"}
+      and _edges(42, 2) == set(), (_edges(41, 1), _edges(43, 3), _edges(42, 2)))
+check("the selection stays where it was", tuple(g.sel.active) == (40, 0))
+win.run("undo")
+check("one undo per stroke", _edges(41, 1) == set())
+win.run("border-draw-grid")
+_drag(41, 1, 43, 3)
+check("Draw Border Grid draws every edge", _edges(42, 2) == {"left", "right", "top", "bottom"})
+win.run("border-erase")
+_drag(42, 2, 42, 2)
+check("Erase Border takes a cell's edges off", _edges(42, 2) == set() and "bottom" not in _edges(41, 2), _edges(41, 2))
+win.on_key(win, type("K", (), {"keyval": Gdk.KEY_Escape, "type": Gdk.EventType.KEY_PRESS, "hardware_keycode": 0,
+                               "get_state": lambda self: 0})())
+check("Esc puts the pen down", win.border_mode is None)
+win.run("border-draw")
+win.run("border-draw")
+check("clicking Draw Border again puts it down too", win.border_mode is None)
+win.border_pen = (win.border_pen[0] if hasattr(win, "border_pen") else "thin", None)
+SEEN_COLOR = []
+_orig_pick = win._pick_color
+win._pick_color = lambda *a: 0x00B050
+win.run("border-line-color")
+win._pick_color = _orig_pick
+check("picking a Line Color picks up the pen", win.border_mode == "draw" and win.border_pen[1] == 0x00B050)
+_drag(46, 1, 46, 1)
+check("which draws in that colour", spec(46, 1)["border"].get("top", (None, None))[1] in (0x00B050, "00B050", "FF00B050"),
+      spec(46, 1)["border"].get("top"))
+win.set_border_mode(None)
+g.select_range((48, 1, 48, 1), (48, 1))
+win.run("border-top-bottom")
+check("a border picked from the menu is remembered by the button",
+      win.borders_button.get_tooltip_text() == "Borders: Top and Bottom Border")
+g.select_range((70, 9, 70, 9), (70, 9))
+_before = _edges(70, 9)
+win.run("border-last")
+check("and the button then draws it", _before == set() and _edges(70, 9) == {"top", "bottom"}, (_before, _edges(70, 9)))
+win._pick_color = lambda *a: 0x7030A0
+win.run("fill-color:more")
+win.run("font-color:more")
+win._pick_color = _orig_pick
+fill_btn, font_btn = win.color_buttons
+check("Fill Color shows the colour it will use", fill_btn.swatch == 0x7030A0 and win.last_fill == 0x7030A0)
+check("Font Color too", font_btn.swatch == 0x7030A0)
+px = fill_btn.icon_widget.get_pixbuf().get_pixels()
+stride = fill_btn.icon_widget.get_pixbuf().get_rowstride()
+nch = fill_btn.icon_widget.get_pixbuf().get_n_channels()
+o = 14 * stride + 8 * nch
+check("the bar under the icon is that colour", tuple(px[o:o + 3]) == (0x70, 0x30, 0xA0), tuple(px[o:o + 3]))
+
 print()
 print("dialogs:", SEEN)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))

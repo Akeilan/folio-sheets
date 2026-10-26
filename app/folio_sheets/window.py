@@ -81,6 +81,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.dv.attach(self.grid)
         from .links_ui import LinksUi
         self.links = LinksUi(self)
+        self.show_last_colors()
         self.formula_bar = FormulaBar(self)
         self.outer.pack_start(self.formula_bar, False, False, 0)
         mid = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -2213,6 +2214,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self._alt_alone = name in ("alt_l", "alt_r")
         if self.keytips.active:
             return self.keytips.key(ev)
+        if kv == Gdk.KEY_Escape and getattr(self, "border_mode", None) and not self.grid.editing():
+            self.set_border_mode(None)
+            return True
         if self.backstage_open():
             if kv == Gdk.KEY_Escape:
                 self.backstage.close()

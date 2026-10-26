@@ -93,6 +93,7 @@ class GridView(Gtk.Box):
         self.extend_mode = False      # F8
         self.add_mode = False         # Shift+F8
         self._drag = None
+        self.border_drag = None
         self.sel_objects = []         # selected charts (indexes on this sheet)
         self.hover_note = None
         self.edit_note = None
@@ -217,6 +218,32 @@ class GridView(Gtk.Box):
             cr.show_text("This %s sheet is kept as it is in the file; it is not displayed yet." % info["kind"])
             return False
         self.book.render(self.sheet, cr, self.params())
+        bd = getattr(self, "border_drag", None)
+        if bd:
+            # where the pen will draw
+            p = self.params()
+            a = self.book.cell_rect(self.sheet, bd[0], bd[1], p)
+            z = self.book.cell_rect(self.sheet, bd[2], bd[3], p)
+            if a and z:
+                x0, y0 = a[0], a[1]
+                x1, y1 = z[0] + z[2], z[1] + z[3]
+                cr.set_line_width(1)
+                cr.set_dash([3, 2])
+                cr.set_source_rgb(0.25, 0.25, 0.25)
+                cr.rectangle(int(x0) + 0.5, int(y0) + 0.5, int(x1 - x0) - 1, int(y1 - y0) - 1)
+                if self.win.border_mode == "grid":
+                    for r in range(bd[0] + 1, bd[2] + 1):
+                        rr = self.book.cell_rect(self.sheet, r, bd[1], p)
+                        if rr:
+                            cr.move_to(x0, int(rr[1]) + 0.5)
+                            cr.line_to(x1, int(rr[1]) + 0.5)
+                    for c in range(bd[1] + 1, bd[3] + 1):
+                        cc = self.book.cell_rect(self.sheet, bd[0], c, p)
+                        if cc:
+                            cr.move_to(int(cc[0]) + 0.5, y0)
+                            cr.line_to(int(cc[0]) + 0.5, y1)
+                cr.stroke()
+                cr.set_dash([])
         return False
 
     # ------------------------------------------------------------ geometry
@@ -467,6 +494,17 @@ class GridView(Gtk.Box):
         if self.sel_objects:
             self.sel_objects = []
             self.win.on_object_selection()
+        if getattr(self.win, "border_mode", None) and ev.button == 1:
+            # the pen draws on cells: the fill handle and buttons don't count
+            h = self.book.hit(self.sheet, float(ev.x), float(ev.y), self.params({"sel": [], "active": (MAX_ROWS - 1, MAX_COLS - 1)}))
+        if getattr(self.win, "border_mode", None) and ev.button == 1 and h[0] == "cell":
+            # the border pen: drag out the cells it draws on
+            if self.editing() and self.commit_edit() is False:
+                return True
+            self.border_drag = (h[1], h[2], h[1], h[2])
+            self._drag = ("border", h[1], h[2])
+            self.area.queue_draw()
+            return True
         if ev.button == 3:
             if h[0] == "cell" and not any(contains(rg, h[1], h[2]) for rg in self.sel.ranges):
                 self.select_cell(h[1], h[2])
@@ -578,6 +616,8 @@ class GridView(Gtk.Box):
                 cur = "row-resize"
             elif h[0] == "fill":
                 cur = "crosshair"
+            elif h[0] == "cell" and getattr(self.win, "border_mode", None):
+                cur = "pencil" if self.win.border_mode != "erase" else "crosshair"
             elif h[0] == "cell":
                 cur = "pointer" if self.win.links.hover((h[1], h[2])) else "cell"
             if h[0] != "cell":
@@ -603,6 +643,13 @@ class GridView(Gtk.Box):
             self.win.resize_feedback(self._drag, x, y)
             return
         h = self.hit(x, y)
+        if kind == "border":
+            h = self.book.hit(self.sheet, float(x), float(y), self.params({"sel": [], "active": (MAX_ROWS - 1, MAX_COLS - 1)}))
+            if h[0] == "cell":
+                r0, c0 = self._drag[1], self._drag[2]
+                self.border_drag = (min(r0, h[1]), min(c0, h[2]), max(r0, h[1]), max(c0, h[2]))
+                self.area.queue_draw()
+            return
         if kind == "point" and h[0] == "cell":
             self.win.insert_reference(h[1], h[2], extend=True)
             return
@@ -676,6 +723,13 @@ class GridView(Gtk.Box):
             self._autoscroll_id = 0
         d = self._drag
         self._drag = None
+        if d and d[0] == "border":
+            rg, self.border_drag = getattr(self, "border_drag", None), None
+            if rg:
+                self.win.apply_border_pen(rg)
+                self.win.update_title()
+            self.area.queue_draw()
+            return True
         if d and d[0] == "obj":
             prev, self.obj_preview = self.obj_preview, None
             if prev is not None:
