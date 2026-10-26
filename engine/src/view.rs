@@ -17,6 +17,12 @@ pub struct ViewParams {
     pub left_col: u32,
     pub freeze_rows: u32,
     pub freeze_cols: u32,
+    /// Split windows: the top (left) pane shows rows pane_top..freeze_rows (columns
+    /// pane_left..freeze_cols) and scrolls on its own; 0 for frozen panes.
+    pub pane_top: u32,
+    pub pane_left: u32,
+    /// draw split bars instead of freeze lines
+    pub split: bool,
     pub show_grid: bool,
     pub show_headers: bool,
     pub sel: Vec<Rect>,
@@ -54,6 +60,9 @@ impl Default for ViewParams {
             left_col: 0,
             freeze_rows: 0,
             freeze_cols: 0,
+            pane_top: 0,
+            pane_left: 0,
+            split: false,
             show_grid: true,
             show_headers: true,
             sel: vec![Rect::cell(0, 0)],
@@ -220,7 +229,7 @@ impl Book {
         // rows
         let mut y = hh;
         let fr = p.freeze_rows.min(MAX_ROWS);
-        for r in 0..fr {
+        for r in p.pane_top.min(fr)..fr {
             let h = self.row_px(s, r) * z;
             if h > 0.0 {
                 g.rows.push((r, y, h));
@@ -246,7 +255,7 @@ impl Book {
         g.hw = hw;
         let mut x = hw;
         let fc = p.freeze_cols.min(MAX_COLS);
-        for c in 0..fc {
+        for c in p.pane_left.min(fc)..fc {
             let w = self.col_px(s, c) * z;
             if w > 0.0 {
                 g.cols.push((c, x, w));
@@ -270,20 +279,22 @@ impl Book {
     /// x of a column's left edge on screen (may be off screen), given the geometry.
     pub fn screen_x(&self, s: usize, p: &ViewParams, g: &Geometry, c: u32) -> f64 {
         let fc = p.freeze_cols;
+        let pl = p.pane_left.min(fc);
         if c < fc {
-            return g.hw + self.col_x(s, c) * p.zoom;
+            return g.hw + (self.col_x(s, c) - self.col_x(s, pl)) * p.zoom;
         }
-        let split = g.hw + self.col_x(s, fc) * p.zoom;
+        let split = g.hw + (self.col_x(s, fc) - self.col_x(s, pl)) * p.zoom;
         let left = p.left_col.max(fc);
         split + (self.col_x(s, c) - self.col_x(s, left)) * p.zoom
     }
 
     pub fn screen_y(&self, s: usize, p: &ViewParams, g: &Geometry, r: u32) -> f64 {
         let fr = p.freeze_rows;
+        let pt = p.pane_top.min(fr);
         if r < fr {
-            return g.hh + self.row_y(s, r) * p.zoom;
+            return g.hh + (self.row_y(s, r) - self.row_y(s, pt)) * p.zoom;
         }
-        let split = g.hh + self.row_y(s, fr) * p.zoom;
+        let split = g.hh + (self.row_y(s, fr) - self.row_y(s, pt)) * p.zoom;
         let top = p.top_row.max(fr);
         split + (self.row_y(s, r) - self.row_y(s, top)) * p.zoom
     }
@@ -303,6 +314,10 @@ impl Book {
             return None;
         }
         if rc.r2 >= fr && rc.r2 < p.top_row.max(fr) && rc.r1 >= fr {
+            return None;
+        }
+        // above (left of) what a split's top (left) pane shows
+        if rc.r2 < p.pane_top.min(fr) || rc.c2 < p.pane_left.min(fc) {
             return None;
         }
         if x1 >= p.width || y1 >= p.height || x2 <= g.hw || y2 <= g.hh {

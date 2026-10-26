@@ -19,6 +19,11 @@ class SheetState:
         self.zoom = (info.get("zoom") or 100) / 100.0
         self.freeze_rows = info.get("freeze_rows", 0)
         self.freeze_cols = info.get("freeze_cols", 0)
+        # a split window: the top/left panes show rows pane_top..freeze_rows and
+        # columns pane_left..freeze_cols, scrolling on their own
+        self.split = False
+        self.pane_top = 0
+        self.pane_left = 0
         self.show_grid = info.get("show_grid", True)
         self.show_headers = info.get("show_headers", True)
         self.view_mode = info.get("view") or "normal"
@@ -181,6 +186,8 @@ class GridView(Gtk.Box):
             "width": float(max(a.width, 1)), "height": float(max(a.height, 1)), "zoom": st.zoom,
             "top_row": st.top_row, "left_col": st.left_col,
             "freeze_rows": st.freeze_rows, "freeze_cols": st.freeze_cols,
+            "pane_top": st.pane_top if st.split else 0, "pane_left": st.pane_left if st.split else 0,
+            "split": st.split,
             "show_grid": st.show_grid, "show_headers": st.show_headers,
             "sel": st.sel.ranges, "active": st.sel.active,
             "editing": self.editor.cell if self.editing() and self.edit_sheet == self.sheet else None,
@@ -218,6 +225,17 @@ class GridView(Gtk.Box):
             cr.show_text("This %s sheet is kept as it is in the file; it is not displayed yet." % info["kind"])
             return False
         self.book.render(self.sheet, cr, self.params())
+        from .windows_ui import scrolled
+        scrolled(self.win)
+        sp = getattr(self, "_split_preview", None)
+        if sp:
+            a = self.area.get_allocation()
+            cr.set_source_rgba(0.3, 0.3, 0.3, 0.6)
+            if sp[0] is not None:
+                cr.rectangle(0, sp[0] - 2, a.width, 4)
+            if sp[1] is not None:
+                cr.rectangle(sp[1] - 2, 0, 4, a.height)
+            cr.fill()
         bd = getattr(self, "border_drag", None)
         if bd:
             # where the pen will draw
@@ -271,6 +289,12 @@ class GridView(Gtk.Box):
 
     def ensure_visible(self, r, c):
         st = self.state()
+        if st.split:
+            # above (left of) the top (left) pane: that pane moves to it
+            if r < st.pane_top:
+                self.scroll_pane(drows=r - st.pane_top)
+            if c < st.pane_left:
+                self.scroll_pane(dcols=c - st.pane_left)
         if r >= st.freeze_rows:
             first, last = self.visible_rows()
             if r < st.top_row:
@@ -281,7 +305,8 @@ class GridView(Gtk.Box):
                 g = self.geometry()
                 avail = a.height - g["hh"]
                 if st.freeze_rows:
-                    avail -= sum(self.book.row_px(self.sheet, k) * st.zoom for k in range(st.freeze_rows))
+                    avail -= sum(self.book.row_px(self.sheet, k) * st.zoom
+                                 for k in range(st.pane_top if st.split else 0, st.freeze_rows))
                 top = r
                 used = self.book.row_px(self.sheet, r) * st.zoom
                 while top > st.freeze_rows:
@@ -300,7 +325,8 @@ class GridView(Gtk.Box):
                 g = self.geometry()
                 avail = a.width - g["hw"]
                 if st.freeze_cols:
-                    avail -= sum(self.book.col_px(self.sheet, k) * st.zoom for k in range(st.freeze_cols))
+                    avail -= sum(self.book.col_px(self.sheet, k) * st.zoom
+                                 for k in range(st.pane_left if st.split else 0, st.freeze_cols))
                 left = c
                 used = self.book.col_px(self.sheet, c) * st.zoom
                 while left > st.freeze_cols:
@@ -346,6 +372,66 @@ class GridView(Gtk.Box):
         self.place_editor()
         GLib.idle_add(self.update_scrollbars)
 
+    def scroll_pane(self, drows=0, dcols=0):
+        """A split's top (left) pane scrolls on its own; the bottom pane keeps below it."""
+        st = self.state()
+        if not st.split:
+            return
+        if drows and st.freeze_rows > st.pane_top:
+            n = st.freeze_rows - st.pane_top
+            st.pane_top = min(MAX_ROWS - n, max(0, st.pane_top + drows))
+            st.freeze_rows = st.pane_top + n
+            st.top_row = max(st.top_row, st.freeze_rows)
+        if dcols and st.freeze_cols > st.pane_left:
+            n = st.freeze_cols - st.pane_left
+            st.pane_left = min(MAX_COLS - n, max(0, st.pane_left + dcols))
+            st.freeze_cols = st.pane_left + n
+            st.left_col = max(st.left_col, st.freeze_cols)
+        self.area.queue_draw()
+        self.place_editor()
+        self.update_scrollbars()
+
+    def move_split(self, y=None, x=None):
+        """A split bar let go at y (x): the top (left) pane ends at the row (column) there;
+        dragged to an edge, that bar goes."""
+        st = self.state()
+        g = self.geometry()
+        a = self.area.get_allocation()
+        if y is not None:
+            if y <= g["hh"] + 4 or y >= a.height - 4:
+                st.freeze_rows = st.pane_top = 0
+            else:
+                # as many rows as fit above the bar, counted from the top of the window
+                n = max(1, len([r for r in g["rows"] if r[1] + r[2] / 2 <= y]))
+                if not st.split:
+                    st.pane_top = st.top_row
+                st.freeze_rows = st.pane_top + n
+                st.top_row = max(st.top_row, st.freeze_rows)
+        if x is not None:
+            if x <= g["hw"] + 4 or x >= a.width - 4:
+                st.freeze_cols = st.pane_left = 0
+            else:
+                n = max(1, len([c for c in g["cols"] if c[1] + c[2] / 2 <= x]))
+                if not st.split:
+                    st.pane_left = st.left_col
+                st.freeze_cols = st.pane_left + n
+                st.left_col = max(st.left_col, st.freeze_cols)
+        if st.freeze_rows <= st.pane_top and st.freeze_cols <= st.pane_left:
+            st.split = False
+            st.freeze_rows = st.freeze_cols = st.pane_top = st.pane_left = 0
+        self.refresh()
+        self.win.ribbon.update("split", "true" if st.split else "false")
+
+    def split_at(self):
+        """Where a split's bars are on screen: (y of the row bar or None, x of the column bar or None)."""
+        st = self.state()
+        if not st.split:
+            return None, None
+        g = self.geometry()
+        y = g["row_spans"][0][1] if st.freeze_rows > st.pane_top and len(g["row_spans"]) > 1 else None
+        x = g["col_spans"][0][1] if st.freeze_cols > st.pane_left and len(g["col_spans"]) > 1 else None
+        return y, x
+
     def scroll_by(self, drows=0, dcols=0):
         st = self.state()
         st.top_row = min(MAX_ROWS - 1, max(st.freeze_rows, st.top_row + drows))
@@ -373,6 +459,13 @@ class GridView(Gtk.Box):
             return True
         if state & Gdk.ModifierType.SHIFT_MASK and dx == 0:
             dx, dy = dy, 0
+        sy, sx = self.split_at()
+        if (dy and sy is not None and ev.y < sy) or (dx and sx is not None and ev.x < sx):
+            # over a split's top (left) pane: that pane scrolls
+            n = int(round(dy * WHEEL_ROWS)) or (WHEEL_ROWS if dy > 0 else -WHEEL_ROWS) if dy and sy is not None and ev.y < sy else 0
+            m = (int(round(dx * 2)) or (1 if dx > 0 else -1)) if dx and sx is not None and ev.x < sx else 0
+            self.scroll_pane(drows=n, dcols=m)
+            return True
         if dy:
             n = int(round(dy * WHEEL_ROWS)) or (WHEEL_ROWS if dy > 0 else -WHEEL_ROWS)
             self.scroll_by(drows=n)
@@ -494,6 +587,15 @@ class GridView(Gtk.Box):
         if self.sel_objects:
             self.sel_objects = []
             self.win.on_object_selection()
+        sy, sx = self.split_at() if ev.button == 1 else (None, None)
+        on_y = sy is not None and abs(ev.y - sy) <= 3
+        on_x = sx is not None and abs(ev.x - sx) <= 3
+        if on_y or on_x:
+            if ev.type == Gdk.EventType._2BUTTON_PRESS:
+                self.win.run("split")          # a double-click on a bar takes the split away
+                return True
+            self._drag = ("splitbar", on_y, on_x)
+            return True
         if getattr(self.win, "border_mode", None) and ev.button == 1:
             # the pen draws on cells: the fill handle and buttons don't count
             h = self.book.hit(self.sheet, float(ev.x), float(ev.y), self.params({"sel": [], "active": (MAX_ROWS - 1, MAX_COLS - 1)}))
@@ -642,6 +744,10 @@ class GridView(Gtk.Box):
         if kind in ("colresize", "rowresize"):
             self.win.resize_feedback(self._drag, x, y)
             return
+        if kind == "splitbar":
+            self._split_preview = (y if self._drag[1] else None, x if self._drag[2] else None)
+            self.area.queue_draw()
+            return
         h = self.hit(x, y)
         if kind == "border":
             h = self.book.hit(self.sheet, float(x), float(y), self.params({"sel": [], "active": (MAX_ROWS - 1, MAX_COLS - 1)}))
@@ -723,6 +829,10 @@ class GridView(Gtk.Box):
             self._autoscroll_id = 0
         d = self._drag
         self._drag = None
+        if d and d[0] == "splitbar":
+            self._split_preview = None
+            self.move_split(ev.y if d[1] else None, ev.x if d[2] else None)
+            return True
         if d and d[0] == "border":
             rg, self.border_drag = getattr(self, "border_drag", None), None
             if rg:
