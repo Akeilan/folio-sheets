@@ -28,6 +28,21 @@ const CT_CHART: &str = "application/vnd.openxmlformats-officedocument.drawingml.
 const CT_WORKSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
 const CT_SST: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml";
 const CT_META: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml";
+const T_CUSTOMXML: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+const CT_INK: &str = "application/inkml+xml";
+const T_VBA: &str = "http://schemas.microsoft.com/office/2006/relationships/vbaProject";
+const CT_VBA: &str = "application/vnd.ms-office.vbaProject";
+
+/// The workbook part's content type for a file name: macro-enabled (.xlsm, .xltm) or not, template or not.
+pub fn workbook_content_type(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "xlsm" => "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+        "xltm" => "application/vnd.ms-excel.template.macroEnabled.main+xml",
+        "xltx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+        _ => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    }
+}
+
 const CT_STYLES: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml";
 
 const WS_ORDER: [&str; 39] = ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData", "sheetCalcPr",
@@ -1058,7 +1073,8 @@ impl Sst {
 
 impl Book {
     pub fn save(&mut self, path: &str) -> Result<(), String> {
-        let data = self.to_bytes()?;
+        let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("xlsx").to_string();
+        let data = self.to_bytes_as(&ext)?;
         let tmp = format!("{}.~tmp", path);
         std::fs::write(&tmp, &data).map_err(|e| format!("Could not save {}: {}", path, e))?;
         std::fs::rename(&tmp, path).map_err(|e| format!("Could not save {}: {}", path, e))?;
@@ -1067,7 +1083,61 @@ impl Book {
         Ok(())
     }
 
+    /// The VBA project part, when the workbook has macros.
+    pub fn vba_part(&self) -> Option<String> {
+        let (_, rels) = self.file.wb_rels.as_ref()?;
+        let wb = if self.file.wb_part.is_empty() { "xl/workbook.xml" } else { &self.file.wb_part };
+        rels.elems().find(|e| e.attr("Type") == Some(T_VBA)).and_then(|e| e.attr("Target")).map(|t| resolve(wb, t))
+            .filter(|p| self.file.parts.iter().any(|(n, _)| n == p))
+    }
+
+    pub fn has_macros(&self) -> bool {
+        self.vba_part().is_some()
+    }
+
+    /// After a macro-free save the open workbook has no macros any more (as in Excel).
+    pub fn drop_macros(&mut self) {
+        let part = match self.vba_part() {
+            Some(p) => p,
+            None => return,
+        };
+        let pr = rels_name(&part);
+        self.file.parts.retain(|(n, _)| *n != part && *n != pr);
+        if let Some((_, rels)) = self.file.wb_rels.as_mut() {
+            rels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Type") == Some(T_VBA)));
+        }
+    }
+
+    /// The macros a user could run (listed, never run): (display name, module, standard module).
+    pub fn macros(&self) -> Vec<(String, String, bool)> {
+        let part = match self.vba_part() {
+            Some(p) => p,
+            None => return vec![],
+        };
+        let data = match self.file.parts.iter().find(|(n, _)| *n == part) {
+            Some((_, d)) => d,
+            None => return vec![],
+        };
+        let list = crate::vba::macros(data).unwrap_or_default();
+        list.into_iter()
+            .map(|m| {
+                let shown = if m.standard { m.name.clone() } else { format!("{}.{}", m.module, m.name) };
+                (shown, m.module, m.standard)
+            })
+            .collect()
+    }
+
+    /// The file as it would be saved with the current name's extension.
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+        let ext = self.file.path.as_deref().and_then(|p| std::path::Path::new(p).extension().and_then(|e| e.to_str()).map(|s| s.to_string()))
+            .unwrap_or_else(|| if self.has_macros() { "xlsm".into() } else { "xlsx".into() });
+        self.to_bytes_as(&ext)
+    }
+
+    /// The file for a file type: .xlsm/.xltm keep the macros, .xlsx/.xltx leave them out (as
+    /// Excel does when a macro workbook is saved macro-free).
+    pub fn to_bytes_as(&self, ext: &str) -> Result<Vec<u8>, String> {
+        let keep_macros = matches!(ext.to_ascii_lowercase().as_str(), "xlsm" | "xltm");
         let mut out: Vec<(String, Vec<u8>)> = Vec::new();
         let mut sst = Sst { items: vec![], index: HashMap::new(), count: 0 };
         let wb_part = if self.file.wb_part.is_empty() { "xl/workbook.xml".to_string() } else { self.file.wb_part.clone() };
@@ -1136,6 +1206,35 @@ impl Book {
         for p in &calc_parts {
             remove_override(&mut ct, p);
             dropped.push(p.clone());
+        }
+        // macros: kept for macro-enabled types, left out of the others; the workbook's type follows
+        set_override(&mut ct, &wb_part, workbook_content_type(ext));
+        if !keep_macros {
+            let vba: Vec<String> = rels.elems().filter(|e| e.attr("Type") == Some(T_VBA))
+                .filter_map(|e| e.attr("Target").map(|t| resolve(&wb_part, t))).collect();
+            for p in &vba {
+                // the project's own parts (its signature)
+                let pr = rels_name(p);
+                if let Some((_, d)) = self.file.parts.iter().find(|(n, _)| *n == pr) {
+                    if let Ok((_, r)) = xml::parse_bytes(d) {
+                        for e in r.elems() {
+                            if let Some(t) = e.attr("Target") {
+                                let q = resolve(p, t);
+                                remove_override(&mut ct, &q);
+                                dropped.push(q);
+                            }
+                        }
+                    }
+                }
+                dropped.push(p.clone());
+                dropped.push(pr);
+                remove_override(&mut ct, p);
+            }
+            rels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Type") == Some(T_VBA)));
+        } else if let Some(p) = self.vba_part() {
+            if !ct.elems().any(|e| e.local() == "Override" && e.attr("PartName").map(|x| x.eq_ignore_ascii_case(&format!("/{}", p))).unwrap_or(false)) {
+                set_default(&mut ct, "bin", CT_VBA);
+            }
         }
         // dynamic arrays need the metadata part
         let any_dynamic = self.sheets.iter().any(|s| !s.spills.is_empty());
@@ -1501,7 +1600,17 @@ impl Book {
             _ => fresh("drawings/drawing", taken),
         };
         used.insert(dpart.clone());
-        let mut drels: Vec<(String, String, String, bool)> = old.map(|d| d.rels.iter().filter(|r| !r.1.ends_with("/chart")).cloned().collect()).unwrap_or_default();
+        let is_ink_rel = |r: &(String, String, String, bool)| r.1.ends_with("/customXml") && r.2.contains("/ink/");
+        let mut drels: Vec<(String, String, String, bool)> = old.map(|d| d.rels.iter().filter(|r| !r.1.ends_with("/chart") && !is_ink_rel(r)).cloned().collect()).unwrap_or_default();
+        // ink parts are written again from the strokes (or dropped with their ink)
+        if let Some(d) = old {
+            for r in d.rels.iter().filter(|r| is_ink_rel(r)) {
+                if !used.contains(&r.2) {
+                    dropped.push(r.2.clone());
+                    remove_override(ct, &r.2);
+                }
+            }
+        }
         if let Some(d) = old {
             for r in &d.rels {
                 if r.1.ends_with("/chart") {
@@ -1512,6 +1621,28 @@ impl Book {
         let mut objs = sh.objects.clone();
         let mut ids: Vec<String> = drels.iter().map(|r| r.0.clone()).collect();
         for o in objs.iter_mut() {
+            // ink: its strokes as an InkML part
+            if let Some(ink) = o.ink.clone() {
+                let ipart = match &o.ink_part {
+                    Some(p) if !used.contains(p) => p.clone(),
+                    _ => fresh("ink/ink", taken),
+                };
+                used.insert(ipart.clone());
+                out.push((ipart.clone(), crate::ink::write_inkml(&ink).into_bytes()));
+                set_override(ct, &ipart, CT_INK);
+                let mut k = 1;
+                let rid = loop {
+                    let id = format!("rId{}", k);
+                    if !ids.contains(&id) {
+                        ids.push(id.clone());
+                        break id;
+                    }
+                    k += 1;
+                };
+                drels.push((rid.clone(), T_CUSTOMXML.into(), ipart, false));
+                o.set_ink_rid(&rid);
+                continue;
+            }
             // a new picture: its image becomes a media part
             if o.chart.is_none() {
                 if let (Some(pic), None) = (&o.picture, &o.pic_part) {

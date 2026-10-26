@@ -44,6 +44,8 @@ pub mod jpeg;
 pub mod gif;
 pub mod bmp;
 pub mod picture;
+pub mod vba;
+pub mod ink;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

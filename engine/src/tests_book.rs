@@ -972,3 +972,136 @@ fn pictures_insert_save_reopen() {
     assert_eq!(b4.picture_bytes(0, 1).map(|(d, _)| d.to_vec()), Some(jpg));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn macro_workbooks_keep_their_macros() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/macros.xlsm");
+    let mut b = Book::open(path).unwrap();
+    assert!(b.has_macros());
+    let m = b.macros();
+    println!("macros: {:?}", m);
+    assert!(!m.is_empty());
+    let dir = std::env::temp_dir();
+    // saved as .xlsm: the project comes along, byte for byte, and the workbook says it has macros
+    let xm = dir.join("fs-macros-keep.xlsm");
+    b.set_input(0, 3, 3, "edited").unwrap();
+    b.save(xm.to_str().unwrap()).unwrap();
+    let read_all = |d: &[u8]| -> Result<Vec<(String, Vec<u8>)>, String> {
+        let z = crate::zip::ZipReader::open(d)?;
+        Ok(z.names().into_iter().map(|n| { let b = z.read(&n).unwrap(); (n, b) }).collect())
+    };
+    let z = std::fs::read(&xm).unwrap();
+    let parts = read_all(&z).unwrap();
+    let orig = read_all(&std::fs::read(path).unwrap()).unwrap();
+    
+    let vb = |p: &Vec<(String, Vec<u8>)>| p.iter().find(|(n, _)| n == "xl/vbaProject.bin").map(|(_, d)| d.clone());
+    assert_eq!(vb(&parts), vb(&orig));
+    let ct = String::from_utf8(parts.iter().find(|(n, _)| n == "[Content_Types].xml").unwrap().1.clone()).unwrap();
+    assert!(ct.contains("application/vnd.ms-excel.sheet.macroEnabled.main+xml"), "{}", ct);
+    let b2 = Book::open(xm.to_str().unwrap()).unwrap();
+    assert!(b2.has_macros());
+    assert_eq!(b2.macros(), m);
+    assert_eq!(b2.display(0, 3, 3), "edited");
+    // saved as .xlsx: macro-free, as Excel does it
+    let xx = dir.join("fs-macros-free.xlsx");
+    b.save(xx.to_str().unwrap()).unwrap();
+    let parts = read_all(&std::fs::read(&xx).unwrap()).unwrap();
+    assert!(vb(&parts).is_none());
+    let ct = String::from_utf8(parts.iter().find(|(n, _)| n == "[Content_Types].xml").unwrap().1.clone()).unwrap();
+    assert!(!ct.contains("macroEnabled") && ct.contains("spreadsheetml.sheet.main+xml"), "{}", ct);
+    let rels = String::from_utf8(parts.iter().find(|(n, _)| n == "xl/_rels/workbook.xml.rels").unwrap().1.clone()).unwrap();
+    assert!(!rels.contains("vbaProject"));
+    let b3 = Book::open(xx.to_str().unwrap()).unwrap();
+    assert!(!b3.has_macros());
+    b.drop_macros();
+    assert!(!b.has_macros() && b.macros().is_empty());
+    // a new workbook saved as .xlsm is a valid macro-enabled file (with no project)
+    let mut n = Book::new_empty();
+    n.set_input(0, 0, 0, "1").unwrap();
+    let nx = dir.join("fs-new.xlsm");
+    n.save(nx.to_str().unwrap()).unwrap();
+    let parts = read_all(&std::fs::read(&nx).unwrap()).unwrap();
+    let ct = String::from_utf8(parts.iter().find(|(n, _)| n == "[Content_Types].xml").unwrap().1.clone()).unwrap();
+    assert!(ct.contains("sheet.macroEnabled.main+xml"));
+    // templates
+    let t = dir.join("fs-t.xltx");
+    n.save(t.to_str().unwrap()).unwrap();
+    let parts = read_all(&std::fs::read(&t).unwrap()).unwrap();
+    let ct = String::from_utf8(parts.iter().find(|(n, _)| n == "[Content_Types].xml").unwrap().1.clone()).unwrap();
+    assert!(ct.contains("spreadsheetml.template.main+xml"));
+}
+
+#[test]
+fn ink_is_kept_as_office_ink() {
+    use crate::ink::{Stroke, HIGHLIGHTER, PEN};
+    let mut b = Book::new_empty();
+    let pen = Stroke { pts: vec![(100.0, 50.0), (150.0, 80.0), (220.0, 60.0)], color: 0xE71224, width: 2.0, kind: PEN };
+    let hl = Stroke { pts: vec![(90.0, 120.0), (300.0, 120.0)], color: 0xFFFF00, width: 14.0, kind: HIGHLIGHTER };
+    let i = b.add_ink(0, vec![pen.clone()]).unwrap();
+    let j = b.add_ink(0, vec![hl.clone()]).unwrap();
+    assert_eq!(b.sheets[0].objects[i].kind(), "ink");
+    let st = b.ink_strokes(0, i).unwrap();
+    assert!((st[0].pts[2].0 - 220.0).abs() < 0.6 && (st[0].pts[2].1 - 60.0).abs() < 0.6, "{:?}", st[0].pts);
+    assert_eq!(b.ink_at(0, 150.0, 81.0, 3.0), vec![i]);
+    assert_eq!(b.ink_at(0, 200.0, 124.0, 1.0), vec![j]);
+    assert!(b.ink_at(0, 400.0, 400.0, 5.0).is_empty());
+    let dir = std::env::temp_dir().join("fs-ink.xlsx");
+    b.save(dir.to_str().unwrap()).unwrap();
+    let z = std::fs::read(&dir).unwrap();
+    let zr = crate::zip::ZipReader::open(&z).unwrap();
+    let names = zr.names();
+    assert!(names.iter().any(|n| n == "xl/ink/ink1.xml") && names.iter().any(|n| n == "xl/ink/ink2.xml"), "{:?}", names);
+    let drawing = String::from_utf8(zr.read("xl/drawings/drawing1.xml").unwrap()).unwrap();
+    assert!(drawing.contains("mc:AlternateContent") && drawing.contains("xdr14:contentPart"), "{}", drawing);
+    let ct = String::from_utf8(zr.read("[Content_Types].xml").unwrap()).unwrap();
+    assert!(ct.contains("application/inkml+xml"));
+    let b2 = Book::open(dir.to_str().unwrap()).unwrap();
+    assert_eq!(b2.sheets[0].objects.len(), 2);
+    let back = b2.ink_strokes(0, 0).unwrap();
+    assert_eq!(back[0].color, 0xE71224);
+    assert!((back[0].pts[2].0 - 220.0).abs() < 1.0 && (back[0].pts[2].1 - 60.0).abs() < 1.0, "{:?}", back[0].pts);
+    let back2 = b2.ink_strokes(0, 1).unwrap();
+    assert_eq!(back2[0].kind, HIGHLIGHTER);
+    assert!((back2[0].width - 14.0).abs() < 0.05);
+    // saved again: still two ink parts, no stray ones
+    let mut b3 = b2;
+    b3.delete_objects(0, &[1]).unwrap();
+    let d2 = std::env::temp_dir().join("fs-ink2.xlsx");
+    b3.save(d2.to_str().unwrap()).unwrap();
+    let z = std::fs::read(&d2).unwrap();
+    let names = crate::zip::ZipReader::open(&z).unwrap().names();
+    assert_eq!(names.iter().filter(|n| n.starts_with("xl/ink/")).count(), 1, "{:?}", names);
+}
+
+#[test]
+fn wrapped_objects_survive_saving() {
+    // an mc:AlternateContent object (here a 2010 shape) is kept as it was, beside new ink
+    let mut b = Book::new_empty();
+    b.add_ink(0, vec![crate::ink::Stroke { pts: vec![(10.0, 10.0), (40.0, 40.0)], color: 0, width: 2.0, kind: 0 }]).unwrap();
+    let p1 = std::env::temp_dir().join("fs-alt1.xlsx");
+    b.save(p1.to_str().unwrap()).unwrap();
+    let z = std::fs::read(&p1).unwrap();
+    let zr = crate::zip::ZipReader::open(&z).unwrap();
+    let mut w = crate::zip::ZipWriter::new();
+    let extra = "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\" Requires=\"a14\"><xdr:twoCellAnchor><xdr:from><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>5</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>7</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>8</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"9\" name=\"Keep Me\"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor></mc:Choice><mc:Fallback/></mc:AlternateContent>";
+    for n in zr.names() {
+        let mut d = zr.read(&n).unwrap();
+        if n == "xl/drawings/drawing1.xml" {
+            let t = String::from_utf8(d).unwrap().replace("</xdr:wsDr>", &format!("{}</xdr:wsDr>", extra));
+            d = t.into_bytes();
+        }
+        w.add(&n, &d, true);
+    }
+    let p2 = std::env::temp_dir().join("fs-alt2.xlsx");
+    std::fs::write(&p2, w.finish()).unwrap();
+    let mut b2 = Book::open(p2.to_str().unwrap()).unwrap();
+    assert_eq!(b2.sheets[0].objects.len(), 2);
+    assert_eq!(b2.sheets[0].objects[1].name, "Keep Me");
+    b2.set_input(0, 0, 0, "x").unwrap();
+    let p3 = std::env::temp_dir().join("fs-alt3.xlsx");
+    b2.save(p3.to_str().unwrap()).unwrap();
+    let z = std::fs::read(&p3).unwrap();
+    let d = String::from_utf8(crate::zip::ZipReader::open(&z).unwrap().read("xl/drawings/drawing1.xml").unwrap()).unwrap();
+    assert!(d.contains("Keep Me") && d.contains("Requires=\"a14\""), "{}", d);
+    assert!(d.contains("xdr14:contentPart"));
+}

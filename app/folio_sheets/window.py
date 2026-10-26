@@ -77,6 +77,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.ribbon = Ribbon(self.run, self.focus_document)
         self.ribbon.connect("file-clicked", lambda *_: self.show_backstage())
         self.outer.pack_start(self.ribbon, False, False, 0)
+        from .ink_ui import InkTools
+        self.ink = InkTools(self)
+        from .macros_ui import MacroBar
+        self.macro_bar = MacroBar(self)
+        self.outer.pack_start(self.macro_bar, False, False, 0)
         self.grid = GridView(self)
         from .validation_ui import DvUi
         self.dv = DvUi(self)
@@ -91,6 +96,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from .notes_ui import make_pane
         self.comments_pane = make_pane(self)
         mid.pack_start(self.comments_pane, False, False, 0)
+        from . import getdata_ui
+        self.queries_pane = getdata_ui.make_pane(self)
+        mid.pack_start(self.queries_pane, False, False, 0)
         self.outer.pack_start(mid, True, True, 0)
         self.tabs = SheetTabs(self)
         self.outer.pack_start(self.tabs, False, False, 0)
@@ -99,6 +107,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
         from .ribbon_defs import build_ribbon
         build_ribbon(self)
+        self.ribbon.update("ink:select", "true")
         self.backstage = Backstage(self)
         self.overlay.add_overlay(self.backstage)
         from .keytips import KeyTips
@@ -304,6 +313,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         return Book.open(conv)
 
     def _after_load(self):
+        self.macro_bar.show_for(self.book)
         self.grid.set_book(self.book)
         self.tabs.rebuild()
         self.sheet_changed()
@@ -563,6 +573,63 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if guard:
             protect_ui.after_command(self, base, h0)
 
+    # ------------------------------------------------------------ Draw tab
+    def act_draw_select(self):
+        self.ink.set_tool(None)
+
+    def act_draw_pen(self):
+        self.ink.set_tool("pen")
+
+    def act_draw_pencil(self):
+        self.ink.set_tool("pencil")
+
+    def act_draw_highlighter(self):
+        self.ink.set_tool("highlighter")
+
+    def act_draw_eraser(self):
+        self.ink.set_tool("eraser")
+
+    def act_draw_lasso(self):
+        self.ink.set_tool("lasso")
+
+    def act_ink_width(self, arg):
+        tool, mm = arg.split(":")
+        self.ink.set_width(tool, float(mm))
+
+    def act_ink_color(self, arg):
+        tool, c = arg.split(":")
+        self.ink.set_color(tool, int(c, 16))
+
+    def act_draw_ruler(self):
+        from . import ink_ui
+        ink_ui.not_available(self, "The ruler")
+
+    def act_ink_to_shape(self):
+        from . import ink_ui
+        ink_ui.not_available(self, "Ink to Shape")
+
+    def act_ink_to_math(self):
+        from . import ink_ui
+        ink_ui.not_available(self, "Ink to Math")
+
+    def act_ink_replay(self):
+        from . import ink_ui
+        ink_ui.not_available(self, "Ink Replay")
+
+    def act_macros(self):
+        from . import macros_ui
+        macros_ui.show_macros(self)
+
+    def act_record_macro(self):
+        self.dialogs.info("Recording macros isn't available: %s doesn't run or record macros." % APP_NAME, "Record Macro")
+
+    def act_relative_refs(self):
+        self.dialogs.info("Recording macros isn't available: %s doesn't run or record macros." % APP_NAME, "Use Relative References")
+
+    def act_visual_basic(self):
+        self.dialogs.info("Visual Basic isn't available in %s. The macros in a workbook are kept when it is saved "
+                          "as an Excel Macro-Enabled Workbook (*.xlsm)." % APP_NAME, "Visual Basic")
+
     def not_yet(self, cmd):
         label = commands.label(cmd)
         self.missing_log.append(cmd)
@@ -605,7 +672,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def act_save_as(self, fmt=None):
         d = Gtk.FileChooserNative(title="Save As", transient_for=self, action=Gtk.FileChooserAction.SAVE)
         d.set_do_overwrite_confirmation(True)
-        filters = [("Excel Workbook (*.xlsx)", "*.xlsx", "xlsx"), ("CSV (Comma delimited) (*.csv)", "*.csv", "csv")]
+        filters = [("Excel Workbook (*.xlsx)", "*.xlsx", "xlsx"), ("Excel Macro-Enabled Workbook (*.xlsm)", "*.xlsm", "xlsm"),
+                   ("Excel Template (*.xltx)", "*.xltx", "xltx"), ("Excel Macro-Enabled Template (*.xltm)", "*.xltm", "xltm"),
+                   ("CSV (Comma delimited) (*.csv)", "*.csv", "csv")]
         fobjs = {}
         for name, pat, key in filters:
             f = Gtk.FileFilter()
@@ -613,7 +682,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             f.add_pattern(pat)
             d.add_filter(f)
             fobjs[key] = f
-        want = fmt or "xlsx"
+        cur = os.path.splitext(self.path)[1].lower().lstrip(".") if self.path else ""
+        want = fmt or (cur if cur in ("xlsm", "xltx", "xltm") else "xlsx")
+        self._save_filters = fobjs
         d.set_filter(fobjs[want])
         base = os.path.splitext(self.doc_name())[0]
         d.set_current_name(base + "." + want)
@@ -625,21 +696,38 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         d.destroy()
         if not p:
             return False
-        kind = "csv" if chosen is fobjs["csv"] or p.lower().endswith(".csv") else "xlsx"
+        kind = next((k for k, f in fobjs.items() if f is chosen), "xlsx")
+        if p.lower().endswith(".csv"):
+            kind = "csv"
         if kind == "csv":
             if not p.lower().endswith(".csv"):
                 p += ".csv"
             return self.save_csv(p)
-        if os.path.splitext(p)[1].lower() not in NATIVE:
-            p += ".xlsx"
+        ext = os.path.splitext(p)[1].lower()
+        if ext not in NATIVE:
+            p += "." + kind
+        elif ext.lstrip(".") != kind and chosen is not None:
+            # the type chosen in the list wins over a different extension typed
+            p = os.path.splitext(p)[0] + "." + kind
         return self.save_to(p)
 
     def save_to(self, path):
         if self.grid.editing():
             self.grid.commit_edit()
+        from . import macros_ui
+        ok = macros_ui.check_macro_free(self, path)
+        if ok == "xlsm":
+            return self.act_save_as("xlsm")
+        if not ok:
+            return False
+        macro_free = os.path.splitext(path)[1].lower() not in (".xlsm", ".xltm")
         try:
             self.store_view_state()
             self.book.save(path)
+            if macro_free and self.book.has_macros():
+                # as in Excel: the open workbook no longer has the macros it was saved without
+                self.book.drop_macros()
+                self.macro_bar.hide()
         except Exception as e:
             self.dialogs.message("The workbook couldn't be saved.\n\n%s" % e)
             return False
@@ -1330,10 +1418,23 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                               ("Filter", "filter"), ("Sort", "sort-custom"), ("Get Data from Table/Range...", None),
                               None, ("New Comment", "new-comment")] + self._note_items() + [None,
                               ("Format Cells...", "format-cells"), ("Pick From Drop-down List...", "pick-from-list"),
-                              ("Define Name...", "define-name")] + self.links.menu_items()
+                              ("Define Name...", "define-name")] + self.links.menu_items() + self._query_items()
             # cloud / AI lookups are not part of Folio
             items = [it for it in items if it is None or it[1] is not None]
         self._popup_menu(items, ev)
+
+    def _query_items(self):
+        """Refresh, in a table a query loaded (as Excel's cell menu has it)."""
+        from . import getdata_ui
+        g = self.grid
+        r, c = g.sel.active
+        i = self.book.table_at(g.sheet, r, c) if self.book is not None else None
+        if i is None:
+            return []
+        name = self.book.tables(g.sheet)[i]["name"].lower()
+        if any((q.get("table") or "").lower() == name for q in getdata_ui.queries(self.book)):
+            return [None, ("Refresh", "refresh")]
+        return []
 
     def _note_items(self):
         g = self.grid
@@ -2101,6 +2202,38 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         text_ui.text_to_columns(self)
 
     def act_from_text_csv(self):
+        from . import getdata_ui
+        getdata_ui.from_text_csv(self)
+
+    def act_from_workbook(self):
+        from . import getdata_ui
+        getdata_ui.from_workbook(self)
+
+    def act_from_folder(self):
+        from . import getdata_ui
+        getdata_ui.from_folder(self)
+
+    def act_get_data_unavailable(self, what="This source"):
+        from . import getdata_ui
+        getdata_ui.not_available(self, what)
+
+    def act_refresh_all(self):
+        from . import getdata_ui
+        getdata_ui.refresh_all(self)
+
+    def act_refresh(self):
+        from . import getdata_ui
+        getdata_ui.refresh_current(self)
+
+    def act_queries_connections(self):
+        from . import getdata_ui
+        getdata_ui.toggle_pane(self)
+
+    def act_existing_connections(self):
+        from . import getdata_ui
+        getdata_ui.toggle_pane(self, True)
+
+    def act_from_text_legacy(self):
         d = Gtk.FileChooserNative.new("Import Text File", self, Gtk.FileChooserAction.OPEN, "Import", "Cancel")
         f = Gtk.FileFilter()
         f.set_name("Text Files (*.prn; *.txt; *.csv; *.tsv)")
@@ -2448,6 +2581,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self._alt_alone = name in ("alt_l", "alt_r")
         if self.keytips.active:
             return self.keytips.key(ev)
+        if kv == Gdk.KEY_Escape and self.ink.active() and not self.grid.editing():
+            self.ink.set_tool(None)
+            return True
         if kv == Gdk.KEY_Escape and getattr(self, "border_mode", None) and not self.grid.editing():
             self.set_border_mode(None)
             return True
@@ -2464,6 +2600,12 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return True
         if shift and kv == Gdk.KEY_F2 and not self.grid.editing():
             self.run("new-note")
+            return True
+        if alt and kv == Gdk.KEY_F8 and not ctrl:
+            self.run("macros")                                   # Alt+F8: the Macro dialog
+            return True
+        if alt and kv == Gdk.KEY_F11 and not ctrl:
+            self.run("visual-basic")                             # Alt+F11: the VBA editor
             return True
         if alt and kv == Gdk.KEY_F1 and not self.grid.editing():
             self.run("chart-column:col")

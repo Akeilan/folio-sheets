@@ -38,6 +38,11 @@ pub struct Obj {
     /// a picture's image, and the media part it was read from (None when new)
     pub picture: Option<Rc<crate::picture::Picture>>,
     pub pic_part: Option<String>,
+    /// ink drawn with the Draw tab, and the ink part it was read from
+    pub ink: Option<Rc<crate::ink::Ink>>,
+    pub ink_part: Option<String>,
+    /// an mc:AlternateContent object this version doesn't model, written back as read
+    pub raw: Option<Element>,
 }
 
 /// A sheet's drawing part as read.
@@ -70,6 +75,9 @@ impl Obj {
         }
         if self.picture.is_some() {
             return "picture";
+        }
+        if self.ink.is_some() {
+            return "ink";
         }
         for n in &self.body {
             if let Node::Elem(e) = n {
@@ -145,6 +153,29 @@ impl Obj {
         walk(&mut self.body, rid);
     }
 
+    /// The ink content part's reference id.
+    pub fn set_ink_rid(&mut self, rid: &str) {
+        fn walk(n: &mut [Node], rid: &str) -> bool {
+            for x in n.iter_mut() {
+                if let Node::Elem(e) = x {
+                    if e.local() == "contentPart" {
+                        for a in e.attrs.iter_mut() {
+                            if xml::local(&a.0) == "id" && a.0.contains(':') {
+                                a.1 = rid.to_string();
+                                return true;
+                            }
+                        }
+                    }
+                    if walk(&mut e.children, rid) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        walk(&mut self.body, rid);
+    }
+
     pub fn set_chart_rid(&mut self, rid: &str) {
         fn walk(n: &mut [Node], rid: &str) -> bool {
             for x in n.iter_mut() {
@@ -174,36 +205,43 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
                     get_bytes: &dyn Fn(&str) -> Option<Vec<u8>>, theme: &[u32; 12]) -> Result<(DrawingFile, Vec<Obj>), String> {
     let (prolog, root) = xml::parse(text)?;
     let mut objs = Vec::new();
-    for a in root.elems() {
-        let anchor = match a.local() {
-            "twoCellAnchor" => Anchor::Two {
-                from: a.child("from").map(marker).unwrap_or_default(),
-                to: a.child("to").map(marker).unwrap_or_default(),
-                edit_as: a.attr("editAs").map(|s| s.to_string()),
-            },
-            "oneCellAnchor" => {
-                let ext = a.child("ext");
-                Anchor::One {
-                    from: a.child("from").map(marker).unwrap_or_default(),
-                    cx: ext.and_then(|e| e.attr("cx")).and_then(|v| v.parse().ok()).unwrap_or(0),
-                    cy: ext.and_then(|e| e.attr("cy")).and_then(|v| v.parse().ok()).unwrap_or(0),
-                }
+    for top in root.elems() {
+        // ink and newer objects come wrapped in mc:AlternateContent
+        let (a, wrapper) = if top.local() == "AlternateContent" {
+            let inner = top.elems().find(|c| c.local() == "Choice").and_then(|c| c.elems().find(|x| x.local().ends_with("Anchor")));
+            match inner {
+                Some(x) => (x, Some(top)),
+                None => continue,
             }
-            "absoluteAnchor" => {
-                let pos = a.child("pos");
-                let ext = a.child("ext");
-                Anchor::Abs {
-                    x: pos.and_then(|e| e.attr("x")).and_then(|v| v.parse().ok()).unwrap_or(0),
-                    y: pos.and_then(|e| e.attr("y")).and_then(|v| v.parse().ok()).unwrap_or(0),
-                    cx: ext.and_then(|e| e.attr("cx")).and_then(|v| v.parse().ok()).unwrap_or(0),
-                    cy: ext.and_then(|e| e.attr("cy")).and_then(|v| v.parse().ok()).unwrap_or(0),
-                }
-            }
-            _ => continue,
+        } else {
+            (top, None)
+        };
+        let anchor = match read_anchor(a) {
+            Some(x) => x,
+            None => continue,
         };
         let body: Vec<Node> = a.children.iter().filter(|n| !matches!(n, Node::Elem(e) if matches!(e.local(), "from" | "to" | "ext" | "pos"))).cloned().collect();
-        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None };
+        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None };
         o.name = find_name(&o.body).unwrap_or_default();
+        if let Some(w) = wrapper {
+            // ink: its strokes from the ink part; anything else is kept as it is
+            let rid = find_attr(&o.body, "contentPart", "id");
+            let ink = rid.and_then(|rid| rels.iter().find(|r| r.0 == rid && !r.3).map(|r| r.2.clone()))
+                .and_then(|target| get(&target).and_then(|t| crate::ink::parse_inkml(&t)).map(|st| (target, st)));
+            match ink {
+                Some((target, strokes)) => {
+                    let (w_px, h_px) = anchor_size(&o.anchor);
+                    o.ink = Some(Rc::new(crate::ink::ink_for_frame(strokes, w_px, h_px)));
+                    o.ink_part = Some(target);
+                    if o.name.is_empty() {
+                        o.name = "Ink".into();
+                    }
+                }
+                None => o.raw = Some(w.clone()),
+            }
+            objs.push(o);
+            continue;
+        }
         // a picture: its image from the media part
         let is_pic = o.body.iter().any(|n| matches!(n, Node::Elem(e) if e.local() == "pic"));
         if is_pic {
@@ -233,6 +271,67 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
         objs.push(o);
     }
     Ok((DrawingFile { part: part.to_string(), prolog, root, rels }, objs))
+}
+
+fn read_anchor(a: &Element) -> Option<Anchor> {
+    Some(match a.local() {
+        "twoCellAnchor" => Anchor::Two {
+            from: a.child("from").map(marker).unwrap_or_default(),
+            to: a.child("to").map(marker).unwrap_or_default(),
+            edit_as: a.attr("editAs").map(|s| s.to_string()),
+        },
+        "oneCellAnchor" => {
+            let ext = a.child("ext");
+            Anchor::One {
+                from: a.child("from").map(marker).unwrap_or_default(),
+                cx: ext.and_then(|e| e.attr("cx")).and_then(|v| v.parse().ok()).unwrap_or(0),
+                cy: ext.and_then(|e| e.attr("cy")).and_then(|v| v.parse().ok()).unwrap_or(0),
+            }
+        }
+        "absoluteAnchor" => {
+            let pos = a.child("pos");
+            let ext = a.child("ext");
+            Anchor::Abs {
+                x: pos.and_then(|e| e.attr("x")).and_then(|v| v.parse().ok()).unwrap_or(0),
+                y: pos.and_then(|e| e.attr("y")).and_then(|v| v.parse().ok()).unwrap_or(0),
+                cx: ext.and_then(|e| e.attr("cx")).and_then(|v| v.parse().ok()).unwrap_or(0),
+                cy: ext.and_then(|e| e.attr("cy")).and_then(|v| v.parse().ok()).unwrap_or(0),
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// A rough size for an anchor without the sheet (its own extent, or a default for cell anchors);
+/// the ink's points are scaled to the real frame when drawn.
+fn anchor_size(a: &Anchor) -> (f64, f64) {
+    match a {
+        Anchor::One { cx, cy, .. } | Anchor::Abs { cx, cy, .. } => ((*cx as f64 / EMU).max(1.0), (*cy as f64 / EMU).max(1.0)),
+        Anchor::Two { .. } => (1000.0, 1000.0),
+    }
+}
+
+fn find_attr(n: &[Node], elem: &str, attr: &str) -> Option<String> {
+    for x in n {
+        if let Node::Elem(e) = x {
+            if e.local() == elem {
+                if let Some((_, v)) = e.attrs.iter().find(|(k, _)| xml::local(k) == attr && k.contains(':')) {
+                    return Some(v.clone());
+                }
+            }
+            if let Some(r) = find_attr(&e.children, elem, attr) {
+                return Some(r);
+            }
+        }
+    }
+    None
+}
+
+/// The anchor body of new ink (its part reference is set when written).
+pub fn ink_body(id: u32, name: &str, x: i64, y: i64, cx: i64, cy: i64) -> Vec<Node> {
+    let s = format!("<x><xdr14:contentPart xmlns:xdr14=\"http://schemas.microsoft.com/office/excel/2010/spreadsheetDrawing\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"rId1\"><xdr14:nvContentPartPr><xdr14:cNvPr id=\"{}\" name=\"{}\"/><xdr14:cNvContentPartPr/></xdr14:nvContentPartPr><xdr14:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></xdr14:xfrm></xdr14:contentPart><xdr:clientData/></x>",
+        id, xml::escape_attr(name), x, y, cx, cy);
+    xml::parse(&s).map(|(_, e)| e.children).unwrap_or_default()
 }
 
 fn find_name(n: &[Node]) -> Option<String> {
@@ -283,6 +382,11 @@ pub fn write_drawing(file: Option<&DrawingFile>, objs: &[Obj]) -> String {
     let mut out = String::new();
     for o in objs {
         let mut s = String::new();
+        if let Some(raw) = &o.raw {
+            raw.write(&mut s);
+            out.push_str(&s);
+            continue;
+        }
         match &o.anchor {
             Anchor::Two { from, to, edit_as } => {
                 s.push_str("<xdr:twoCellAnchor");
@@ -317,6 +421,10 @@ pub fn write_drawing(file: Option<&DrawingFile>, objs: &[Obj]) -> String {
         if pfx != "xdr" {
             let p = if pfx.is_empty() { String::new() } else { format!("{}:", pfx) };
             s = s.replace("<xdr:", &format!("<{}", p)).replace("</xdr:", &format!("</{}", p));
+        }
+        if o.ink.is_some() {
+            // as Office writes ink: a content part, for applications that know the 2010 drawing
+            s = format!("<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:xdr14=\"http://schemas.microsoft.com/office/excel/2010/spreadsheetDrawing\" Requires=\"xdr14\">{}</mc:Choice></mc:AlternateContent>", s);
         }
         out.push_str(&s);
     }

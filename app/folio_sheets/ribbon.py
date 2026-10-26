@@ -52,6 +52,24 @@ def menu_popover(relative_to, items, on_pick=None):
             box.pack_start(lab, False, False, 0)
             continue
         label, cb = it[0], it[1]
+        if isinstance(cb, list):
+            # a submenu: opens beside its entry
+            b = Gtk.Button()
+            b.set_relief(Gtk.ReliefStyle.NONE)
+            inner = Gtk.Box(spacing=8)
+            inner.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0)
+            inner.pack_end(Gtk.Label(label="›"), False, False, 0)
+            b.add(inner)
+            b.submenu_items = cb
+
+            def open_sub(btn, items=cb):
+                sub = menu_popover(btn, items)
+                sub.set_position(Gtk.PositionType.RIGHT)
+                sub.connect("closed", lambda *_: pop.popdown())
+                sub.popup()
+            b.connect("clicked", open_sub)
+            box.pack_start(b, False, False, 0)
+            continue
         icon = it[2] if len(it) > 2 else None
         b = Gtk.Button()
         b.set_relief(Gtk.ReliefStyle.NONE)
@@ -228,6 +246,15 @@ class SplitButton(Gtk.Box, Control):
         self.setup(ribbon, action, state=state, keytip=keytip, tooltip=tooltip or label)
         self.main.connect("clicked", self.run)
         self.arrow.connect("clicked", lambda *_: self.open_menu())
+
+    def apply_state(self, value):
+        on = value == "true"
+        for w in (self.main, self.arrow):
+            ctx = w.get_style_context()
+            if on:
+                ctx.add_class("checked")
+            else:
+                ctx.remove_class("checked")
 
     def set_swatch(self, color):
         """Recolour the icon's colour bar (Fill Color, Font Color)."""

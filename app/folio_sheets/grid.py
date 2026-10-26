@@ -241,6 +241,9 @@ class GridView(Gtk.Box):
             cr.show_text("This %s sheet is kept as it is in the file; it is not displayed yet." % info["kind"])
             return False
         self.book.render(self.sheet, cr, self.params())
+        ink = getattr(self.win, "ink", None)
+        if ink is not None:
+            ink.draw(cr)
         for gut in (self.row_gutter, self.col_gutter):
             if gut.get_visible():
                 gut.queue_draw()
@@ -570,6 +573,11 @@ class GridView(Gtk.Box):
             return False
         if self.win.backstage_open():
             return True
+        ink = getattr(self.win, "ink", None)
+        if ink is not None and ink.active() and ev.button == 1 and self.hit(ev.x, ev.y)[0] == "cell":
+            if self.editing() and self.commit_edit() is False:
+                return True
+            return ink.press(ev)
         h = self.hit(ev.x, ev.y)
         pointing = self.editing() and h[0] == "cell" and ev.button == 1 and self.win.formula_mode()
         if not pointing:
@@ -723,6 +731,9 @@ class GridView(Gtk.Box):
         if self.book is None:
             return False
         self._last_motion = (ev.x, ev.y)
+        ink = getattr(self.win, "ink", None)
+        if ink is not None and ink.active() and self._drag is None:
+            return ink.motion(ev)
         if self._drag is None:
             h = self.hit(ev.x, ev.y)
             cur = None
@@ -843,6 +854,9 @@ class GridView(Gtk.Box):
         return True
 
     def on_release(self, w, ev):
+        ink = getattr(self.win, "ink", None)
+        if ink is not None and ink.active() and self._drag is None and (ink.stroke is not None or ink.lasso is not None or ink.tool == "eraser"):
+            return ink.release(ev)
         if self._autoscroll_id:
             GLib.source_remove(self._autoscroll_id)
             self._autoscroll_id = 0

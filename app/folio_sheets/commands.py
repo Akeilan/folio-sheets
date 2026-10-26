@@ -92,7 +92,7 @@ LABELS = {
     # draw
     "draw-select": "Select", "draw-lasso": "Lasso Select", "draw-eraser": "Eraser", "draw-pen": "Pen",
     "draw-pencil": "Pencil", "draw-highlighter": "Highlighter", "draw-ruler": "Ruler",
-    "ink-to-shape": "Ink to Shape", "ink-to-math": "Ink to Math", "ink-replay": "Ink Replay",
+    "ink-width": "Pen Thickness", "ink-color": "Pen Color", "ink-to-shape": "Ink to Shape", "ink-to-math": "Ink to Math", "ink-replay": "Ink Replay",
     # page layout
     "themes": "Themes", "theme-colors": "Colors", "theme-fonts": "Fonts", "theme-effects": "Effects",
     "margins": "Margins", "page-orientation": "Orientation", "page-size": "Size", "print-area": "Print Area",
@@ -115,7 +115,8 @@ LABELS = {
     "autosum-min": "Min",
     # data
     "get-data": "Get Data", "from-text-csv": "From Text/CSV", "existing-connections": "Existing Connections",
-    "refresh-all": "Refresh All", "queries-connections": "Queries & Connections",
+    "refresh-all": "Refresh All", "refresh": "Refresh", "from-workbook": "From Workbook", "from-folder": "From Folder",
+    "from-text-legacy": "From Text (Legacy)", "get-data-unavailable": "Get Data", "queries-connections": "Queries & Connections",
     "workbook-links": "Workbook Links", "advanced-filter": "Advanced", "text-to-columns": "Text to Columns",
     "remove-duplicates": "Remove Duplicates", "data-validation": "Data Validation", "pick-from-list": "Pick From Drop-down List", "consolidate": "Consolidate",
     "what-if": "What-If Analysis", "scenario-manager": "Scenario Manager", "goal-seek": "Goal Seek",
@@ -135,7 +136,8 @@ LABELS = {
     "freeze-top-row": "Freeze Top Row", "freeze-first-column": "Freeze First Column",
     "unfreeze": "Unfreeze Panes", "split": "Split", "hide-window": "Hide", "unhide-window": "Unhide",
     "side-by-side": "View Side by Side", "sync-scroll": "Synchronous Scrolling",
-    "reset-window": "Reset Window Position", "switch-windows": "Switch Windows", "macros": "Macros",
+    "reset-window": "Reset Window Position", "switch-windows": "Switch Windows", "macros": "Macros", "record-macro": "Record Macro", "relative-refs": "Use Relative References",
+    "visual-basic": "Visual Basic",
     # help
     "help": "Help",
     # status bar / misc

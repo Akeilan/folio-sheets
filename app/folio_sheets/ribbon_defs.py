@@ -191,6 +191,9 @@ class Builder:
                 out.append(it)
             else:
                 label, cmd = it[0], it[1]
+                if isinstance(cmd, list):
+                    out.append((label, self.menu(cmd)))     # a submenu
+                    continue
                 icon = it[2] if len(it) > 2 else None
                 out.append((label, self.run(cmd), icon) if icon else (label, self.run(cmd)))
         return out
@@ -224,6 +227,13 @@ class Builder:
         g = Group(caption, columns, launcher=launcher, ribbon=self.r, launcher_keytip=launcher_keytip)
         tab.add(g)
         return g
+
+
+def _menu_pen(tool):
+    from .ink_ui import WIDTHS, COLORS
+    items = [("#", "Thickness")] + [("%g mm" % mm, "ink-width:%s:%g" % (tool, mm)) for mm in WIDTHS[tool]]
+    items += [None, ("#", "Colors")] + [(name, "ink-color:%s:%06X" % (tool, c)) for name, c in COLORS]
+    return items
 
 
 def build_ribbon(win):
@@ -452,12 +462,18 @@ def build_ribbon(win):
     # ================================================================ Draw
     t = r.building(Tab("Draw", "JI"))
     B.group(t, "Drawing Tools", [
-        B.big("Select", "r-draw-select", "draw-select", "S"),
-        B.big("Lasso\nSelect", "r-draw-lasso", "draw-lasso", "L"),
-        B.big("Eraser", "r-draw-eraser", "draw-eraser", "E"),
-        B.big("Pen", "r-draw-pen", "draw-pen", "P1"),
-        B.big("Pencil", "r-draw-pencil", "draw-pencil", "P2"),
-        B.big("Highlighter", "r-draw-highlighter", "draw-highlighter", "H"),
+        RibbonButton(B.r, "Select", "r-draw-select", "draw-select", size="large", state="ink:select", keytip="S",
+                     tooltip="Select\nStop drawing and select cells and objects again (Esc)."),
+        RibbonButton(B.r, "Lasso\nSelect", "r-draw-lasso", "draw-lasso", size="large", state="ink:lasso", keytip="L",
+                     tooltip="Lasso Select\nDraw round ink to select it, then move or delete it."),
+        RibbonButton(B.r, "Eraser", "r-draw-eraser", "draw-eraser", size="large", state="ink:eraser", keytip="E",
+                     tooltip="Eraser\nDrag over ink to erase whole strokes."),
+        SplitButton(B.r, "Pen", "r-draw-pen", "draw-pen", B.menu(_menu_pen("pen")), size="large", state="ink:pen", keytip="P1",
+                    tooltip="Pen\nDraw on the sheet. The arrow changes the pen's thickness and colour."),
+        SplitButton(B.r, "Pencil", "r-draw-pencil", "draw-pencil", B.menu(_menu_pen("pencil")), size="large", state="ink:pencil", keytip="P2",
+                    tooltip="Pencil\nSketch on the sheet."),
+        SplitButton(B.r, "Highlighter", "r-draw-highlighter", "draw-highlighter", B.menu(_menu_pen("highlighter")), size="large",
+                    state="ink:highlighter", keytip="H", tooltip="Highlighter\nMark cells with see-through ink."),
         B.big("Ruler", "r-draw-ruler", "draw-ruler", "R"),
     ])
     B.group(t, "Convert", [
@@ -577,12 +593,24 @@ def build_ribbon(win):
     # ================================================================ Data
     t = r.building(Tab("Data", "A"))
     B.group(t, "Get & Transform Data", [
-        B.big("Get\nData", "r-get-data", None, "PN", menu=[("From Text/CSV", "from-text-csv")]),
+        B.big("Get\nData", "r-get-data", None, "PN", menu=[
+            ("From File", [("From Workbook", "from-workbook"), ("From Text/CSV", "from-text-csv"),
+                           ("From Folder", "from-folder")]),
+            ("From Database", "get-data-unavailable:Getting data from a database"),
+            ("From Online Services", "get-data-unavailable:Getting data from online services"),
+            ("From Other Sources", [("From Table/Range", "get-data-unavailable:From Table/Range"),
+                                    ("From Web", "get-data-unavailable:Getting data from the web")]),
+            None,
+            ("Legacy Wizards", [("From Text (Legacy)", "from-text-legacy")]),
+            ("Query Options", "get-data-unavailable:Query Options")]),
         [B.small("From Text/CSV", "r-from-text-csv-sm", "from-text-csv", "FT"),
+         B.small("From Web", "r-from-web-sm", "get-data-unavailable:Getting data from the web", "FW"),
+         B.small("From Table/Range", "r-from-table-sm", "get-data-unavailable:From Table/Range", "FR")],
+        [B.small("Recent Sources", "r-recent-sources-sm", "existing-connections", "FE"),
          B.small("Existing Connections", "r-existing-connections-sm", "existing-connections", "EX")],
     ])
     B.group(t, "Queries & Connections", [
-        B.big("Refresh\nAll", "r-refresh-all", "refresh-all", "R"),
+        B.big("Refresh\nAll", "r-refresh-all", "refresh-all", "R", menu=[("Refresh All", "refresh-all"), ("Refresh", "refresh")]),
         [B.small("Queries & Connections", "r-queries-connections-sm", "queries-connections", "O"),
          B.small("Workbook Links", "r-workbook-links-sm", "workbook-links", "K")],
     ])
@@ -688,7 +716,8 @@ def build_ribbon(win):
          B.small("Reset Window Position", "r-reset-window-sm", "reset-window", "T")],
         B.big("Switch\nWindows", "r-switch-windows", None, "W", menu=win.window_list_menu),
     ])
-    B.group(t, "Macros", [B.big("Macros", "r-macros", None, "M", menu=[("View Macros", "macros")])])
+    B.group(t, "Macros", [B.big("Macros", "r-macros", None, "M", menu=[("View Macros", "macros"), ("Record Macro...", "record-macro"),
+                                                                    ("Use Relative References", "relative-refs")])])
     r.add_tab(t)
 
     # ================================================================ Help
