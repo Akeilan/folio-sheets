@@ -1418,6 +1418,52 @@ impl PyBook {
             None => Ok(None),
         }
     }
+    // ---- Group and Outline (rows: True for rows, False for columns)
+    fn outline_lines(&mut self, s: usize, rows: bool, first: u32, last: u32, delta: i32) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.outline_lines(s, rows, first, last, delta).map_err(PyValueError::new_err)
+    }
+    fn set_detail(&mut self, s: usize, rows: bool, i: u32, show: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_detail(s, rows, i, show).map_err(PyValueError::new_err)
+    }
+    fn set_group_detail(&mut self, s: usize, rows: bool, a: u32, b: u32, level: u8, show: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_group_detail(s, rows, a, b, level, show);
+        Ok(())
+    }
+    fn show_levels(&mut self, s: usize, rows: bool, n: u8) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.show_levels(s, rows, n);
+        Ok(())
+    }
+    fn clear_outline(&mut self, s: usize, rows: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.clear_outline(s, rows);
+        Ok(())
+    }
+    fn outline_level(&self, s: usize, rows: bool, i: u32) -> PyResult<u8> {
+        self.sheet(s)?;
+        Ok(self.b.line(s, rows, i).level)
+    }
+    fn max_outline_level(&self, s: usize, rows: bool) -> PyResult<u8> {
+        self.sheet(s)?;
+        Ok(self.b.max_level(s, rows))
+    }
+    /// Every group: (first, last, level, collapsed, summary line or None).
+    fn outline_groups(&self, s: usize, rows: bool) -> PyResult<Vec<(u32, u32, u8, bool, Option<u32>)>> {
+        self.sheet(s)?;
+        Ok(self.b.groups(s, rows).into_iter().map(|(a, b, lv)| {
+            let x = self.b.summary_of(s, rows, (a, b));
+            // closed when every line of it is hidden (a shared summary line's flag belongs to the outer group)
+            let collapsed = (a..=b).all(|k| self.b.line(s, rows, k).hidden);
+            (a, b, lv, collapsed, x)
+        }).collect())
+    }
+    fn summary_after(&self, s: usize, rows: bool) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(if rows { self.b.summary_below(s) } else { self.b.summary_right(s) })
+    }
     fn sheet_protection(&self, s: usize) -> PyResult<Option<Vec<(String, String)>>> {
         self.sheet(s)?;
         Ok(self.b.sheet_protection(s))

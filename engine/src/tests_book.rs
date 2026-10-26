@@ -871,3 +871,59 @@ fn protection() {
     let wb = String::from_utf8_lossy(&z.read("xl/workbook.xml").unwrap()).to_string();
     assert!(!ws.contains("sheetProtection") && !wb.contains("workbookProtection"));
 }
+
+#[test]
+fn outline() {
+    let mut b = blank();
+    // rows 2-4 and 6-7 grouped, then 2-7 grouped around them
+    b.outline_lines(0, true, 1, 3, 1).unwrap();
+    b.outline_lines(0, true, 5, 6, 1).unwrap();
+    b.outline_lines(0, true, 1, 6, 1).unwrap();
+    assert_eq!(b.max_level(0, true), 2);
+    let g = b.groups(0, true);
+    assert!(g.contains(&(1, 6, 1)) && g.contains(&(1, 3, 2)) && g.contains(&(5, 6, 2)), "{:?}", g);
+    // Hide Detail from the summary row of the first inner group (row 5)
+    b.set_detail(0, true, 4, false).unwrap();
+    assert!((1..=3).all(|r| b.line(0, true, r).hidden) && b.line(0, true, 4).collapsed && !b.line(0, true, 5).hidden);
+    // level 1: everything inside the outer group hidden; level 3: all shown
+    b.show_levels(0, true, 1);
+    assert!((1..=6).all(|r| b.line(0, true, r).hidden) && b.line(0, true, 7).collapsed);
+    b.show_levels(0, true, 3);
+    assert!((1..=6).all(|r| !b.line(0, true, r).hidden) && !b.line(0, true, 7).collapsed && !b.line(0, true, 4).collapsed);
+    // Show Detail of the outer group keeps a collapsed inner group closed
+    b.set_detail(0, true, 4, false).unwrap();
+    b.set_detail(0, true, 7, false).unwrap();
+    b.set_detail(0, true, 7, true).unwrap();
+    assert!(b.line(0, true, 1).hidden && !b.line(0, true, 5).hidden && !b.line(0, true, 4).hidden);
+    // undo goes back step by step
+    b.undo();
+    assert!(b.line(0, true, 5).hidden);
+    // ungroup, errors, clear
+    assert!(b.outline_lines(0, true, 20, 22, -1).is_err());
+    b.outline_lines(0, true, 5, 6, -1).unwrap();
+    assert_eq!(b.line(0, true, 5).level, 1);
+    // columns
+    b.outline_lines(0, false, 2, 4, 1).unwrap();
+    b.set_detail(0, false, 5, false).unwrap();
+    assert!((2..=4).all(|c| b.line(0, false, c).hidden) && b.line(0, false, 5).collapsed);
+    b.set_detail(0, false, 5, true).unwrap();
+    assert!((2..=4).all(|c| !b.line(0, false, c).hidden));
+    // saved with its depth, and read back
+    let bytes = b.to_bytes().unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let ws = String::from_utf8_lossy(&z.read("xl/worksheets/sheet1.xml").unwrap()).to_string();
+    assert!(ws.contains("outlineLevelRow=\"2\"") && ws.contains("outlineLevelCol=\"1\""), "{}", &ws[..ws.len().min(600)]);
+    let b2 = Book::from_bytes(&bytes).unwrap();
+    assert_eq!(b2.line(0, true, 2).level, 2);
+    assert_eq!(b2.line(0, false, 3).level, 1);
+    b.clear_outline(0, true);
+    assert_eq!(b.max_level(0, true), 0);
+    // nested groups ending together share a summary row
+    let mut c = blank();
+    c.outline_lines(0, true, 1, 3, 1).unwrap();
+    c.outline_lines(0, true, 2, 3, 1).unwrap();
+    c.set_detail(0, true, 2, false).unwrap();
+    assert!(c.line(0, true, 2).hidden && !c.line(0, true, 1).hidden);
+    c.set_detail(0, true, 4, true).unwrap();
+    assert!(!c.line(0, true, 2).hidden, "showing from the shared summary row shows all of it");
+}

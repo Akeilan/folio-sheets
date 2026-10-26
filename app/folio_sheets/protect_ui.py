@@ -43,7 +43,8 @@ NEEDS = {
     "clear-all": "never", "clear-formats": "formatCells", "fill-down": "cells", "fill-right": "cells",
     "fill-up": "cells", "fill-left": "cells", "fill-series": "cells", "fill-justify": "cells", "flash-fill": "cells",
     "autosum": "cells", "data-validation": "never", "text-to-columns": "never", "clear-hyperlinks": "cells",
-    "remove-hyperlinks": "cells",
+    "remove-hyperlinks": "cells", "group": "never", "ungroup": "never", "subtotal": "never",
+    "show-detail": "never", "hide-detail": "never", "spelling": "never",
 }
 # sheet commands that Protect Workbook (structure) stops
 STRUCTURE = {"insert-sheet", "delete-sheet", "rename-sheet", "move-copy-sheet", "hide-sheet", "unhide-sheet",

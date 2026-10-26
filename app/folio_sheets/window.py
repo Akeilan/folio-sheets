@@ -2045,6 +2045,34 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import data_ui
         data_ui.reapply_filter(self)
 
+    def act_group(self, arg=None):
+        from . import outline_ui
+        outline_ui.group(self, 1, arg)
+
+    def act_ungroup(self, arg=None):
+        from . import outline_ui
+        outline_ui.group(self, -1, arg)
+
+    def act_show_detail(self):
+        from . import outline_ui
+        outline_ui.detail(self, True)
+
+    def act_hide_detail(self):
+        from . import outline_ui
+        outline_ui.detail(self, False)
+
+    def act_subtotal(self):
+        from . import outline_ui
+        outline_ui.subtotal(self)
+
+    def act_spelling(self):
+        from . import proofing
+        proofing.spelling(self)
+
+    def act_thesaurus(self):
+        from . import proofing
+        proofing.thesaurus(self)
+
     def act_text_to_columns(self):
         from . import text_ui
         text_ui.text_to_columns(self)
@@ -2408,6 +2436,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if kv == Gdk.KEY_F10 and not shift:
             self.keytips.start()
             return True
+        if kv == Gdk.KEY_F7 and not ctrl and not alt and not self.grid.editing():
+            self.run("thesaurus" if shift else "spelling")      # F7, Shift+F7
+            return True
         if shift and kv == Gdk.KEY_F2 and not self.grid.editing():
             self.run("new-note")
             return True
@@ -2445,6 +2476,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 g.deselect_objects()
                 self.on_object_selection()
         # global shortcuts
+        if alt and shift and not ctrl and kv in (Gdk.KEY_Right, Gdk.KEY_Left) and in_grid and not g.editing():
+            self.run("group" if kv == Gdk.KEY_Right else "ungroup")     # Alt+Shift+Right / Left
+            return True
         if alt and not ctrl and kv in (Gdk.KEY_Down, Gdk.KEY_KP_Down) and in_grid and not g.editing() \
                 and not g.sel_objects:
             self.run("pick-from-list")

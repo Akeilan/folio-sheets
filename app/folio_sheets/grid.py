@@ -128,7 +128,15 @@ class GridView(Gtk.Box):
         self.editor.connect("key-press-event", self.on_editor_key)
         self.editor.set_no_show_all(True)
         self.fixed.put(self.editor, 0, 0)
-        self.pack_start(self.overlay, True, True, 0)
+        # the outline bars: left of the row headings, above the column headings
+        from .outline_ui import Gutter
+        self.row_gutter = Gutter(self, True)
+        self.col_gutter = Gutter(self, False)
+        col_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        col_box.pack_start(self.col_gutter, False, False, 0)
+        col_box.pack_start(self.overlay, True, True, 0)
+        self.pack_start(self.row_gutter, False, False, 0)
+        self.pack_start(col_box, True, True, 0)
 
         self.vadj = Gtk.Adjustment(value=0, lower=0, upper=100, step_increment=1, page_increment=20,
                                    page_size=20)
@@ -209,6 +217,9 @@ class GridView(Gtk.Box):
 
     def refresh(self):
         self.area.queue_draw()
+        if self.book is not None:
+            self.row_gutter.sync()
+            self.col_gutter.sync()
         self.update_scrollbars()
         self.win.on_selection_changed()
 
@@ -225,6 +236,9 @@ class GridView(Gtk.Box):
             cr.show_text("This %s sheet is kept as it is in the file; it is not displayed yet." % info["kind"])
             return False
         self.book.render(self.sheet, cr, self.params())
+        for gut in (self.row_gutter, self.col_gutter):
+            if gut.get_visible():
+                gut.queue_draw()
         from .windows_ui import scrolled
         scrolled(self.win)
         sp = getattr(self, "_split_preview", None)

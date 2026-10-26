@@ -1975,6 +1975,11 @@ impl Book {
             None => e.remove_attr("defaultColWidth"),
         }
         e.set_attr("defaultRowHeight", &num_text(sh.default_row_height));
+        // the outline's depth, which tells spreadsheet programs to show its symbols
+        let lr = sh.rows.values().map(|r| r.outline).max().unwrap_or(0);
+        let lc = sh.cols.iter().map(|c| c.outline).max().unwrap_or(0);
+        if lr > 0 { e.set_attr("outlineLevelRow", &lr.to_string()) } else { e.remove_attr("outlineLevelRow") }
+        if lc > 0 { e.set_attr("outlineLevelCol", &lc.to_string()) } else { e.remove_attr("outlineLevelCol") }
         if sh.custom_row_height {
             e.set_attr("customHeight", "1");
         } else {
