@@ -103,6 +103,29 @@ class SheetsApp(Gtk.Application):
             css2.load_from_path(extra)
             Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css2,
                                                      Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        # dark mode follows the desktop (S-08), switching while running
+        from . import appearance
+        self._dark_css = Gtk.CssProvider()
+        self._dark_css.load_from_path(os.path.join(os.path.dirname(__file__), "theme-dark.css"))
+        appearance.apply_initial()
+        self._apply_dark(appearance.is_dark())
+        appearance.on_change(self._apply_dark)
+
+    def _apply_dark(self, dark):
+        screen = Gdk.Screen.get_default()
+        if screen is None:
+            return
+        if dark:
+            Gtk.StyleContext.add_provider_for_screen(screen, self._dark_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2)
+        else:
+            Gtk.StyleContext.remove_provider_for_screen(screen, self._dark_css)
+        from . import icons
+        icons.restyle()
+        for w in Gtk.Window.list_toplevels():
+            for fn in ("refresh_ribbon_icons",):
+                if hasattr(w, fn):
+                    getattr(w, fn)()
+            w.queue_draw()
 
     def do_activate(self):
         if self.windows:

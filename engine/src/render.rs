@@ -1222,9 +1222,15 @@ impl Book {
     unsafe fn paint_headers(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, pen: &mut Pen) {
         let z = p.zoom;
         let sh = &self.sheets[s];
-        let font = FontSpec { family: header_family(&self.styles), size: 11.0, bold: false, italic: false, underline: 0, strike: false, vert: 0, color: HEADER_TEXT };
+        // dark mode (the desktop is dark): headers go dark as in Excel; the cells keep their colours
+        let (hbg, hsel, hwhole, htext, haccent, hgrid, hcorner) = if p.dark {
+            (0x2E2E2Eu32, 0x474747u32, 0x5C5030u32, 0xD6D6D6u32, 0xE8C35Au32, 0x4A4A4Au32, 0x6E6E6Eu32)
+        } else {
+            (HEADER_BG, HEADER_SEL, 0xD2C9A8, HEADER_TEXT, ACCENT_TEXT, GRID, 0xC8C8C8)
+        };
+        let font = FontSpec { family: header_family(&self.styles), size: 11.0, bold: false, italic: false, underline: 0, strike: false, vert: 0, color: htext };
         // column headers
-        rgb(cr, HEADER_BG);
+        rgb(cr, hbg);
         rect(cr, 0.0, 0.0, p.width, g.hh);
         rect(cr, 0.0, 0.0, g.hw, p.height);
         let sel_cols = |c: u32| p.sel.iter().any(|r| r.c1 <= c && c <= r.c2);
@@ -1237,22 +1243,22 @@ impl Book {
         for &(c, x, w) in &g.cols {
             let on = sel_cols(c);
             if on {
-                rgb(cr, if whole_col(c) { 0xD2C9A8 } else { HEADER_SEL });
+                rgb(cr, if whole_col(c) { hwhole } else { hsel });
                 rect(cr, x, 0.0, w, g.hh);
                 rgb(cr, ACCENT);
                 rect(cr, x, g.hh - 2.0, w, 2.0);
             }
-            rgb(cr, GRID);
+            rgb(cr, hgrid);
             rect(cr, (x + w - 1.0).round(), 0.0, 1.0, g.hh);
             let name = col_name(c);
             let (tw, th) = pen.set(&name, &font, z, None);
-            rgb(cr, if on { ACCENT_TEXT } else { HEADER_TEXT });
+            rgb(cr, if on { haccent } else { htext });
             if tw < w {
                 pen.show(cr, x + (w - tw) / 2.0, (g.hh - th) / 2.0);
             }
         }
         cairo_restore(cr);
-        rgb(cr, GRID);
+        rgb(cr, hgrid);
         rect(cr, 0.0, g.hh - 1.0, p.width, 1.0);
         // row headers
         cairo_save(cr);
@@ -1261,25 +1267,25 @@ impl Book {
         for &(r, y, h) in &g.rows {
             let on = sel_rows(r);
             if on {
-                rgb(cr, if whole_row(r) { 0xD2C9A8 } else { HEADER_SEL });
+                rgb(cr, if whole_row(r) { hwhole } else { hsel });
                 rect(cr, 0.0, y, g.hw, h);
                 rgb(cr, ACCENT);
                 rect(cr, g.hw - 2.0, y, 2.0, h);
             }
-            rgb(cr, GRID);
+            rgb(cr, hgrid);
             rect(cr, 0.0, (y + h - 1.0).round(), g.hw, 1.0);
             let label = (r + 1).to_string();
             let (tw, th) = pen.set(&label, &font, z, None);
-            rgb(cr, if on { ACCENT_TEXT } else { HEADER_TEXT });
+            rgb(cr, if on { haccent } else { htext });
             if th <= h + 2.0 {
                 pen.show(cr, (g.hw - tw) / 2.0, y + (h - th) / 2.0);
             }
         }
         cairo_restore(cr);
-        rgb(cr, GRID);
+        rgb(cr, hgrid);
         rect(cr, g.hw - 1.0, 0.0, 1.0, p.height);
         // the corner's select-all triangle
-        rgb(cr, 0xC8C8C8);
+        rgb(cr, hcorner);
         cairo_move_to(cr, g.hw - 4.0, g.hh - 4.0);
         cairo_line_to(cr, g.hw - 4.0, g.hh - 4.0 - 10.0 * z.min(1.5));
         cairo_line_to(cr, g.hw - 4.0 - 10.0 * z.min(1.5), g.hh - 4.0);
