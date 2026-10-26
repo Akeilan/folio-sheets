@@ -79,6 +79,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from .validation_ui import DvUi
         self.dv = DvUi(self)
         self.dv.attach(self.grid)
+        from .links_ui import LinksUi
+        self.links = LinksUi(self)
         self.formula_bar = FormulaBar(self)
         self.outer.pack_start(self.formula_bar, False, False, 0)
         mid = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -1148,7 +1150,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                               ("Filter", "filter"), ("Sort", "sort-custom"), ("Get Data from Table/Range...", None),
                               None, ("New Comment", "new-comment")] + self._note_items() + [None,
                               ("Format Cells...", "format-cells"), ("Pick From Drop-down List...", "pick-from-list"),
-                              ("Define Name...", "define-name"), ("Link", "link")]
+                              ("Define Name...", "define-name")] + self.links.menu_items()
             # cloud / AI lookups are not part of Folio
             items = [it for it in items if it is None or it[1] is not None]
         self._popup_menu(items, ev)

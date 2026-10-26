@@ -397,7 +397,21 @@ class FormattingMixin:
         self._clear_formats("Clear Formats")
 
     def act_clear_all(self):
+        # the cells' links go with everything else, in the same undo step
+        self.book.clear_links(self.grid.sheet, [tuple(r) for r in self.grid.sel.ranges])
         self._clear_formats("Clear All", contents=True)
+
+    def act_clear_hyperlinks(self):
+        self.links.clear(remove_format=False)
+
+    def act_remove_hyperlinks(self):
+        self.links.clear(remove_format=True)
+
+    def act_link(self):
+        self.links.insert()
+
+    def act_open_hyperlink(self):
+        self.links.follow()
 
     # ------------------------------------------------------------ protection
     def act_lock_cell(self):

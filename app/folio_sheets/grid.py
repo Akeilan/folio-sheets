@@ -1,8 +1,11 @@
 """The worksheet grid: drawing (by the native engine), selection with the
 mouse and keyboard, scrolling, and the in-cell editor."""
+import time
+
 from gi.repository import Gdk, GLib, Gtk, Pango
 
 from .core import MAX_COLS, MAX_ROWS
+from .links_ui import HOLD_TO_SELECT
 from .selection import Selection, contains
 
 WHEEL_ROWS = 3
@@ -520,6 +523,9 @@ class GridView(Gtk.Box):
                 self.sel.add_cell(r, c)
             else:
                 self.select_cell(r, c, refresh=False)
+                # a plain click on a link follows it on release, unless held to select
+                if ev.button == 1 and self.win.links.target_at(r, c):
+                    self._link_press = (r, c, time.monotonic())
             self._drag = ("cells",)
         elif kind == "colhdr":
             c = h[1]
@@ -573,7 +579,9 @@ class GridView(Gtk.Box):
             elif h[0] == "fill":
                 cur = "crosshair"
             elif h[0] == "cell":
-                cur = "cell"
+                cur = "pointer" if self.win.links.hover((h[1], h[2])) else "cell"
+            if h[0] != "cell":
+                self.win.links.hover(None)
             win = self.area.get_window()
             if win is not None:
                 win.set_cursor(Gdk.Cursor.new_from_name(self.area.get_display(), cur) if cur else None)
@@ -690,6 +698,11 @@ class GridView(Gtk.Box):
                 self.win.fill_handle(d[1], target, ctrl)
             self.area.queue_draw()
         self.win.on_selection_changed()
+        lp, self._link_press = getattr(self, "_link_press", None), None
+        if lp and d and d[0] == "cells" and time.monotonic() - lp[2] < HOLD_TO_SELECT:
+            h = self.hit(ev.x, ev.y)
+            if h[0] == "cell" and (h[1], h[2]) == (lp[0], lp[1]) and self.sel.is_single_cell():
+                GLib.idle_add(lambda: (self.win.links.follow(lp[0], lp[1]), False)[1])
         if d and d[0] in ("cells", "cols", "rows") and getattr(self.win, "painter", None):
             self.win.painter_finish()
         return d is not None

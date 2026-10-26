@@ -778,3 +778,58 @@ fn data_validation() {
     assert_eq!(sel(&b2, Rect::new(3, 1, 3, 3)), "extend");
     assert_eq!(sel(&b2, Rect::new(3, 0, 3, 1)), "erase");
 }
+
+#[test]
+fn hyperlinks() {
+    use crate::links::Link;
+    let mut b = blank();
+    let web = |t: &str| Link { rect: Rect::new(0, 0, 0, 0), target: t.into(), location: String::new(), display: String::new(), tooltip: String::new() };
+    b.set_input(0, 0, 0, "site").unwrap();
+    b.set_link(0, Rect::new(0, 0, 0, 0), &Link { tooltip: "Go".into(), ..web("https://example.org/a?b=1&c=2") }).unwrap();
+    b.set_link(0, Rect::new(2, 0, 3, 1), &Link { location: "Sheet1!D10".into(), ..web("") }).unwrap();
+    assert_eq!(b.link_at(0, 0, 0).unwrap().target, "https://example.org/a?b=1&c=2");
+    assert_eq!(b.link_at(0, 3, 1).unwrap().location, "Sheet1!D10");
+    assert!(b.link_at(0, 1, 0).is_none());
+    assert!(b.set_link(0, Rect::new(5, 5, 5, 5), &web("  ")).is_err());
+    // saved: an outside address is a relationship, a place is an attribute
+    let bytes = b.to_bytes().unwrap();
+    let z = crate::zip::ZipReader::open(&bytes).unwrap();
+    let get = |n: &str| z.read(n).map(|d| String::from_utf8_lossy(&d).to_string()).unwrap_or_default();
+    let sheet = get("xl/worksheets/sheet1.xml");
+    let rels = get("xl/worksheets/_rels/sheet1.xml.rels");
+    assert!(sheet.contains("r:id=\"rId") && !sheet.contains("_target"), "{}", sheet);
+    assert!(rels.contains("TargetMode=\"External\"") && rels.contains("example.org/a?b=1&amp;c=2"), "{}", rels);
+    let mut b2 = Book::from_bytes(&bytes).unwrap();
+    assert_eq!(b2.link_at(0, 0, 0).unwrap().target, "https://example.org/a?b=1&c=2");
+    assert_eq!(b2.link_at(0, 0, 0).unwrap().tooltip, "Go");
+    assert_eq!(b2.link_at(0, 2, 0).unwrap().location, "Sheet1!D10");
+    // saving twice doesn't pile up relationships
+    let bytes2 = b2.to_bytes().unwrap();
+    let z2 = crate::zip::ZipReader::open(&bytes2).unwrap();
+    let rels2 = String::from_utf8_lossy(&z2.read("xl/worksheets/_rels/sheet1.xml.rels").unwrap()).to_string();
+    assert_eq!(rels2.matches("/hyperlink\"").count(), 1, "{}", rels2);
+    // clearing part of a range link keeps the rest
+    assert_eq!(b2.clear_links(0, &[Rect::new(2, 0, 2, 1)]), 1);
+    assert!(b2.link_at(0, 2, 0).is_none() && b2.link_at(0, 3, 0).is_some());
+    b2.undo();
+    assert!(b2.link_at(0, 2, 0).is_some());
+    // rows move links; deleting the row of a link deletes it
+    b2.insert_rows(0, 0, 1).unwrap();
+    assert!(b2.link_at(0, 1, 0).is_some() && b2.link_at(0, 0, 0).is_none());
+    b2.delete_rows(0, 1, 1).unwrap();
+    assert!(b2.link_at(0, 0, 0).is_none(), "the deleted cell's link goes, not onto the next row");
+    assert_eq!(b2.links(0).len(), 1);
+    // paste carries links
+    use crate::book_clip::PasteOpts;
+    b2.paste_cells(0, Rect::new(2, 0, 2, 0), 0, Rect::new(8, 8, 8, 8), PasteOpts::default(), false).unwrap();
+    assert_eq!(b2.link_at(0, 8, 8).unwrap().location, "Sheet1!D10");
+    // and a deleted row takes a validation rule with it too
+    b2.dv_set(0, &[Rect::new(20, 0, 20, 0)], &crate::validation::DvSpec { kind: "whole".into(), op: "greaterThan".into(), f1: "1".into(), f2: String::new(), allow_blank: true, dropdown: true, show_input: true, prompt_title: String::new(), prompt: String::new(), show_error: true, style: "stop".into(), error_title: String::new(), error: String::new() }).unwrap();
+    b2.delete_rows(0, 20, 1).unwrap();
+    assert!(b2.dv_at(0, 20, 0).is_none());
+    // =HYPERLINK() points where its first argument says
+    b2.set_input(0, 30, 0, "x.org").unwrap();
+    b2.set_input(0, 30, 1, "=HYPERLINK(\"https://\"&A31, \"go\")").unwrap();
+    assert_eq!(b2.formula_link(0, 30, 1).as_deref(), Some("https://x.org"));
+    assert!(b2.formula_link(0, 30, 0).is_none());
+}

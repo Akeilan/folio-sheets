@@ -12,6 +12,20 @@ Build:
     engine/build.sh          # Rust tests + release build -> engine/out/folio_sheets_core.so
     ./build-deb.sh [outdir]  # the .deb (uses engine/out unless FOLIO_SHEETS_ENGINE is set)
 
+## 0.7.0 — data validation and hyperlinks
+
+- Data > Data Validation (Settings, Input Message, Error Alert), the Stop / Warning /
+  Information check on entry, the in-cell list arrow and Alt+Down, the input message
+  beside the cell, Circle Invalid Data. Paste carries rules; Paste Special has Validation.
+  Engine: `validation.rs`.
+- Hyperlinks: Insert / Edit Hyperlink (Ctrl+K) to a web page or file, a place in the
+  workbook or an e-mail address; a click follows (click and hold selects), `=HYPERLINK()`
+  too; Clear / Remove Hyperlinks. Outside addresses are relationships in the file.
+  Engine: `links.rs`.
+- Deleting the cells of a validation rule, link or other range-held element now removes it.
+
+Tests: `tests/validation_audit.py`, `tests/links_audit.py`.
+
 ## 0.4.0 — the engine rewritten
 
 The engine is now source in `engine/`. It keeps the old API (`ENGINE_API_FULL.txt`)
