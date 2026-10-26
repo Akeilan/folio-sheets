@@ -416,6 +416,12 @@ impl Book {
                 cairo_restore(cr);
                 continue;
             }
+            if o.chart.is_none() && o.raw.is_none() {
+                if let Some(v) = crate::shape::ShapeView::parse(&o.body, &self.styles.theme) {
+                    self.paint_shape(cr, &v, x, y, w, h, p.zoom, pen);
+                    continue;
+                }
+            }
             match &o.chart {
                 Some(ch) => self.paint_chart(ch, cr, x, y, w, h, p.zoom, pen),
                 None => {
@@ -429,6 +435,206 @@ impl Book {
                 }
             }
         }
+    }
+
+    /// A shape, text box or WordArt in its frame on screen.
+    pub(crate) unsafe fn paint_shape(&self, cr: *mut cairo_t, v: &crate::shape::ShapeView, x: f64, y: f64, w: f64, h: f64, z: f64, pen: &mut Pen) {
+        use crate::shape::Seg;
+        cairo_save(cr);
+        cairo_translate(cr, x + w / 2.0, y + h / 2.0);
+        if v.rot != 0.0 {
+            cairo_rotate(cr, v.rot.to_radians());
+        }
+        cairo_scale(cr, if v.flip_h { -1.0 } else { 1.0 }, if v.flip_v { -1.0 } else { 1.0 });
+        cairo_translate(cr, -w / 2.0, -h / 2.0);
+        let lw = v.line.map(|l| (l.1 * 96.0 / 72.0 * z).max(0.5)).unwrap_or(0.0);
+        let mut last_dir: Option<((f64, f64), (f64, f64))> = None;
+        let mut first_dir: Option<((f64, f64), (f64, f64))> = None;
+        let subs = crate::shape::preset(v, w, h);
+        let trace = |sub: &crate::shape::SubPath| {
+            cairo_new_path(cr);
+            for sg in &sub.segs {
+                match *sg {
+                    Seg::Move(a, b) => cairo_move_to(cr, a, b),
+                    Seg::Line(a, b) => cairo_line_to(cr, a, b),
+                    Seg::Curve(a, b, c, d, e, f) => cairo_curve_to(cr, a, b, c, d, e, f),
+                    Seg::Close => cairo_close_path(cr),
+                }
+            }
+        };
+        // shapes made of overlapping parts (a cloud) show one outline round all of them
+        if matches!(v.geom.as_str(), "cloud" | "cloudCallout" | "ellipseCallout") {
+            if let Some((c, _, _)) = v.line {
+                rgb(cr, c);
+                cairo_set_line_width(cr, lw * 2.0);
+                for sub in &subs {
+                    trace(sub);
+                    cairo_stroke(cr);
+                }
+            }
+            for sub in &subs {
+                trace(sub);
+                if let Some((c, a)) = v.fill {
+                    rgba(cr, c, a);
+                    cairo_fill(cr);
+                }
+            }
+            cairo_new_path(cr);
+        }
+        let union = matches!(v.geom.as_str(), "cloud" | "cloudCallout" | "ellipseCallout");
+        for sub in subs.into_iter().filter(|_| !union) {
+            cairo_new_path(cr);
+            let mut prev = (0.0, 0.0);
+            for sg in &sub.segs {
+                match *sg {
+                    Seg::Move(a, b) => {
+                        cairo_move_to(cr, a, b);
+                        prev = (a, b);
+                    }
+                    Seg::Line(a, b) => {
+                        cairo_line_to(cr, a, b);
+                        if first_dir.is_none() {
+                            first_dir = Some(((a, b), prev));
+                        }
+                        last_dir = Some((prev, (a, b)));
+                        prev = (a, b);
+                    }
+                    Seg::Curve(a, b, c, d, e, f) => {
+                        cairo_curve_to(cr, a, b, c, d, e, f);
+                        last_dir = Some(((c, d), (e, f)));
+                        prev = (e, f);
+                    }
+                    Seg::Close => cairo_close_path(cr),
+                }
+            }
+            if sub.fill {
+                if let Some((c, a)) = v.fill {
+                    cairo_set_fill_rule(cr, 1);
+                    rgba(cr, c, a);
+                    cairo_fill_preserve(cr);
+                }
+            }
+            if let Some((c, _, dashed)) = v.line {
+                rgb(cr, c);
+                cairo_set_line_width(cr, lw);
+                cairo_set_line_join(cr, 1);
+                if dashed {
+                    let d = [lw * 4.0, lw * 3.0];
+                    cairo_set_dash(cr, d.as_ptr(), 2, 0.0);
+                }
+                cairo_stroke(cr);
+                cairo_set_dash(cr, std::ptr::null(), 0, 0.0);
+            } else {
+                cairo_new_path(cr);
+            }
+        }
+        // arrowheads on lines
+        if let Some((c, _, _)) = v.line {
+            let mut head = |from: (f64, f64), to: (f64, f64)| {
+                let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+                let l = (dx * dx + dy * dy).sqrt();
+                if l < 1e-6 {
+                    return;
+                }
+                let (ux, uy) = (dx / l, dy / l);
+                let s = (lw * 3.0).max(6.0 * z);
+                rgb(cr, c);
+                cairo_new_path(cr);
+                cairo_move_to(cr, to.0, to.1);
+                cairo_line_to(cr, to.0 - ux * s - uy * s * 0.6, to.1 - uy * s + ux * s * 0.6);
+                cairo_line_to(cr, to.0 - ux * s + uy * s * 0.6, to.1 - uy * s - ux * s * 0.6);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            };
+            if v.tail {
+                if let Some((a, b)) = last_dir {
+                    head(a, b);
+                }
+            }
+            if v.head {
+                if let Some((a, b)) = first_dir {
+                    head(a, b);
+                }
+            }
+        }
+        // an equation
+        if let Some((m, size)) = &v.math {
+            let k = 96.0 / 72.0 * z;
+            let (l, t, r, b) = (v.insets.0 * k, v.insets.1 * k, v.insets.2 * k, v.insets.3 * k);
+            let mut ms = crate::math::PangoMeasure::new(cr);
+            let bx = crate::math::layout(m, &mut ms, size * k);
+            let color = v.paras.iter().flat_map(|p| p.runs.first()).map(|r| r.color).next().unwrap_or(0);
+            let avail = (w - l - r).max(1.0);
+            let align = v.paras.first().map(|p| p.align).unwrap_or(1);
+            let tx = l + (avail - bx.w) * align as f64 / 2.0;
+            let hh = bx.asc + bx.desc;
+            let ty = match v.anchor {
+                'c' => (h - hh) / 2.0,
+                'b' => h - b - hh,
+                _ => t,
+            } + bx.asc;
+            crate::math::paint(cr, &mut ms, &bx, tx, ty, color);
+        } else
+        // the text
+        if !v.paras.is_empty() && v.paras.iter().any(|p| p.runs.iter().any(|r| !r.text.is_empty())) {
+            let k = 96.0 / 72.0 * z;
+            let (l, t, r, b) = (v.insets.0 * k, v.insets.1 * k, v.insets.2 * k, v.insets.3 * k);
+            let avail = (w - l - r).max(1.0);
+            let mut lines: Vec<(f64, f64, i32, crate::layout::FontSpec, String, Option<(u32, f64)>)> = Vec::new();
+            let mut total = 0.0;
+            for para in &v.paras {
+                let text: String = para.runs.iter().map(|r| r.text.as_str()).collect();
+                let run = para.runs.first();
+                let f = crate::layout::FontSpec {
+                    family: run.and_then(|r| r.font.clone()).unwrap_or_else(|| self.styles.theme_fonts.1.clone()),
+                    size: run.map(|r| r.size).unwrap_or(11.0),
+                    bold: run.map(|r| r.bold).unwrap_or(false),
+                    italic: run.map(|r| r.italic).unwrap_or(false),
+                    underline: if run.map(|r| r.underline).unwrap_or(false) { 1 } else { 0 },
+                    strike: false,
+                    vert: 0,
+                    color: run.map(|r| r.color).unwrap_or(0),
+                };
+                let (tw, th) = pen.set(if text.is_empty() { " " } else { &text }, &f, z, if v.wrap { Some(avail) } else { None });
+                total += th;
+                lines.push((tw, th, para.align, f, text, run.and_then(|r| r.outline)));
+            }
+            let mut ty = match v.anchor {
+                'c' => (h - total) / 2.0,
+                'b' => h - b - total,
+                _ => t,
+            };
+            for (tw, th, align, f, text, outline) in lines {
+                if !text.is_empty() {
+                    pen.set(&text, &f, z, if v.wrap { Some(avail) } else { None });
+                    let tx = if v.wrap {
+                        pen.set_align(align);
+                        l
+                    } else {
+                        pen.set_align(0);
+                        l + (avail - tw) * align as f64 / 2.0
+                    };
+                    cairo_move_to(cr, tx, ty);
+                    match outline {
+                        Some((oc, ow)) => {
+                            pango_cairo_layout_path(cr, pen.layout);
+                            rgb(cr, f.color);
+                            cairo_fill_preserve(cr);
+                            rgb(cr, oc);
+                            cairo_set_line_width(cr, (ow * k).max(0.6));
+                            cairo_stroke(cr);
+                        }
+                        None => {
+                            rgb(cr, f.color);
+                            pango_cairo_show_layout(cr, pen.layout);
+                        }
+                    }
+                    pen.set_align(0);
+                }
+                ty += th;
+            }
+        }
+        cairo_restore(cr);
     }
 
     unsafe fn paint_object_selection(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry) {
@@ -596,6 +802,20 @@ impl Book {
                     let sz = (h - 4.0 * z).min(16.0 * z).max(4.0);
                     crate::cf_icons::draw_icon(cr, set, *i, x + 2.0 * z, y + (h - sz) / 2.0, sz);
                 }
+            }
+        }
+        // ---- sparklines
+        let sgroups = self.sparkline_groups_cached(s);
+        for gr in sgroups.iter() {
+            for (f, (r, c)) in &gr.items {
+                let (yy, hh) = match rows.iter().find(|x| x.0 == *r) { Some(x) => (x.1, x.2), None => continue };
+                let (xx, ww) = match cols.iter().find(|x| x.0 == *c) { Some(x) => (x.1, x.2), None => continue };
+                let vals = self.sparkline_values(s, f);
+                cairo_save(cr);
+                cairo_rectangle(cr, xx, yy, ww, hh);
+                cairo_clip(cr);
+                crate::sparkline::paint(cr, gr, &vals, xx, yy, ww, hh, z);
+                cairo_restore(cr);
             }
         }
         // ---- text (decides which gridlines overflowing text hides)

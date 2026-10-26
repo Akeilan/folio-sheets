@@ -223,7 +223,9 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
         let body: Vec<Node> = a.children.iter().filter(|n| !matches!(n, Node::Elem(e) if matches!(e.local(), "from" | "to" | "ext" | "pos"))).cloned().collect();
         let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None };
         o.name = find_name(&o.body).unwrap_or_default();
-        if let Some(w) = wrapper {
+        // an equation's text box is read as a shape (and wrapped again when written)
+        let is_math = wrapper.is_some() && o.body.iter().any(|n| matches!(n, Node::Elem(e) if (e.local() == "sp") && crate::math::find_math(e).is_some()));
+        if let (Some(w), false) = (wrapper, is_math) {
             // ink: its strokes from the ink part; anything else is kept as it is
             let rid = find_attr(&o.body, "contentPart", "id");
             let ink = rid.and_then(|rid| rels.iter().find(|r| r.0 == rid && !r.3).map(|r| r.2.clone()))
@@ -367,6 +369,31 @@ pub fn picture_body(id: u32, name: &str, cx: i64, cy: i64) -> Vec<Node> {
     xml::parse(&s).map(|(_, e)| e.children).unwrap_or_default()
 }
 
+/// An equation's anchor with its maths as plain text (for the mc:Fallback).
+fn math_fallback(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    loop {
+        let start = match rest.find("<a14:m>").or_else(|| rest.find("<a14:m ")) {
+            Some(i) => i,
+            None => break,
+        };
+        let end = match rest[start..].find("</a14:m>") {
+            Some(j) => start + j + "</a14:m>".len(),
+            None => break,
+        };
+        out.push_str(&rest[..start]);
+        let lin = xml::parse(&rest[start..end]).ok()
+            .and_then(|(_, e)| crate::math::find_math(&e).map(|m| crate::math::to_linear(&crate::math::read_omml(m))))
+            .unwrap_or_default();
+        out.push_str(&format!("<a:r><a:rPr lang=\"en-US\" i=\"0\"><a:latin typeface=\"Cambria Math\" panose=\"02040503050406030204\" pitchFamily=\"18\" charset=\"0\"/></a:rPr><a:t>{}</a:t></a:r>", xml::escape_text(&lin)));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    // no math left in the fallback; the shape ids stay as they are
+    out
+}
+
 /// The drawing part's XML for these objects.
 pub fn write_drawing(file: Option<&DrawingFile>, objs: &[Obj]) -> String {
     let (prolog, mut root) = match file {
@@ -421,6 +448,12 @@ pub fn write_drawing(file: Option<&DrawingFile>, objs: &[Obj]) -> String {
         if pfx != "xdr" {
             let p = if pfx.is_empty() { String::new() } else { format!("{}:", pfx) };
             s = s.replace("<xdr:", &format!("<{}", p)).replace("</xdr:", &format!("</{}", p));
+        }
+        if o.ink.is_none() && s.contains("oMath") {
+            // as Office writes equations: Office Math for applications that know it, plain text for the rest
+            let fb = math_fallback(&s);
+            let mns = if s.contains("xmlns:m=") { String::new() } else { format!(" xmlns:m=\"{}\"", crate::math::NS_M) };
+            s = format!("<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:a14=\"{}\"{} Requires=\"a14\">{}</mc:Choice><mc:Fallback>{}</mc:Fallback></mc:AlternateContent>", crate::math::NS_A14, mns, s, fb);
         }
         if o.ink.is_some() {
             // as Office writes ink: a content part, for applications that know the 2010 drawing

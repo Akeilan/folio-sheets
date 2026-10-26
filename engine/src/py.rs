@@ -1671,6 +1671,225 @@ impl PyBook {
         self.sheet(s)?;
         Ok(self.b.ink_at(s, x, y, radius))
     }
+    // ---- shapes, text boxes, WordArt
+    #[pyo3(signature = (s, prst, x, y, w, h, flip_h=false, flip_v=false))]
+    fn insert_shape(&mut self, s: usize, prst: &str, x: f64, y: f64, w: f64, h: f64, flip_h: bool, flip_v: bool) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.insert_shape(s, prst, x, y, w, h, flip_h, flip_v).map_err(verr)
+    }
+    fn insert_text_box(&mut self, s: usize, x: f64, y: f64, w: f64, h: f64, text: &str) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.insert_text_box(s, x, y, w, h, text).map_err(verr)
+    }
+    fn insert_wordart(&mut self, s: usize, style: usize, text: &str, x: f64, y: f64) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.insert_wordart(s, style, text, x, y).map_err(verr)
+    }
+    /// What the Shape Format tab shows for a shape, or None for other objects.
+    fn shape_info<'py>(&self, py: Python<'py>, s: usize, i: usize) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let v = match self.b.shape_view(s, i) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let d = PyDict::new_bound(py);
+        d.set_item("geom", &v.geom)?;
+        d.set_item("fill", v.fill.map(|f| f.0))?;
+        d.set_item("line", v.line.map(|l| (l.0, l.1, l.2)))?;
+        d.set_item("text", v.text())?;
+        d.set_item("textbox", v.textbox)?;
+        d.set_item("connector", v.connector)?;
+        d.set_item("equation", v.math.as_ref().map(|(m, _)| crate::math::to_linear(m)))?;
+        d.set_item("anchor", v.anchor.to_string())?;
+        let r = v.paras.iter().flat_map(|p| p.runs.first()).next();
+        d.set_item("bold", r.map(|r| r.bold).unwrap_or(false))?;
+        d.set_item("italic", r.map(|r| r.italic).unwrap_or(false))?;
+        d.set_item("size", r.map(|r| r.size).unwrap_or(11.0))?;
+        d.set_item("color", r.map(|r| r.color))?;
+        d.set_item("outline", r.and_then(|r| r.outline).map(|o| o.0))?;
+        d.set_item("align", v.paras.first().map(|p| p.align).unwrap_or(0))?;
+        Ok(Some(d))
+    }
+    /// Shape Fill: a colour, or None for No Fill.
+    fn shape_set_fill(&mut self, s: usize, which: Vec<usize>, color: Option<u32>) -> PyResult<()> {
+        self.b.edit_shape(s, &which, "Shape Fill", |b| crate::shape::set_fill(b, color)).map_err(verr)
+    }
+    /// Shape Outline: colour ("none" for No Outline), weight in points, dashes.
+    #[pyo3(signature = (s, which, color=None, no_line=false, weight=None, dashed=None))]
+    fn shape_set_line(&mut self, s: usize, which: Vec<usize>, color: Option<u32>, no_line: bool, weight: Option<f64>, dashed: Option<bool>) -> PyResult<()> {
+        let c = if no_line { Some(None) } else { color.map(Some) };
+        self.b.edit_shape(s, &which, "Shape Outline", |b| crate::shape::set_line(b, c, weight, dashed)).map_err(verr)
+    }
+    fn shape_set_text(&mut self, s: usize, i: usize, text: &str) -> PyResult<()> {
+        self.b.edit_shape(s, &[i], "Typing", |b| crate::shape::set_text(b, text)).map_err(verr)
+    }
+    #[pyo3(signature = (s, which, bold=None, italic=None, size=None, color=None, align=None))]
+    fn shape_set_text_format(&mut self, s: usize, which: Vec<usize>, bold: Option<bool>, italic: Option<bool>, size: Option<f64>, color: Option<u32>, align: Option<i32>) -> PyResult<()> {
+        self.b.edit_shape(s, &which, "Font", |b| crate::shape::set_text_format(b, bold, italic, size, color, align)).map_err(verr)
+    }
+    fn shape_set_anchor(&mut self, s: usize, which: Vec<usize>, anchor: &str) -> PyResult<()> {
+        let a = anchor.chars().next().unwrap_or('t');
+        self.b.edit_shape(s, &which, "Align Text", |b| crate::shape::set_text_anchor(b, a)).map_err(verr)
+    }
+    fn shape_set_geometry(&mut self, s: usize, which: Vec<usize>, prst: &str) -> PyResult<()> {
+        self.b.edit_shape(s, &which, "Change Shape", |b| crate::shape::set_geometry(b, prst)).map_err(verr)
+    }
+    /// Insert › Sparklines: kind "line", "column" or "winloss"; location like "F2:F10".
+    fn add_sparklines(&mut self, s: usize, kind: &str, data: &str, location: &str) -> PyResult<usize> {
+        self.sheet(s)?;
+        let loc = location.rsplit('!').next().unwrap_or(location).replace('$', "");
+        let r = crate::cellref::parse_range(loc.trim()).ok_or_else(|| verr("The location reference isn't valid.".to_string()))?;
+        self.b.add_sparklines(s, kind, data.trim().trim_start_matches('='), r).map_err(verr)
+    }
+    fn sparklines<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let mut out = Vec::new();
+        for g in self.b.sparkline_groups(s) {
+            let d = PyDict::new_bound(py);
+            d.set_item("kind", match g.kind.as_str() { "stacked" => "winloss", k => k })?;
+            for (k, v) in [("color", g.color), ("negative_color", g.negative), ("markers_color", g.markers_color),
+                           ("high_color", g.high_color), ("low_color", g.low_color), ("first_color", g.first_color),
+                           ("last_color", g.last_color)] {
+                d.set_item(k, v)?;
+            }
+            for (k, v) in [("markers", g.markers), ("high", g.high), ("low", g.low), ("first", g.first),
+                           ("last", g.last), ("negative", g.show_negative)] {
+                d.set_item(k, v)?;
+            }
+            d.set_item("weight", g.weight)?;
+            d.set_item("items", g.items.clone())?;
+            out.push(d);
+        }
+        Ok(out)
+    }
+    fn sparkline_at(&self, s: usize, r: u32, c: u32) -> PyResult<Option<(usize, usize)>> {
+        self.sheet(s)?;
+        Ok(self.b.sparkline_at(s, r, c))
+    }
+    /// Change a sparkline group: keys as sparklines() gives them.
+    fn sparkline_set(&mut self, s: usize, group: usize, opts: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.sheet(s)?;
+        let mut kind: Option<String> = None;
+        let mut cols: Vec<(String, u32)> = vec![];
+        let mut flags: Vec<(String, bool)> = vec![];
+        let mut weight: Option<f64> = None;
+        for (k, v) in opts.iter() {
+            let k: String = k.extract()?;
+            match k.as_str() {
+                "kind" => kind = Some(v.extract()?),
+                "weight" => weight = Some(v.extract()?),
+                x if x.ends_with("color") => cols.push((k.clone(), v.extract()?)),
+                _ => flags.push((k.clone(), v.extract()?)),
+            }
+        }
+        self.b.edit_sparkline_group(s, group, |g| {
+            if let Some(k) = kind {
+                g.kind = match k.as_str() { "column" => "column", "winloss" | "stacked" => "stacked", _ => "line" }.into();
+            }
+            if let Some(w) = weight { g.weight = w; }
+            for (k, v) in cols {
+                match k.as_str() {
+                    "color" => g.color = v, "negative_color" => g.negative = v, "markers_color" => g.markers_color = v,
+                    "high_color" => g.high_color = v, "low_color" => g.low_color = v, "first_color" => g.first_color = v,
+                    "last_color" => g.last_color = v, _ => {}
+                }
+            }
+            for (k, v) in flags {
+                match k.as_str() {
+                    "markers" => g.markers = v, "high" => g.high = v, "low" => g.low = v, "first" => g.first = v,
+                    "last" => g.last = v, "negative" => g.show_negative = v, _ => {}
+                }
+            }
+        }).map_err(verr)
+    }
+    fn regroup_sparklines(&mut self, s: usize, r1: u32, c1: u32, r2: u32, c2: u32, group: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.regroup_sparklines(s, crate::cellref::Rect::new(r1, c1, r2, c2), group).map_err(verr)
+    }
+    #[pyo3(signature = (s, r1, c1, r2, c2, group=false))]
+    fn clear_sparklines(&mut self, s: usize, r1: u32, c1: u32, r2: u32, c2: u32, group: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.clear_sparklines(s, crate::cellref::Rect::new(r1, c1, r2, c2), group).map_err(verr)
+    }
+    fn reorder_object(&mut self, s: usize, i: usize, by: i64) -> PyResult<usize> {
+        self.b.reorder_object(s, i, by).map_err(verr)
+    }
+    /// Insert › Equation: a text box with an equation typed in the linear format.
+    fn insert_equation(&mut self, s: usize, linear: &str, x: f64, y: f64) -> PyResult<usize> {
+        self.b.insert_equation(s, linear, x, y).map_err(verr)
+    }
+    fn equation_linear(&self, s: usize, i: usize) -> Option<String> {
+        self.b.equation_linear(s, i)
+    }
+    fn set_equation(&mut self, s: usize, i: usize, linear: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_equation(s, i, linear).map_err(verr)
+    }
+    /// Draw an equation (linear format) with its baseline's left end at (x, y); returns (w, asc, desc).
+    #[staticmethod]
+    #[pyo3(signature = (cr, linear, x, y, size_px, color=0))]
+    fn paint_equation(cr: &Bound<'_, PyAny>, linear: &str, x: f64, y: f64, size_px: f64, color: u32) -> PyResult<(f64, f64, f64)> {
+        let p = cairo_ptr(cr)?;
+        let m = crate::math::parse_linear(linear);
+        unsafe {
+            let mut ms = crate::math::PangoMeasure::new(p);
+            let b = crate::math::layout(&m, &mut ms, size_px);
+            crate::math::paint(p, &mut ms, &b, x, y, color);
+            Ok((b.w, b.asc, b.desc))
+        }
+    }
+    #[staticmethod]
+    fn equation_extent(linear: &str, size_px: f64) -> (f64, f64, f64) {
+        crate::book_shape::equation_extent(&crate::math::parse_linear(linear), size_px)
+    }
+    /// The equation as Office Math (a14:m), and back as linear: for tests and the clipboard.
+    #[staticmethod]
+    fn equation_omml(linear: &str) -> String {
+        crate::math::write_omml(&crate::math::parse_linear(linear), None)
+    }
+    #[staticmethod]
+    fn equation_normalize(linear: &str) -> String {
+        crate::math::to_linear(&crate::math::parse_linear(linear))
+    }
+    #[staticmethod]
+    fn equation_built_ins() -> Vec<(String, String)> {
+        crate::math::BUILT_IN.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+    }
+    /// The Shapes gallery: [(group, [preset names])].
+    #[staticmethod]
+    fn shape_gallery() -> Vec<(String, Vec<String>)> {
+        crate::shape::GALLERY.iter().map(|(g, l)| (g.to_string(), l.iter().map(|s| s.to_string()).collect())).collect()
+    }
+    #[staticmethod]
+    fn wordart_styles() -> Vec<String> {
+        crate::shape::WORDART.iter().map(|(n, _)| n.to_string()).collect()
+    }
+    /// Draw a preset's outline (the gallery's icons), in a w × h box at (x, y).
+    #[staticmethod]
+    fn paint_shape_icon(cr: &Bound<'_, PyAny>, prst: &str, x: f64, y: f64, w: f64, h: f64) -> PyResult<()> {
+        let p = cairo_ptr(cr)?;
+        let v = crate::shape::ShapeView::parse(&crate::shape::new_body(1, "x", if prst == "textBox" { "rect" } else { prst }, 100, 100, None, None), &[0xFFFFFF, 0, 0, 0, 0x4472C4, 0, 0, 0, 0, 0, 0, 0]);
+        if let Some(mut v) = v {
+            v.geom = prst.to_string();
+            unsafe {
+                use crate::ffi::*;
+                use crate::shape::Seg;
+                for sub in crate::shape::preset(&v, w, h) {
+                    cairo_new_path(p);
+                    for sg in &sub.segs {
+                        match *sg {
+                            Seg::Move(a, b) => cairo_move_to(p, x + a, y + b),
+                            Seg::Line(a, b) => cairo_line_to(p, x + a, y + b),
+                            Seg::Curve(a, b, c, d, e, f) => cairo_curve_to(p, x + a, y + b, x + c, y + d, x + e, y + f),
+                            Seg::Close => cairo_close_path(p),
+                        }
+                    }
+                    cairo_stroke(p);
+                }
+            }
+        }
+        Ok(())
+    }
     /// True when the workbook holds a VBA project (kept, never run).
     fn has_macros(&self) -> bool {
         self.b.has_macros()

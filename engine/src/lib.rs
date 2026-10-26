@@ -46,6 +46,10 @@ pub mod bmp;
 pub mod picture;
 pub mod vba;
 pub mod ink;
+pub mod shape;
+pub mod book_shape;
+pub mod sparkline;
+pub mod math;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

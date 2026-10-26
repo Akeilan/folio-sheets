@@ -45,6 +45,12 @@ NEEDS = {
     "autosum": "cells", "data-validation": "never", "text-to-columns": "never", "clear-hyperlinks": "cells",
     "remove-hyperlinks": "cells", "group": "never", "ungroup": "never", "subtotal": "never",
     "show-detail": "never", "hide-detail": "never", "spelling": "never",
+    "equation": "objects", "equation-put": "objects", "shapes": "objects", "shape-insert": "objects",
+    "text-box": "objects", "wordart": "objects", "wordart-insert": "objects", "screenshot": "objects",
+    "pictures": "objects", "sparkline-line": "never", "sparkline-column": "never", "sparkline-winloss": "never",
+    "spark-type": "never", "spark-show": "never", "spark-color": "never", "spark-weight": "never",
+    "spark-marker": "never", "spark-clear": "never", "spark-clear-group": "never", "spark-group": "never",
+    "spark-ungroup": "never", "spark-edit-data": "never",
 }
 # sheet commands that Protect Workbook (structure) stops
 STRUCTURE = {"insert-sheet", "delete-sheet", "rename-sheet", "move-copy-sheet", "hide-sheet", "unhide-sheet",

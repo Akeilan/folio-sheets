@@ -23,6 +23,9 @@ from .sheettabs import SheetTabs
 from .statusbar import StatusBar
 
 NATIVE = (".xlsx", ".xlsm", ".xltx", ".xltm")
+# Home tab commands that format the text of selected shapes instead of cells
+SHAPE_TEXT_CMDS = {"bold", "italic", "font-size", "font-grow", "font-shrink", "font-color", "align-left", "align-center",
+                   "align-right", "align-top", "align-middle", "align-bottom", "fill-color"}
 IMPORT = (".xls", ".ods", ".xlsb", ".fods", ".sxc")
 
 
@@ -79,6 +82,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.outer.pack_start(self.ribbon, False, False, 0)
         from .ink_ui import InkTools
         self.ink = InkTools(self)
+        from .shapes_ui import Shapes
+        self.shapes = Shapes(self)
         from .macros_ui import MacroBar
         self.macro_bar = MacroBar(self)
         self.outer.pack_start(self.macro_bar, False, False, 0)
@@ -384,6 +389,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.status.update_aggregates()
         self.update_calc_status()
         self.sync_table_tab()
+        from . import sparkline_ui
+        sparkline_ui.sync_tab(self)
         title_dirty = self.book.modified
         if getattr(self, "_last_dirty", None) != title_dirty:
             self._last_dirty = title_dirty
@@ -547,12 +554,21 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if fn is None:
             self.not_yet(cmd)
             return
-        keep = ("undo", "redo", "insert-function", "fn-insert", "use-in-formula", "autosum", "autosum-average",
+        keep = ("undo", "redo", "symbol", "insert-function", "fn-insert", "use-in-formula", "autosum", "autosum-average",
                 "autosum-count", "autosum-max", "autosum-min")
         if self.grid.editing() and cmd.split(":", 1)[0] not in keep:
             if self.grid.commit_edit() is False:
                 return
         base = cmd.split(":", 1)[0]
+        if self.book is not None and self.grid.sel_objects and base in SHAPE_TEXT_CMDS:
+            from . import shapes_ui
+            sel = shapes_ui.selected_shapes(self)
+            if sel:
+                with self.book.group(commands.label(cmd)):
+                    self._shape_text_cmd(base, arg, sel)
+                self.grid.refresh()
+                self.update_title()
+                return
         from . import protect_ui
         if self.book is not None and not protect_ui.gate(self, cmd):
             return
@@ -572,6 +588,246 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             self.not_yet(cmd)
         if guard:
             protect_ui.after_command(self, base, h0)
+
+    # ------------------------------------------------------------ shapes, text boxes, WordArt
+    def _shape_text_cmd(self, base, arg, sel):
+        """Home tab font and alignment commands, for the text of the selected shapes."""
+        b = self.book
+        s = self.grid.sheet
+        info = b.shape_info(s, sel[0])
+        if base == "bold":
+            b.shape_set_text_format(s, sel, bold=not info["bold"])
+        elif base == "italic":
+            b.shape_set_text_format(s, sel, italic=not info["italic"])
+        elif base == "font-size":
+            try:
+                b.shape_set_text_format(s, sel, size=float(arg))
+            except (TypeError, ValueError):
+                pass
+        elif base in ("font-grow", "font-shrink"):
+            steps = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96]
+            cur = info["size"]
+            nxt = [x for x in steps if x > cur] if base == "font-grow" else [x for x in steps if x < cur][::-1]
+            if nxt:
+                b.shape_set_text_format(s, sel, size=float(nxt[0]))
+        elif base == "font-color":
+            c = 0 if arg in (None, "auto", "more", "last") and arg != "last" else (self.last_font_color if arg == "last" else int(arg, 16))
+            b.shape_set_text_format(s, sel, color=c if c is not None else 0)
+        elif base in ("align-left", "align-center", "align-right"):
+            b.shape_set_text_format(s, sel, align={"align-left": 0, "align-center": 1, "align-right": 2}[base])
+        elif base in ("align-top", "align-middle", "align-bottom"):
+            b.shape_set_anchor(s, sel, {"align-top": "t", "align-middle": "c", "align-bottom": "b"}[base])
+        elif base == "fill-color":
+            b.shape_set_fill(s, sel, None if arg == "none" else (int(arg, 16) if arg and arg not in ("more", "last") else 0xFFFF00))
+
+    def _shapes_sel(self):
+        from . import shapes_ui
+        sel = shapes_ui.selected_shapes(self)
+        if not sel:
+            self.status.extra.set_text("Select a shape first.")
+        return sel
+
+    def act_shapes(self):
+        from . import shapes_ui
+        pop = shapes_ui.gallery(self, lambda p: self.run("shape-insert:" + p))
+        pop.set_relative_to(self.grid.area)
+        pop.popup()
+
+    def act_shape_insert(self, prst):
+        self.shapes.place(prst)
+
+    def act_text_box(self):
+        self.shapes.place("textBox")
+
+    def act_wordart(self):
+        from . import shapes_ui
+        pop = shapes_ui.wordart_gallery(self)
+        pop.set_relative_to(self.grid.area)
+        pop.popup()
+
+    def act_wordart_insert(self, k):
+        from . import shapes_ui
+        sel = shapes_ui.selected_shapes(self)
+        if sel:
+            # WordArt Quick Styles on a selected shape: its text takes the style's colours
+            from .core import Book
+            fills = [0x000000, 0x4472C4, 0xF8CBAD, 0xFFFFFF, 0xFFC000, 0xA5A5A5, 0x000000, 0x70AD47]
+            self.book.shape_set_text_format(self.grid.sheet, sel, color=fills[int(k) % len(fills)])
+            self.grid.refresh()
+            return
+        i = shapes_ui.insert_wordart(self, int(k))
+        GLib.idle_add(lambda: (self.shapes.edit(i, first=""), False)[1])
+
+    # ------------------------------------------------------------ symbols, equations, screenshots
+    def act_symbol(self):
+        from . import symbol_ui
+        symbol_ui.show(self)
+
+    def act_equation(self):
+        from . import equation_ui
+        equation_ui.insert(self)
+
+    def act_equation_put(self, text):
+        from . import equation_ui
+        equation_ui.put(self, text or "")
+
+    def act_equation_ink(self):
+        from . import equation_ui
+        equation_ui.ink_not_available(self)
+
+    def act_screenshot(self):
+        from . import screenshot_ui
+        screenshot_ui.screen_clipping(self)
+
+    # ------------------------------------------------------------ sparklines
+    def act_sparkline_line(self):
+        from . import sparkline_ui
+        sparkline_ui.create(self, "line")
+
+    def act_sparkline_column(self):
+        from . import sparkline_ui
+        sparkline_ui.create(self, "column")
+
+    def act_sparkline_winloss(self):
+        from . import sparkline_ui
+        sparkline_ui.create(self, "winloss")
+
+    def act_spark_type(self, kind):
+        from . import sparkline_ui
+        sparkline_ui.set_options(self, kind=kind)
+
+    def act_spark_show(self, arg):
+        from . import sparkline_ui
+        key, _, val = (arg or "").partition(":")
+        cur = sparkline_ui.current(self)
+        if cur is None or not key:
+            return
+        on = (val == "1") if val else not cur[1].get(key)
+        sparkline_ui.set_options(self, **{key: on})
+
+    def act_spark_color(self, arg):
+        from . import sparkline_ui
+        sparkline_ui.set_options(self, color=int(arg, 16))
+
+    def act_spark_weight(self, arg):
+        from . import sparkline_ui
+        sparkline_ui.set_options(self, weight=float(arg))
+
+    def act_spark_marker(self, arg):
+        from . import sparkline_ui
+        key, _, val = arg.partition(":")
+        opts = {key: int(val, 16)}
+        # picking a colour for a kind of point also shows those points, as in the desktop spreadsheet
+        flag = {"negative_color": "negative", "markers_color": "markers", "high_color": "high", "low_color": "low",
+                "first_color": "first", "last_color": "last"}.get(key)
+        if flag:
+            opts[flag] = True
+        sparkline_ui.set_options(self, **opts)
+
+    def act_spark_clear(self):
+        from . import sparkline_ui
+        sparkline_ui.clear(self, False)
+
+    def act_spark_clear_group(self):
+        from . import sparkline_ui
+        sparkline_ui.clear(self, True)
+
+    def act_spark_group(self):
+        from . import sparkline_ui
+        sparkline_ui.regroup(self, True)
+
+    def act_spark_ungroup(self):
+        from . import sparkline_ui
+        sparkline_ui.regroup(self, False)
+
+    def act_spark_edit_data(self):
+        from . import sparkline_ui
+        sparkline_ui.edit_data(self)
+
+    def act_spark_axis(self):
+        from . import sparkline_ui
+        sparkline_ui.axis_not_available(self)
+
+    def act_shape_fill(self, arg):
+        sel = self._shapes_sel()
+        if sel:
+            self.book.shape_set_fill(self.grid.sheet, sel, None if arg == "none" else int(arg, 16))
+            self.grid.refresh()
+
+    def act_shape_outline(self, arg):
+        sel = self._shapes_sel()
+        if sel:
+            if arg == "none":
+                self.book.shape_set_line(self.grid.sheet, sel, no_line=True)
+            else:
+                self.book.shape_set_line(self.grid.sheet, sel, color=int(arg, 16))
+            self.grid.refresh()
+
+    def act_shape_weight(self, arg):
+        sel = self._shapes_sel()
+        if sel:
+            self.book.shape_set_line(self.grid.sheet, sel, weight=float(arg))
+            self.grid.refresh()
+
+    def act_shape_dash(self, arg):
+        sel = self._shapes_sel()
+        if sel:
+            self.book.shape_set_line(self.grid.sheet, sel, dashed=arg == "on")
+            self.grid.refresh()
+
+    def act_shape_change(self, prst):
+        sel = self._shapes_sel()
+        if sel:
+            self.book.shape_set_geometry(self.grid.sheet, sel, prst)
+            self.grid.refresh()
+
+    def act_shape_text_color(self, arg):
+        sel = self._shapes_sel()
+        if sel:
+            self.book.shape_set_text_format(self.grid.sheet, sel, color=0 if arg == "none" else int(arg, 16))
+            self.grid.refresh()
+
+    def _reorder(self, by):
+        g = self.grid
+        if len(g.sel_objects) != 1:
+            self.status.extra.set_text("Select one object first.")
+            return
+        to = self.book.reorder_object(g.sheet, g.sel_objects[0], by)
+        g.sel_objects = [to]
+        g.refresh()
+
+    def act_bring_forward(self):
+        self._reorder(1)
+
+    def act_bring_to_front(self):
+        self._reorder(1 << 20)
+
+    def act_send_backward(self):
+        self._reorder(-1)
+
+    def act_send_to_back(self):
+        self._reorder(-(1 << 20))
+
+    def _shape_size(self, what, inches):
+        sel = self._shapes_sel()
+        if not sel:
+            return
+        g = self.grid
+        for i in sel:
+            x, y, w, h = self.book.objects(g.sheet)[i]["rect"]
+            v = max(0.01, float(inches)) * 96.0
+            if what == "height":
+                h = v
+            else:
+                w = v
+            self.book.set_object_rect(g.sheet, i, x, y, w, h, "Size")
+        g.refresh()
+
+    def act_shape_height(self, v):
+        self._shape_size("height", v)
+
+    def act_shape_width(self, v):
+        self._shape_size("width", v)
 
     # ------------------------------------------------------------ Draw tab
     def act_draw_select(self):
@@ -2001,6 +2257,12 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g.sel_objects = [i for i in g.sel_objects if i < n]
         chart = g.selected_chart() is not None if self.book is not None else False
         self.ribbon.show_contextual("Chart Design", chart)
+        from . import shapes_ui
+        shapes = shapes_ui.sync_tab(self) if self.book is not None else []
+        if shapes and switch_tab:
+            t = self.ribbon.tab_by_name("Shape Format")
+            if t is not None:
+                self.ribbon.select(t)
         if chart and switch_tab:
             t = self.ribbon.tab_by_name("Chart Design")
             if t is not None:
@@ -2581,6 +2843,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self._alt_alone = name in ("alt_l", "alt_r")
         if self.keytips.active:
             return self.keytips.key(ev)
+        if kv == Gdk.KEY_Escape and self.shapes.placing:
+            self.shapes.cancel()
+            return True
         if kv == Gdk.KEY_Escape and self.ink.active() and not self.grid.editing():
             self.ink.set_tool(None)
             return True
@@ -2639,6 +2904,16 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 self.update_title()
                 return True
             if not ctrl and not alt and kv not in (Gdk.KEY_Shift_L, Gdk.KEY_Shift_R, Gdk.KEY_Tab):
+                # typing with one shape selected types into it (as in the desktop spreadsheet)
+                from . import shapes_ui
+                sel = shapes_ui.selected_shapes(self)
+                ch = Gdk.keyval_to_unicode(kv)
+                if len(sel) == 1 and len(g.sel_objects) == 1 and ch >= 32:
+                    if self.shapes.edit(sel[0], first=chr(ch)):
+                        return True
+                if len(sel) == 1 and len(g.sel_objects) == 1 and kv in (Gdk.KEY_F2, Gdk.KEY_Return):
+                    if self.shapes.edit(sel[0]):
+                        return True
                 # anything else goes back to the cells
                 g.deselect_objects()
                 self.on_object_selection()

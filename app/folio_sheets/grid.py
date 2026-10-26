@@ -244,6 +244,9 @@ class GridView(Gtk.Box):
         ink = getattr(self.win, "ink", None)
         if ink is not None:
             ink.draw(cr)
+        shp = getattr(self.win, "shapes", None)
+        if shp is not None:
+            shp.draw(cr)
         for gut in (self.row_gutter, self.col_gutter):
             if gut.get_visible():
                 gut.queue_draw()
@@ -573,6 +576,14 @@ class GridView(Gtk.Box):
             return False
         if self.win.backstage_open():
             return True
+        ed = getattr(self.win, "equation_editor", None)
+        if ed is not None and not ed.done:
+            ed.finish()
+        shp = getattr(self.win, "shapes", None)
+        if shp is not None and shp.placing and ev.button == 1 and self.hit(ev.x, ev.y)[0] == "cell":
+            if self.editing() and self.commit_edit() is False:
+                return True
+            return shp.press(ev)
         ink = getattr(self.win, "ink", None)
         if ink is not None and ink.active() and ev.button == 1 and self.hit(ev.x, ev.y)[0] == "cell":
             if self.editing() and self.commit_edit() is False:
@@ -599,7 +610,10 @@ class GridView(Gtk.Box):
                 return False
             if ev.type == Gdk.EventType._2BUTTON_PRESS:
                 self.select_object(i)
-                self.win.run("chart-format")
+                if self.book.shape_info(self.sheet, i) is not None:
+                    self.win.shapes.edit(i)
+                else:
+                    self.win.run("chart-format")
                 return True
             if ctrl or shift:
                 self.select_object(i, add=True)
@@ -731,6 +745,9 @@ class GridView(Gtk.Box):
         if self.book is None:
             return False
         self._last_motion = (ev.x, ev.y)
+        shp = getattr(self.win, "shapes", None)
+        if shp is not None and shp.placing:
+            return shp.motion(ev)
         ink = getattr(self.win, "ink", None)
         if ink is not None and ink.active() and self._drag is None:
             return ink.motion(ev)
@@ -854,6 +871,9 @@ class GridView(Gtk.Box):
         return True
 
     def on_release(self, w, ev):
+        shp = getattr(self.win, "shapes", None)
+        if shp is not None and shp.placing and shp.start is not None:
+            return shp.release(ev)
         ink = getattr(self.win, "ink", None)
         if ink is not None and ink.active() and self._drag is None and (ink.stroke is not None or ink.lasso is not None or ink.tool == "eraser"):
             return ink.release(ev)

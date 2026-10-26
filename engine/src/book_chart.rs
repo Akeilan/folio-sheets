@@ -232,7 +232,7 @@ impl Book {
         Ok(ch)
     }
 
-    fn next_object_name(&self, s: usize, base: &str) -> (u32, String) {
+    pub(crate) fn next_object_name(&self, s: usize, base: &str) -> (u32, String) {
         let sh = &self.sheets[s];
         let mut n = 1;
         for o in &sh.objects {

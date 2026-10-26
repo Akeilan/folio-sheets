@@ -236,7 +236,18 @@ def _menu_pen(tool):
     return items
 
 
+def _screenshot_menu(win):
+    from . import screenshot_ui
+    return screenshot_ui.menu(win)
+
+
+def _equation_menu(win):
+    from . import equation_ui
+    return equation_ui.equation_menu(win)
+
+
 def build_ribbon(win):
+    from . import shapes_ui as _shapes_ui
     B = Builder(win)
     r = win.ribbon
     run = B.run
@@ -403,9 +414,9 @@ def build_ribbon(win):
     ])
     B.group(t, "Illustrations", [
         B.big("Pictures", "r-pictures", "pictures", "P"),
-        B.big("Shapes", "r-shapes", None, "SH", menu=[("Shapes gallery...", "shapes")]),
+        B.big("Shapes", "r-shapes", None, "SH", menu=lambda: _shapes_ui.gallery(win, lambda p: win.run("shape-insert:" + p))),
         B.big("SmartArt", "r-smartart", "smartart", "M"),
-        B.big("Screenshot", "r-screenshot", None, "SC", menu=[("Screen Clipping", "screenshot")]),
+        B.big("Screenshot", "r-screenshot", None, "SC", menu=lambda: _screenshot_menu(win)),
     ])
     B.group(t, "Charts", [
         B.big("Recommended\nCharts", "r-recommended-charts", "recommended-charts", "R"),
@@ -449,12 +460,13 @@ def build_ribbon(win):
     B.group(t, "Text", [
         B.big("Text\nBox", "r-text-box", "text-box", "X"),
         B.big("Header\n& Footer", "r-header-footer", "header-footer", "H"),
-        [B.small("WordArt", "r-wordart-sm", "wordart", "W"),
+        [B.small("WordArt", "r-wordart-sm", None, "W", menu=lambda: _shapes_ui.wordart_gallery(win)),
          B.small("Signature Line", "r-signature-line-sm", "signature-line", "G"),
          B.small("Object", "r-object-sm", "object", "J")],
     ])
     B.group(t, "Symbols", [
-        B.big("Equation", "r-equation", "equation", "E"),
+        SplitButton(B.r, "Equation", "r-equation", "equation", lambda: _equation_menu(win), size="large", keytip="E",
+                    tooltip="Equation\nAdd an equation, or choose one of the common ones."),
         B.big("Symbol", "r-symbol", "symbol", "U"),
     ])
     r.add_tab(t)
@@ -754,5 +766,11 @@ def build_ribbon(win):
     r.show_contextual("Chart Design", False)
     from . import table_ui
     table_ui.build_tab(win, B)
+    from . import shapes_ui
+    shapes_ui.build_tab(win, B)
+    from . import sparkline_ui
+    sparkline_ui.build_tab(win, B)
+    from . import equation_ui
+    equation_ui.build_tab(win, B)
     r.building(None)
     r.select(r.tabs[0])
