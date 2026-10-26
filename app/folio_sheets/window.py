@@ -76,6 +76,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.ribbon.connect("file-clicked", lambda *_: self.show_backstage())
         self.outer.pack_start(self.ribbon, False, False, 0)
         self.grid = GridView(self)
+        from .validation_ui import DvUi
+        self.dv = DvUi(self)
+        self.dv.attach(self.grid)
         self.formula_bar = FormulaBar(self)
         self.outer.pack_start(self.formula_bar, False, False, 0)
         mid = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -303,6 +306,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             self.formula_bar.show_text(self.book.input(g.sheet, r, c))
             st = self.book.cell_style(g.sheet, r, c)
             self.update_ribbon_state(st)
+        self.dv.update_message()
         self.status.update_aggregates()
         self.update_calc_status()
         self.sync_table_tab()
@@ -392,7 +396,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def validate_entry(self, text):
         """Before a typed entry is stored: formulas must parse (open
-        parentheses are closed for you). None keeps the edit going."""
+        parentheses are closed for you), and the cell's data validation must
+        let it in. None keeps the edit going; False cancels it."""
         t = text
         if t.startswith("=") and len(t) > 1:
             body = t[1:]
@@ -400,10 +405,10 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 and any(ch.isalpha() for ch in t):
             body = t
         else:
-            return text
+            return self.dv.check_entry(text)
         err = check_formula(body)
         if err is None:
-            return text
+            return self.dv.check_entry(text)
         self.formula_error(text, err)
         return None
 
@@ -433,6 +438,13 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         """Ctrl+Enter: the typed entry goes into every selected cell."""
         g = self.grid
         text = g.editor.text()
+        checked = self.validate_entry(text)
+        if checked is None:
+            return
+        if checked is False:
+            g.cancel_edit()
+            return
+        text = checked
         g.cancel_edit()
         cells = []
         for rg in g.sel.ranges:
@@ -1388,6 +1400,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g.states = {mapping[i]: st for i, st in g.states.items() if mapping.get(i) is not None}
         self.show_formulas = {mapping[i] for i in self.show_formulas if mapping.get(i) is not None}
         self.arrows = {mapping[i]: a for i, a in self.arrows.items() if mapping.get(i) is not None}
+        self.dv.circles = {mapping[i]: a for i, a in self.dv.circles.items() if mapping.get(i) is not None}
 
     def _after_structure(self, select):
         g = self.grid
@@ -1869,6 +1882,17 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import data_ui
         data_ui.remove_duplicates(self)
 
+    def act_data_validation(self, arg=None):
+        if arg == "circle":
+            self.dv.circle()
+        elif arg == "clear-circles":
+            self.dv.clear_circles()
+        else:
+            self.dv.dialog()
+
+    def act_pick_from_list(self):
+        self.dv.pick_from_list()
+
     # ------------------------------------------------------------ insert / delete cells
     def _struct_ranges(self, rows):
         """The selection's row (or column) spans, last first so earlier ones don't move."""
@@ -2232,6 +2256,10 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 g.deselect_objects()
                 self.on_object_selection()
         # global shortcuts
+        if alt and not ctrl and kv in (Gdk.KEY_Down, Gdk.KEY_KP_Down) and in_grid and not g.editing() \
+                and not g.sel_objects:
+            self.run("pick-from-list")
+            return True
         if ctrl and alt and not g.editing() and kv in (Gdk.KEY_v, Gdk.KEY_V):
             self.run("paste-special")
             return True

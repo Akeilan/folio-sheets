@@ -117,7 +117,7 @@ LABELS = {
     "get-data": "Get Data", "from-text-csv": "From Text/CSV", "existing-connections": "Existing Connections",
     "refresh-all": "Refresh All", "queries-connections": "Queries & Connections",
     "workbook-links": "Workbook Links", "advanced-filter": "Advanced", "text-to-columns": "Text to Columns",
-    "remove-duplicates": "Remove Duplicates", "data-validation": "Data Validation", "consolidate": "Consolidate",
+    "remove-duplicates": "Remove Duplicates", "data-validation": "Data Validation", "pick-from-list": "Pick From Drop-down List", "consolidate": "Consolidate",
     "what-if": "What-If Analysis", "scenario-manager": "Scenario Manager", "goal-seek": "Goal Seek",
     "data-table": "Data Table", "forecast-sheet": "Forecast Sheet", "group": "Group", "ungroup": "Ungroup",
     "subtotal": "Subtotal", "show-detail": "Show Detail", "hide-detail": "Hide Detail", "solver": "Solver",

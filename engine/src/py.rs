@@ -88,7 +88,27 @@ fn view_params(d: &Bound<'_, PyDict>) -> ViewParams {
     p.edit_note = get(d, "edit_note");
     p.print = get(d, "print").unwrap_or(false);
     p.page_breaks = get(d, "page_breaks").unwrap_or(false);
+    p.dv_circles = get(d, "dv_circles").unwrap_or_default();
     p
+}
+
+fn dv_dict<'py>(py: Python<'py>, x: &crate::validation::DvRule) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new_bound(py);
+    d.set_item("kind", &x.kind)?;
+    d.set_item("op", &x.op)?;
+    d.set_item("allow_blank", x.allow_blank)?;
+    d.set_item("dropdown", x.dropdown)?;
+    d.set_item("show_input", x.show_input)?;
+    d.set_item("show_error", x.show_error)?;
+    d.set_item("style", &x.style)?;
+    d.set_item("error_title", &x.error_title)?;
+    d.set_item("error", &x.error)?;
+    d.set_item("prompt_title", &x.prompt_title)?;
+    d.set_item("prompt", &x.prompt)?;
+    d.set_item("f1", &x.f1)?;
+    d.set_item("f2", &x.f2)?;
+    d.set_item("ranges", x.ranges.iter().map(|r| (r.r1, r.c1, r.r2, r.c2)).collect::<Vec<_>>())?;
+    Ok(d)
 }
 
 fn cairo_ptr(cr: &Bound<'_, PyAny>) -> PyResult<*mut crate::ffi::cairo_t> {
@@ -278,6 +298,7 @@ fn paste_opts(d: Option<&Bound<'_, PyDict>>) -> PyResult<crate::book_clip::Paste
                 "values" => What::Values,
                 "formats" => What::Formats,
                 "noborders" => What::NoBorders,
+                "validation" => What::Validation,
                 "widths" => What::Widths,
                 "formulas_numfmt" => What::FormulasNumfmt,
                 "values_numfmt" => What::ValuesNumfmt,
@@ -1310,6 +1331,76 @@ impl PyBook {
         }
         let vp = view_params(p);
         unsafe { self.b.render(s, ctx, &vp) };
+        Ok(())
+    }
+    // ---- data validation
+    fn dv_at<'py>(&self, py: Python<'py>, s: usize, r: u32, c: u32) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        match self.b.dv_at(s, r, c) {
+            Some(x) => Ok(Some(dv_dict(py, &x)?)),
+            None => Ok(None),
+        }
+    }
+    /// The rule a typed entry breaks (None when it passes).
+    fn dv_check<'py>(&self, py: Python<'py>, s: usize, r: u32, c: u32, text: &str) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        match self.b.dv_check(s, r, c, text) {
+            Some(x) => Ok(Some(dv_dict(py, &x)?)),
+            None => Ok(None),
+        }
+    }
+    fn dv_list(&self, s: usize, r: u32, c: u32) -> PyResult<Vec<String>> {
+        self.sheet(s)?;
+        Ok(self.b.dv_list(s, r, c))
+    }
+    fn dv_dropdown_at(&self, s: usize, r: u32, c: u32) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.dv_dropdown_at(s, r, c))
+    }
+    fn dv_set(&mut self, s: usize, ranges: Vec<R4>, spec: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.sheet(s)?;
+        let sp = crate::validation::DvSpec {
+            kind: get(spec, "kind").unwrap_or_else(|| "none".into()),
+            op: get(spec, "op").unwrap_or_else(|| "between".into()),
+            f1: get(spec, "f1").unwrap_or_default(),
+            f2: get(spec, "f2").unwrap_or_default(),
+            allow_blank: get(spec, "allow_blank").unwrap_or(true),
+            dropdown: get(spec, "dropdown").unwrap_or(true),
+            show_input: get(spec, "show_input").unwrap_or(true),
+            prompt_title: get(spec, "prompt_title").unwrap_or_default(),
+            prompt: get(spec, "prompt").unwrap_or_default(),
+            show_error: get(spec, "show_error").unwrap_or(true),
+            style: get(spec, "style").unwrap_or_else(|| "stop".into()),
+            error_title: get(spec, "error_title").unwrap_or_default(),
+            error: get(spec, "error").unwrap_or_default(),
+        };
+        self.b.dv_set(s, &rects(ranges), &sp).map_err(PyValueError::new_err)
+    }
+    fn dv_clear(&mut self, s: usize, ranges: Vec<R4>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.dv_clear(s, &rects(ranges)).map_err(PyValueError::new_err)
+    }
+    /// (the active cell's rule or None, "" / "erase" / "extend", ranges with the same settings)
+    fn dv_for_selection<'py>(&self, py: Python<'py>, s: usize, active: (u32, u32), ranges: Vec<R4>) -> PyResult<(Option<Bound<'py, PyDict>>, String, Vec<R4>)> {
+        self.sheet(s)?;
+        let (rule, mixed, same) = self.b.dv_for_selection(s, active, &rects(ranges));
+        let d = match rule {
+            Some(x) => Some(dv_dict(py, &x)?),
+            None => None,
+        };
+        Ok((d, mixed.to_string(), same.iter().map(|r| (r.r1, r.c1, r.r2, r.c2)).collect()))
+    }
+    fn dv_invalid(&self, s: usize, limit: usize) -> PyResult<Vec<(u32, u32)>> {
+        self.sheet(s)?;
+        Ok(self.b.dv_invalid(s, limit))
+    }
+    fn copy_validation(&mut self, s: usize, src: R4, dst_s: usize, dst: R4) -> PyResult<()> {
+        self.sheet(s)?;
+        self.sheet(dst_s)?;
+        let label = "Paste Validation";
+        self.b.begin(label, dst_s);
+        self.b.copy_validation(s, rect(src), dst_s, rect(dst));
+        self.b.commit();
         Ok(())
     }
     // ---- conditional formatting

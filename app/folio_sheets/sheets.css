@@ -47,3 +47,8 @@ button.folio-fnitem { padding: 3px 12px; min-height: 0; }
 .folio-aclist row { padding: 1px 2px; min-height: 0; }
 .folio-popup { background: #ffffff; }
 .folio-popup frame > border { border-color: #b8b8b8; }
+/* data validation: the input message beside the cell, and the drop-down list */
+.folio-dvmsg { background-color: #ffffe1; border: 1px solid #a0a0a0; padding: 4px 6px; }
+.folio-dvmsg label { color: #262626; font-size: 9pt; }
+.folio-dvlist row { min-height: 20px; padding: 0; }
+.folio-dvlist row label { font-size: 9pt; }

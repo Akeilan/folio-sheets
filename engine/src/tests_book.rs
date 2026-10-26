@@ -684,3 +684,97 @@ fn page_setup_and_pages() {
     b.undo();
     assert_eq!(b.page_setup(0).fit, None);
 }
+
+#[test]
+fn data_validation() {
+    use crate::validation::DvSpec;
+    let mut b = blank();
+    let spec = |kind: &str, op: &str, f1: &str, f2: &str| DvSpec {
+        kind: kind.into(), op: op.into(), f1: f1.into(), f2: f2.into(), allow_blank: true, dropdown: true,
+        show_input: true, prompt_title: "Pick".into(), prompt: "One of the list".into(), show_error: true,
+        style: "stop".into(), error_title: String::new(), error: String::new(),
+    };
+    // whole numbers 1..10 in A1:A5
+    b.dv_set(0, &[Rect::new(0, 0, 4, 0)], &spec("whole", "between", "1", "10")).unwrap();
+    assert!(b.dv_check(0, 0, 0, "5").is_none());
+    assert!(b.dv_check(0, 2, 0, "11").is_some());
+    assert!(b.dv_check(0, 2, 0, "2.5").is_some());
+    assert!(b.dv_check(0, 2, 0, "abc").is_some());
+    assert!(b.dv_check(0, 2, 0, "").is_none());
+    assert!(b.dv_check(0, 6, 0, "11").is_none(), "outside the range");
+    // a typed list in B1:B3, case-insensitive
+    b.dv_set(0, &[Rect::new(0, 1, 2, 1)], &spec("list", "between", "Red,Green,Blue", "")).unwrap();
+    assert_eq!(b.dv_list(0, 1, 1), vec!["Red", "Green", "Blue"]);
+    assert!(b.dv_dropdown_at(0, 1, 1));
+    assert!(b.dv_check(0, 1, 1, "green").is_none());
+    assert!(b.dv_check(0, 1, 1, "Purple").is_some());
+    // a list from cells, the source moving with each cell
+    b.set_input(0, 0, 5, "x").unwrap();
+    b.set_input(0, 1, 5, "y").unwrap();
+    b.set_input(0, 2, 5, "7").unwrap();
+    b.dv_set(0, &[Rect::new(0, 2, 0, 2)], &spec("list", "between", "=$F$1:$F$3", "")).unwrap();
+    assert_eq!(b.dv_list(0, 0, 2), vec!["x", "y", "7"]);
+    assert!(b.dv_check(0, 0, 2, "7").is_none());
+    assert!(b.dv_check(0, 0, 2, "8").is_some());
+    // text length, dates, custom formulas
+    b.dv_set(0, &[Rect::new(0, 3, 0, 3)], &spec("textLength", "lessThanOrEqual", "3", "")).unwrap();
+    assert!(b.dv_check(0, 0, 3, "abc").is_none());
+    assert!(b.dv_check(0, 0, 3, "abcd").is_some());
+    b.dv_set(0, &[Rect::new(0, 4, 0, 4)], &spec("date", "greaterThan", "=DATE(2026,1,1)", "")).unwrap();
+    assert!(b.dv_check(0, 0, 4, "3/1/2026").is_none());
+    assert!(b.dv_check(0, 0, 4, "3/1/2025").is_some());
+    b.dv_set(0, &[Rect::new(1, 4, 1, 4)], &spec("date", "between", "1/1/2026", "12/31/2026")).unwrap();
+    assert_eq!(b.dv_at(0, 1, 4).unwrap().f1, "46023", "a typed date is kept as its serial number");
+    assert!(b.dv_check(0, 1, 4, "6/1/2026").is_none() && b.dv_check(0, 1, 4, "6/1/2027").is_some());
+    assert!(b.dv_set(0, &[Rect::new(1, 4, 1, 4)], &spec("whole", "greaterThan", "ten", "")).is_err());
+    b.dv_set(0, &[Rect::new(5, 0, 9, 0)], &spec("custom", "between", "=ISEVEN(A6)", "")).unwrap();
+    assert!(b.dv_check(0, 7, 0, "4").is_none(), "the formula moves with the cell and sees the new value");
+    assert!(b.dv_check(0, 7, 0, "5").is_some());
+    // saved and read again
+    let bytes = b.to_bytes().unwrap();
+    let mut b2 = Book::from_bytes(&bytes).unwrap();
+    let r = b2.dv_at(0, 1, 1).unwrap();
+    assert_eq!((r.kind.as_str(), r.prompt.as_str(), r.dropdown), ("list", "One of the list", true));
+    assert!(b2.dv_check(0, 2, 0, "11").is_some());
+    // Clear All on part of a range leaves the rest
+    b2.dv_clear(0, &[Rect::new(1, 0, 1, 0)]).unwrap();
+    assert!(b2.dv_at(0, 1, 0).is_none());
+    assert!(b2.dv_at(0, 0, 0).is_some() && b2.dv_at(0, 2, 0).is_some());
+    b2.undo();
+    assert!(b2.dv_at(0, 1, 0).is_some());
+    // replacing a rule over part of another
+    b2.dv_set(0, &[Rect::new(0, 0, 1, 0)], &spec("decimal", "greaterThan", "0", "")).unwrap();
+    assert_eq!(b2.dv_at(0, 0, 0).unwrap().kind, "decimal");
+    assert_eq!(b2.dv_at(0, 3, 0).unwrap().kind, "whole");
+    // rows inserted above move the rules
+    b2.insert_rows(0, 0, 2).unwrap();
+    assert_eq!(b2.dv_at(0, 3, 1).unwrap().kind, "list");
+    assert!(b2.dv_at(0, 0, 1).is_none());
+    // circle invalid data
+    b2.set_input(0, 5, 0, "50").unwrap();
+    assert_eq!(b2.dv_invalid(0, 100), vec![(5, 0)]);
+    // paste copies the rule along
+    b2.begin("Paste", 0);
+    b2.copy_validation(0, Rect::new(2, 1, 4, 1), 0, Rect::new(2, 8, 4, 8));
+    b2.commit();
+    assert_eq!(b2.dv_list(0, 3, 8), vec!["Red", "Green", "Blue"]);
+    // so does Paste (all, or Paste Special > Validation), not Paste Values
+    use crate::book_clip::{PasteOpts, What};
+    b2.paste_cells(0, Rect::new(3, 1, 3, 1), 0, Rect::new(20, 2, 20, 2), PasteOpts::default(), false).unwrap();
+    assert_eq!(b2.dv_at(0, 20, 2).unwrap().kind, "list");
+    let vals = PasteOpts { what: What::Values, ..PasteOpts::default() };
+    b2.paste_cells(0, Rect::new(3, 1, 3, 1), 0, Rect::new(21, 2, 21, 2), vals, false).unwrap();
+    assert!(b2.dv_at(0, 21, 2).is_none());
+    b2.set_input(0, 22, 2, "x").unwrap();
+    let only = PasteOpts { what: What::Validation, ..PasteOpts::default() };
+    b2.paste_cells(0, Rect::new(3, 1, 3, 1), 0, Rect::new(22, 2, 23, 2), only, false).unwrap();
+    assert_eq!(b2.dv_at(0, 23, 2).unwrap().kind, "list");
+    assert_eq!(b2.input(0, 22, 2), "x", "Paste Validation leaves the contents");
+    b2.undo();
+    assert!(b2.dv_at(0, 23, 2).is_none());
+    // the selection: one rule, rules that differ, cells without the rule
+    let sel = |b: &Book, r: Rect| b.dv_for_selection(0, (r.r1, r.c1), &[r]).1;
+    assert_eq!(sel(&b2, Rect::new(3, 1, 4, 1)), "");
+    assert_eq!(sel(&b2, Rect::new(3, 1, 3, 3)), "extend");
+    assert_eq!(sel(&b2, Rect::new(3, 0, 3, 1)), "erase");
+}
