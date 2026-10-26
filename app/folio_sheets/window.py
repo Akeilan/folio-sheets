@@ -27,9 +27,11 @@ IMPORT = (".xls", ".ods", ".xlsb", ".fods", ".sxc")
 
 
 class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
-    def __init__(self, app, path=None):
+    def __init__(self, app, path=None, share=None):
         Gtk.ApplicationWindow.__init__(self, application=app)
         self.app = app
+        self.side_partner = None        # View Side by Side
+        self.sync_scroll = False
         self.path = None
         self.untitled = None
         self.imported_from = None
@@ -108,11 +110,31 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.connect("configure-event", self._remember_geometry)
         self.show_all()
         self.backstage.hide()
-        if path:
+        if share is not None:
+            self._share_from(share)
+        elif path:
             self.load(path)
         else:
             self.new_book()
+        from . import windows_ui
+        windows_ui.watch(self)
         GLib.idle_add(self.grid.area.grab_focus)
+
+    def _share_from(self, other):
+        """New Window: the same workbook, seen from where the other window is."""
+        self.book = other.book
+        self.path, self.untitled, self.imported_from = other.path, other.untitled, other.imported_from
+        self.grid.set_book(self.book)
+        og = other.grid
+        self.grid.sheet = og.sheet
+        st, ost = self.grid.state(), og.state()
+        for k in ("top_row", "left_col", "zoom", "freeze_rows", "freeze_cols", "show_grid", "show_headers"):
+            setattr(st, k, getattr(ost, k))
+        st.sel.ranges = [tuple(r) for r in ost.sel.ranges]
+        st.sel.active = tuple(ost.sel.active)
+        self.tabs.rebuild()
+        self.sheet_changed()
+        self.update_title()
 
     # ------------------------------------------------------------ QAT
     # every command the Quick Access Toolbar can hold, in its menu's order
@@ -211,7 +233,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def _wrap(self, book):
         hb = HistoryBook(book)
-        hb.on_switch = self._book_switched
+        from . import windows_ui
+        hb.on_switch = lambda: windows_ui.book_switched(self)
         return hb
 
     def _book_switched(self):
@@ -262,10 +285,17 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def doc_name(self):
         return os.path.basename(self.path) if self.path else (self.untitled or "Book1")
 
-    def update_title(self):
+    def doc_title(self):
+        """The name in the title bar: Book1, or Book1:2 for a second window on it."""
+        from .windows_ui import view_number
         name = self.doc_name()
         if self.path:
             name = os.path.splitext(name)[0]
+        n = view_number(self) if self.book is not None else 0
+        return "%s:%d" % (name, n) if n else name
+
+    def update_title(self):
+        name = self.doc_title()
         self.title_label.set_text("%s - %s" % (name, APP_NAME))
         self.set_title("%s - %s" % (name, APP_NAME))
 
@@ -287,6 +317,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         st = self.grid.state()
         self.status.show_zoom(st.zoom * 100)
         self.sync_checks()
+        self.ribbon.update("split", "true" if getattr(st, "split", False) else "false")
         self.grid.refresh()
 
     def sync_checks(self):
@@ -574,7 +605,10 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.imported_from = None
         self.book.mark_saved()
         self.app.add_recent(self.path)
-        self.update_title()
+        from .windows_ui import views
+        for w in views(self):
+            w.path, w.imported_from = self.path, None
+            w.update_title()
         return True
 
     def save_csv(self, path):
@@ -603,7 +637,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             try:
                 self.book.set_view(i, {
                     "top_row": st.top_row, "left_col": st.left_col, "zoom": int(round(st.zoom * 100)),
-                    "freeze_rows": st.freeze_rows, "freeze_cols": st.freeze_cols,
+                    # a split isn't kept in the file as frozen panes
+                    "freeze_rows": 0 if getattr(st, "split", False) else st.freeze_rows,
+                    "freeze_cols": 0 if getattr(st, "split", False) else st.freeze_cols,
                     "show_grid": st.show_grid, "show_headers": st.show_headers,
                     "active": st.sel.active, "sel": st.sel.ranges, "selected": i == self.grid.sheet,
                     "view": getattr(st, "view_mode", "normal"),
@@ -617,12 +653,25 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def act_close(self):
         if self.confirm_close():
+            self._closing()
             self.destroy()
             self.app.window_closed(self)
 
+    def _closing(self):
+        from . import windows_ui
+        if self.side_partner is not None:
+            windows_ui.end_side_by_side(self)
+        others = [w for w in windows_ui.views(self) if w is not self]
+        if others:
+            self.store_view_state()
+            GLib.idle_add(lambda: ([w.update_title() for w in others if w in self.app.windows], False)[1])
+
     def confirm_close(self):
+        from .windows_ui import views
         if self.book is None or not self.book.modified:
             return True
+        if len(views(self)) > 1:
+            return True        # the workbook stays open in its other window
         ans = self.dialogs.confirm_save(self.doc_name())
         if ans == "save":
             return bool(self.act_save())
@@ -633,6 +682,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             self.grid.commit_edit()
         if not self.confirm_close():
             return True
+        self._closing()
         self.app.window_closed(self)
         return False
 
@@ -1085,6 +1135,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def _freeze(self, rows, cols):
         g = self.grid
         st = g.state()
+        st.split, st.pane_top, st.pane_left = False, 0, 0
+        self.ribbon.update("split", "false")
         st.freeze_rows, st.freeze_cols = rows, cols
         st.top_row = max(st.top_row, rows)
         st.left_col = max(st.left_col, cols)
@@ -1092,6 +1144,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def act_freeze_panes(self):
         st = self.grid.state()
+        if st.split:
+            # a split becomes frozen panes where its bars are
+            return self._freeze(st.freeze_rows, st.freeze_cols)
         if st.freeze_rows or st.freeze_cols:
             return self._freeze(0, 0)
         r, c = self.grid.sel.active
@@ -1110,17 +1165,72 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def act_freeze_first_column(self):
         self._freeze(0, 1)
 
+    def act_split(self):
+        """Split the window into panes at the active cell (in the middle when it is the
+        top-left cell); again to take the split away."""
+        g = self.grid
+        st = g.state()
+        if st.split:
+            st.split = False
+            st.freeze_rows = st.freeze_cols = st.pane_top = st.pane_left = 0
+            g.refresh()
+            self.ribbon.update("split", "false")
+            return
+        st.freeze_rows = st.freeze_cols = 0
+        g.area.queue_draw()
+        r, c = g.sel.active
+        first_r, last_r = g.visible_rows()
+        first_c, last_c = g.visible_cols()
+        top, left = st.top_row, st.left_col
+        if r <= first_r and c <= first_c:
+            r = first_r + max(1, (last_r - first_r) // 2)
+            c = first_c + max(1, (last_c - first_c) // 2)
+        st.split = True
+        st.pane_top, st.pane_left = top, left
+        st.freeze_rows = r if first_r < r <= last_r else 0
+        st.freeze_cols = c if first_c < c <= last_c else 0
+        if not st.freeze_rows:
+            st.pane_top = 0
+        if not st.freeze_cols:
+            st.pane_left = 0
+        st.top_row = max(top, st.freeze_rows)
+        st.left_col = max(left, st.freeze_cols)
+        if not st.freeze_rows and not st.freeze_cols:
+            st.split = False
+        g.refresh()
+        self.ribbon.update("split", "true" if st.split else "false")
+
     def act_new_window(self):
-        raise NotImplementedError
+        from . import windows_ui
+        return windows_ui.new_window(self)
+
+    def act_arrange_all(self):
+        from . import windows_ui
+        return windows_ui.arrange_dialog(self)
+
+    def act_side_by_side(self):
+        from . import windows_ui
+        return windows_ui.side_by_side(self)
+
+    def act_sync_scroll(self):
+        from . import windows_ui
+        windows_ui.toggle_sync(self)
+
+    def act_reset_window(self):
+        from . import windows_ui
+        windows_ui.reset_position(self)
+
+    def act_hide_window(self):
+        from . import windows_ui
+        return windows_ui.hide(self)
+
+    def act_unhide_window(self):
+        from . import windows_ui
+        return windows_ui.unhide(self)
 
     def window_list_menu(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.set_border_width(4)
-        for i, w in enumerate(self.app.windows, start=1):
-            b = Gtk.ModelButton(text="%d %s" % (i, w.doc_name()))
-            b.connect("clicked", lambda _b, w=w: w.present())
-            box.pack_start(b, False, False, 0)
-        return box
+        from . import windows_ui
+        return windows_ui.switch_menu(self)
 
     def act_switch_windows(self):
         pass

@@ -62,6 +62,9 @@ fn view_params(d: &Bound<'_, PyDict>) -> ViewParams {
     p.left_col = get(d, "left_col").unwrap_or(0);
     p.freeze_rows = get(d, "freeze_rows").unwrap_or(0);
     p.freeze_cols = get(d, "freeze_cols").unwrap_or(0);
+    p.pane_top = get(d, "pane_top").unwrap_or(0);
+    p.pane_left = get(d, "pane_left").unwrap_or(0);
+    p.split = get(d, "split").unwrap_or(false);
     p.show_grid = get(d, "show_grid").unwrap_or(true);
     p.show_headers = get(d, "show_headers").unwrap_or(true);
     if let Some(v) = get::<Vec<R4>>(d, "sel") {

@@ -156,14 +156,30 @@ impl Book {
                 cairo_restore(cr);
             }
         }
-        // the freeze lines
+        // the freeze lines, or a split's bars (across the headers too)
         if p.freeze_rows > 0 && g.row_spans.len() > 1 {
-            rgb(cr, 0x9A9A9A);
-            rect(cr, g.hw, g.row_spans[0].1 - 1.0, p.width - g.hw, 1.0);
+            if p.split {
+                rgb(cr, 0xD6D6D6);
+                rect(cr, 0.0, g.row_spans[0].1 - 2.0, p.width, 4.0);
+                rgb(cr, 0xA6A6A6);
+                rect(cr, 0.0, g.row_spans[0].1 - 2.0, p.width, 1.0);
+                rect(cr, 0.0, g.row_spans[0].1 + 1.0, p.width, 1.0);
+            } else {
+                rgb(cr, 0x9A9A9A);
+                rect(cr, g.hw, g.row_spans[0].1 - 1.0, p.width - g.hw, 1.0);
+            }
         }
         if p.freeze_cols > 0 && g.col_spans.len() > 1 {
-            rgb(cr, 0x9A9A9A);
-            rect(cr, g.col_spans[0].1 - 1.0, g.hh, 1.0, p.height - g.hh);
+            if p.split {
+                rgb(cr, 0xD6D6D6);
+                rect(cr, g.col_spans[0].1 - 2.0, 0.0, 4.0, p.height);
+                rgb(cr, 0xA6A6A6);
+                rect(cr, g.col_spans[0].1 - 2.0, 0.0, 1.0, p.height);
+                rect(cr, g.col_spans[0].1 + 1.0, 0.0, 1.0, p.height);
+            } else {
+                rgb(cr, 0x9A9A9A);
+                rect(cr, g.col_spans[0].1 - 1.0, g.hh, 1.0, p.height - g.hh);
+            }
         }
         if !p.print {
             self.paint_notes(s, cr, p, &g, &mut pen);
@@ -538,7 +554,11 @@ impl Book {
         for &(r, y, h) in rows {
             // cells on this row, including some to the left whose text may run into view
             let from = cmin.saturating_sub(64);
-            let to = (cmax + 64).min(MAX_COLS - 1);
+            let mut to = (cmax + 64).min(MAX_COLS - 1);
+            if p.freeze_cols > 0 && cmax < p.freeze_cols {
+                // the frozen (left) pane: columns of the scrolling pane belong there, not here
+                to = to.min(p.freeze_cols - 1);
+            }
             let mut items: Vec<(u32, Value, u32, bool)> = Vec::new();
             for ((_, c), cell) in sh.cells.range((r, from)..=(r, to)) {
                 let v = sh.value(r, *c);
