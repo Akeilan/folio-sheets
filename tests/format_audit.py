@@ -523,6 +523,42 @@ win.grid.state().top_row = 0
 pump(0.2)
 shot("formatted_top")
 
+# ---- the ribbon lights up for empty cells formatted through their column or row (SH-16)
+def _ribbon_ctl(w, key):
+    if getattr(w, "state_key", None) == key:
+        return w
+    if isinstance(w, Gtk.Container):
+        for ch in w.get_children():
+            x = _ribbon_ctl(ch, key)
+            if x is not None:
+                return x
+    return None
+
+
+bold_btn = _ribbon_ctl(win.ribbon, "bold")
+ital_btn = _ribbon_ctl(win.ribbon, "italic")
+g.select_range((0, 20, 1048575, 20), (0, 20))
+win.run("bold")
+g.select_range((30, 0, 30, 16383), (30, 0))
+win.run("italic")
+g.select_range((500, 20, 500, 20), (500, 20))
+pump(0.05)
+check("an empty cell in a bold column lights up Bold", bold_btn.get_style_context().has_class("checked"))
+g.select_range((30, 40, 30, 40), (30, 40))
+pump(0.05)
+check("an empty cell in an italic row lights up Italic", ital_btn.get_style_context().has_class("checked"))
+g.select_range((31, 40, 31, 40), (31, 40))
+pump(0.05)
+check("and the cells beside them don't",
+      not ital_btn.get_style_context().has_class("checked") and not bold_btn.get_style_context().has_class("checked"))
+import tempfile as _tf  # noqa: E402
+_p = _tf.mktemp(suffix=".xlsx")
+b.save(_p)
+from folio_sheets.core import Book as _Book  # noqa: E402
+_b2 = _Book.open(_p)
+check("column and row formatting reach empty cells after saving",
+      _b2.cell_style(S, 700, 20)["bold"] and _b2.cell_style(S, 30, 99)["italic"])
+
 print()
 print("dialogs:", SEEN)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))

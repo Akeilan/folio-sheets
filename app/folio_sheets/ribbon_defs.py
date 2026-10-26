@@ -358,7 +358,7 @@ def build_ribbon(win):
          B.small("Clear", "r-clear-sm", None, "E",
                  menu=[("Clear All", "clear-all"), ("Clear Formats", "clear-formats"),
                        ("Clear Contents", "clear-contents"), ("Clear Comments and Notes", "clear-comments"),
-                       ("Clear Hyperlinks", "clear-hyperlinks")])],
+                       ("Clear Hyperlinks", "clear-hyperlinks"), ("Remove Hyperlinks", "remove-hyperlinks")])],
         B.big("Sort &\nFilter", "r-sort-filter", None, "S",
               menu=[("Sort A to Z", "sort-asc", "r-sort-asc-sm"), ("Sort Z to A", "sort-desc", "r-sort-desc-sm"),
                     ("Custom Sort...", "sort-custom"), None, ("Filter", "filter", "r-filter-sm"),

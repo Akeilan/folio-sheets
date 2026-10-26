@@ -63,7 +63,7 @@ LABELS = {
     "fill-up": "Fill Up", "fill-left": "Fill Left", "fill-series": "Series", "fill-justify": "Justify",
     "flash-fill": "Flash Fill", "clear-all": "Clear All", "clear-formats": "Clear Formats",
     "clear-contents": "Clear Contents", "clear-comments": "Clear Comments and Notes",
-    "clear-hyperlinks": "Clear Hyperlinks", "sort-asc": "Sort A to Z", "sort-desc": "Sort Z to A",
+    "clear-hyperlinks": "Clear Hyperlinks", "remove-hyperlinks": "Remove Hyperlinks", "open-hyperlink": "Open Hyperlink", "sort-asc": "Sort A to Z", "sort-desc": "Sort Z to A",
     "sort-custom": "Custom Sort", "filter": "Filter", "filter-clear": "Clear Filter",
     "filter-reapply": "Reapply", "find": "Find", "replace": "Replace", "goto": "Go To",
     "goto-special": "Go To Special", "select-formulas": "Formulas", "select-comments": "Notes",

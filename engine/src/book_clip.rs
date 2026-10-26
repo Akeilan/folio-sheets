@@ -182,6 +182,7 @@ impl Book {
         if with_dv {
             self.begin("Paste", dst_s);
             self.copy_validation(src_s, src, dst_s, out);
+            self.copy_links(src_s, src, dst_s, out);
             self.commit();
         }
         if with_cf {

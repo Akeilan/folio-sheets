@@ -299,6 +299,9 @@ impl Book {
                 Piece::Raw(tag.clone(), adjust_piece(x, &sh, &how, &name))
             }
             other => other.clone(),
+        }).filter_map(|p| match p {
+            Piece::Raw(tag, x) if x.contains(GONE) => drop_gone(&x).map(|x| Piece::Raw(tag, x)),
+            other => Some(other),
         }).collect();
         let autofilter = sheet.autofilter.as_ref().and_then(|af| {
             let rect = sh.rect(&af.rect)?;
@@ -331,6 +334,38 @@ impl Book {
         self.commit();
         Ok(())
     }
+}
+
+/// Marks a range attribute whose cells were all deleted.
+const GONE: &str = "#GONE!";
+
+/// The piece without the elements whose ranges were deleted; None when nothing is left of it.
+fn drop_gone(xml: &str) -> Option<String> {
+    fn gone(e: &crate::xml::Element) -> bool {
+        e.attrs.iter().any(|(_, v)| v.contains(GONE))
+    }
+    fn prune(e: &mut crate::xml::Element) {
+        e.children.retain(|n| !matches!(n, crate::xml::Node::Elem(k) if gone(k)));
+        for n in e.children.iter_mut() {
+            if let crate::xml::Node::Elem(k) = n {
+                prune(k);
+            }
+        }
+    }
+    let (_, mut e) = crate::xml::parse(xml).ok()?;
+    if gone(&e) {
+        return None;
+    }
+    let before = e.elems().count();
+    prune(&mut e);
+    let n = e.elems().count();
+    if n == 0 && before > 0 {
+        return None;
+    }
+    if e.attr("count").is_some() {
+        e.set_attr("count", &n.to_string());
+    }
+    Some(e.to_string())
 }
 
 /// Manual page breaks after lines are inserted or deleted.
@@ -398,7 +433,10 @@ fn adjust_piece(xml: &str, sh: &Shift, how: &Adjust, name: &str) -> String {
                     None => kept.push(tok.to_string()),
                 }
             }
-            if kept.is_empty() {
+            if kept.is_empty() && val.split_whitespace().all(|t| parse_range(t).is_some()) && !val.trim().is_empty() {
+                // every range it named was deleted: the element goes (see drop_gone)
+                out.push_str(GONE);
+            } else if kept.is_empty() {
                 out.push_str(val);
             } else {
                 out.push_str(&kept.join(" "));

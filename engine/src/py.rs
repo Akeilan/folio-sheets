@@ -1390,6 +1390,40 @@ impl PyBook {
         };
         Ok((d, mixed.to_string(), same.iter().map(|r| (r.r1, r.c1, r.r2, r.c2)).collect()))
     }
+    /// The link on a cell: {target, location, display, tooltip, range} or None.
+    fn link_at<'py>(&self, py: Python<'py>, s: usize, r: u32, c: u32) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        match self.b.link_at(s, r, c) {
+            Some(l) => {
+                let d = PyDict::new_bound(py);
+                d.set_item("target", &l.target)?;
+                d.set_item("location", &l.location)?;
+                d.set_item("display", &l.display)?;
+                d.set_item("tooltip", &l.tooltip)?;
+                d.set_item("range", (l.rect.r1, l.rect.c1, l.rect.r2, l.rect.c2))?;
+                Ok(Some(d))
+            }
+            None => Ok(None),
+        }
+    }
+    fn formula_link(&self, s: usize, r: u32, c: u32) -> PyResult<Option<String>> {
+        self.sheet(s)?;
+        Ok(self.b.formula_link(s, r, c))
+    }
+    fn link_count(&self, s: usize) -> PyResult<usize> {
+        self.sheet(s)?;
+        Ok(self.b.links(s).len())
+    }
+    #[pyo3(signature = (s, rg, target, location="", display="", tooltip=""))]
+    fn set_link(&mut self, s: usize, rg: R4, target: &str, location: &str, display: &str, tooltip: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let l = crate::links::Link { rect: rect(rg), target: target.to_string(), location: location.to_string(), display: display.to_string(), tooltip: tooltip.to_string() };
+        self.b.set_link(s, rect(rg), &l).map_err(PyValueError::new_err)
+    }
+    fn clear_links(&mut self, s: usize, ranges: Vec<R4>) -> PyResult<usize> {
+        self.sheet(s)?;
+        Ok(self.b.clear_links(s, &rects(ranges)))
+    }
     fn dv_invalid(&self, s: usize, limit: usize) -> PyResult<Vec<(u32, u32)>> {
         self.sheet(s)?;
         Ok(self.b.dv_invalid(s, limit))

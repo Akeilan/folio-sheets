@@ -262,6 +262,7 @@ impl Book {
                             load_drawing(&mut sh, &parts, &b.styles.theme);
                             load_tables(&mut sh, &parts);
                             load_comments(&mut sh, &parts, &persons);
+                            load_links(&mut sh, &parts);
                         }
                     }
                     None => sh.error = Some("the sheet's part is missing".into()),
@@ -336,6 +337,21 @@ fn read_rels(part: &str, parts: &[(String, Vec<u8>)]) -> Vec<(String, String, St
         }
     }
     out
+}
+
+/// Hyperlinks to outside addresses carry the address while the book is open.
+fn load_links(sh: &mut Sheet, parts: &[(String, Vec<u8>)]) {
+    if !sh.pieces.iter().any(|p| matches!(p, Piece::Raw(t, _) if t == "hyperlinks")) {
+        return;
+    }
+    let rels = read_rels(&sh.part, parts);
+    for p in sh.pieces.iter_mut() {
+        if let Piece::Raw(t, x) = p {
+            if t == "hyperlinks" {
+                *x = crate::links::resolve_on_load(x, &rels);
+            }
+        }
+    }
 }
 
 /// Notes and threaded comments of a sheet.
@@ -1124,6 +1140,7 @@ impl Book {
         let mut drawing_rids: Vec<Option<String>> = vec![None; self.sheets.len()];
         let mut table_rids: Vec<Vec<String>> = vec![vec![]; self.sheets.len()];
         let mut legacy_rids: Vec<Option<Option<String>>> = vec![None; self.sheets.len()];
+        let mut link_rids: Vec<Vec<String>> = vec![vec![]; self.sheets.len()];
         for (i, sh) in self.sheets.iter().enumerate() {
             if sh.raw_part.is_some() {
                 continue;
@@ -1134,7 +1151,9 @@ impl Book {
                 Some(f) => f.notes != sh.notes || f.thread_map != sh.threads,
                 None => !sh.notes.is_empty() || !sh.threads.is_empty(),
             };
-            if !has_d && !has_t && !has_c {
+            let had_links = self.file.parts.iter().any(|(n, d)| *n == rels_name(&sheet_parts[i].0) && String::from_utf8_lossy(d).contains("/hyperlink\""));
+            let has_l = crate::links::has_targets(sh) || had_links;
+            if !has_d && !has_t && !has_c && !has_l {
                 continue;
             }
             let (part, _) = &sheet_parts[i];
@@ -1150,6 +1169,31 @@ impl Book {
             }
             if has_c {
                 legacy_rids[i] = Some(self.write_comment_parts(i, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut srels));
+            }
+            if has_l {
+                // the outside links get their relationships anew
+                srels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Type") == Some(crate::links::REL_HYPERLINK)));
+                let mut used: Vec<String> = srels.elems().filter_map(|e| e.attr("Id").map(|s| s.to_string())).collect();
+                for p in &sh.pieces {
+                    if let Piece::Raw(t, x) = p {
+                        if t == "hyperlinks" {
+                            if let Ok((_, e)) = xml::parse(x) {
+                                for h in e.elems() {
+                                    if let Some(target) = h.attr_exact(crate::links::TARGET) {
+                                        let mut k = used.len() + 1;
+                                        while used.contains(&format!("rId{}", k)) {
+                                            k += 1;
+                                        }
+                                        let id = format!("rId{}", k);
+                                        used.push(id.clone());
+                                        srels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", crate::links::REL_HYPERLINK), ("Target", target), ("TargetMode", "External")]));
+                                        link_rids[i].push(id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if srels.to_string() != before {
                 out.push((srels_name, xml::document(&srels_pro, &srels).into_bytes()));
@@ -1172,7 +1216,7 @@ impl Book {
                 out.push((part.clone(), raw.clone()));
                 continue;
             }
-            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref(), &table_rids[i], legacy_rids[i].as_ref());
+            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref(), &table_rids[i], legacy_rids[i].as_ref(), &link_rids[i]);
             out.push((part.clone(), x.into_bytes()));
         }
         // shared strings
@@ -1648,7 +1692,7 @@ impl Book {
         xml::document(&pro, &wb)
     }
 
-    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>, table_rids: &[String], legacy: Option<&Option<String>>) -> String {
+    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>, table_rids: &[String], legacy: Option<&Option<String>>, link_rids: &[String]) -> String {
         let sh = &self.sheets[i];
         let mut out = String::with_capacity(4096 + sh.cells.len() * 40);
         if sh.root_open.is_empty() {
@@ -1702,8 +1746,12 @@ impl Book {
             keyed.push((r, k, p));
         }
         keyed.sort_by_key(|(r, k, _)| (*r, *k));
+        let mut link_ids = link_rids.iter();
         for (_, _, p) in keyed {
             match p {
+                Piece::Raw(t, x) if t == "hyperlinks" && x.contains(crate::links::TARGET) => {
+                    out.push_str(&crate::links::write_out(&x, |_| link_ids.next().cloned().unwrap_or_default()));
+                }
                 Piece::Raw(_, x) => out.push_str(&x),
                 Piece::Known(t) => match t.as_str() {
                     "sheetPr" => self.write_sheetpr(sh, &pfx, &mut out),
