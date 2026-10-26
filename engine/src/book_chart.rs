@@ -266,6 +266,9 @@ impl Book {
             part: None,
             picture: Some(Rc::new(pic)),
             pic_part: None,
+            ink: None,
+            ink_part: None,
+            raw: None,
         };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
@@ -274,6 +277,64 @@ impl Book {
         self.record(Delta::Objects(s, objs));
         self.commit();
         Ok(i)
+    }
+
+    /// Ink drawn on the sheet (the Draw tab): strokes in sheet pixels (100 %), as one object
+    /// that moves with the cells. Returns its index.
+    pub fn add_ink(&mut self, s: usize, strokes: Vec<crate::ink::Stroke>) -> Result<usize, String> {
+        if s >= self.sheets.len() || self.sheets[s].kind != "work" {
+            return Err("Ink can be drawn on worksheets only.".into());
+        }
+        let (x, y, w, h, ink) = crate::ink::Ink::from_sheet(strokes).ok_or("There is nothing to draw.")?;
+        let (id, name) = self.next_object_name(s, "Ink");
+        let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: Some("oneCell".into()) };
+        let anchor = self.anchor_at(s, &like, x, y, w, h);
+        let emu = crate::drawing::EMU;
+        let obj = Obj {
+            anchor,
+            body: crate::drawing::ink_body(id, &name, (x * emu).round() as i64, (y * emu).round() as i64, (w * emu).round() as i64, (h * emu).round() as i64),
+            chart: None,
+            name,
+            part: None,
+            picture: None,
+            pic_part: None,
+            ink: Some(Rc::new(ink)),
+            ink_part: None,
+            raw: None,
+        };
+        let mut objs = self.sheets[s].objects.clone();
+        objs.push(obj);
+        let i = objs.len() - 1;
+        self.begin("Ink", s);
+        self.record(Delta::Objects(s, objs));
+        self.commit();
+        Ok(i)
+    }
+
+    /// An ink object's strokes in sheet pixels (100 %): (points, colour, width, kind).
+    pub fn ink_strokes(&self, s: usize, i: usize) -> Option<Vec<crate::ink::Stroke>> {
+        let o = self.sheets.get(s)?.objects.get(i)?;
+        let ink = o.ink.as_ref()?;
+        let (x, y, w, h) = self.obj_rect(s, o);
+        let (sx, sy) = (w / ink.w.max(1e-9), h / ink.h.max(1e-9));
+        Some(ink.strokes.iter().map(|st| crate::ink::Stroke {
+            pts: st.pts.iter().map(|&(px, py)| (x + px * sx, y + py * sy)).collect(),
+            ..st.clone()
+        }).collect())
+    }
+
+    /// The ink objects a point (sheet pixels) is on or within `radius` of, topmost first.
+    pub fn ink_at(&self, s: usize, x: f64, y: f64, radius: f64) -> Vec<usize> {
+        let mut out = Vec::new();
+        let n = self.sheets.get(s).map(|sh| sh.objects.len()).unwrap_or(0);
+        for i in (0..n).rev() {
+            if let Some(st) = self.ink_strokes(s, i) {
+                if st.iter().any(|k| crate::ink::distance(k, x, y) <= radius + k.width / 2.0) {
+                    out.push(i);
+                }
+            }
+        }
+        out
     }
 
     /// A picture object's file bytes and type ("png", "jpeg", ...).
@@ -290,7 +351,7 @@ impl Book {
         let (id, name) = self.next_object_name(s, "Chart");
         let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: None };
         let anchor = self.anchor_at(s, &like, x, y, w, h);
-        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None };
+        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
         let i = objs.len() - 1;

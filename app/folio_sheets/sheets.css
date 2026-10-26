@@ -52,3 +52,4 @@ button.folio-fnitem { padding: 3px 12px; min-height: 0; }
 .folio-dvmsg label { color: #262626; font-size: 9pt; }
 .folio-dvlist row { min-height: 20px; padding: 0; }
 .folio-dvlist row label { font-size: 9pt; }
+.folio-msgbar button.flat { border: none; background: transparent; box-shadow: none; padding: 0 6px; }

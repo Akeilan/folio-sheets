@@ -381,6 +381,41 @@ impl Book {
                     continue;
                 }
             }
+            if let Some(ink) = &o.ink {
+                let (sx, sy) = (w / ink.w.max(1e-9), h / ink.h.max(1e-9));
+                cairo_save(cr);
+                for st in &ink.strokes {
+                    let lw = (st.width * p.zoom).max(0.5);
+                    let c = st.color;
+                    let (r, g2, b) = (((c >> 16) & 0xFF) as f64 / 255.0, ((c >> 8) & 0xFF) as f64 / 255.0, (c & 0xFF) as f64 / 255.0);
+                    // the highlighter darkens what is under it, so text stays readable
+                    cairo_set_operator(cr, if st.kind == crate::ink::HIGHLIGHTER { 14 } else { 2 });
+                    let alpha = match st.kind {
+                        crate::ink::HIGHLIGHTER => 1.0,
+                        crate::ink::PENCIL => 0.85,
+                        _ => 1.0,
+                    };
+                    cairo_set_source_rgba(cr, r, g2, b, alpha);
+                    cairo_set_line_width(cr, lw);
+                    cairo_set_line_cap(cr, if st.kind == crate::ink::HIGHLIGHTER { 2 } else { 1 });
+                    cairo_set_line_join(cr, 1);
+                    for (k, &(px, py)) in st.pts.iter().enumerate() {
+                        let (qx, qy) = (x + px * sx, y + py * sy);
+                        if k == 0 {
+                            cairo_move_to(cr, qx, qy);
+                        } else {
+                            cairo_line_to(cr, qx, qy);
+                        }
+                    }
+                    if st.pts.len() == 1 {
+                        cairo_rel_line_to(cr, 0.01, 0.0);
+                    }
+                    cairo_stroke(cr);
+                }
+                cairo_set_operator(cr, 2);
+                cairo_restore(cr);
+                continue;
+            }
             match &o.chart {
                 Some(ch) => self.paint_chart(ch, cr, x, y, w, h, p.zoom, pen),
                 None => {

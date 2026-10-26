@@ -71,6 +71,7 @@ extern "C" {
     pub fn cairo_set_antialias(cr: *mut cairo_t, a: c_int);
     pub fn cairo_set_fill_rule(cr: *mut cairo_t, r: c_int);
     pub fn cairo_set_line_cap(cr: *mut cairo_t, c: c_int);
+    pub fn cairo_set_operator(cr: *mut cairo_t, op: c_int);
     pub fn cairo_translate(cr: *mut cairo_t, x: c_double, y: c_double);
     pub fn cairo_rotate(cr: *mut cairo_t, a: c_double);
     pub fn cairo_scale(cr: *mut cairo_t, x: c_double, y: c_double);

@@ -1181,6 +1181,10 @@ impl PyBook {
     fn define_name(&mut self, name: &str, refers_to: &str, scope: Option<usize>, comment: Option<&str>, old: Option<(String, Option<usize>)>) -> PyResult<()> {
         self.b.define_name(name, refers_to, scope, comment, old).map_err(verr)
     }
+    #[pyo3(signature = (name, hidden, scope=None))]
+    fn set_name_hidden(&mut self, name: &str, hidden: bool, scope: Option<usize>) -> PyResult<()> {
+        self.b.set_name_hidden(name, scope, hidden).map_err(verr)
+    }
     #[pyo3(signature = (name, scope=None))]
     fn delete_name(&mut self, name: &str, scope: Option<usize>) -> PyResult<()> {
         self.b.delete_name(name, scope).map_err(verr)
@@ -1652,7 +1656,33 @@ impl PyBook {
         self.sheet(s)?;
         Ok(self.b.picture_bytes(s, i).map(|(b, e)| (pyo3::types::PyBytes::new_bound(py, b), e.to_string())))
     }
-    fn insert_chart(&mut self, s: usize, rg: R4, kind: &str, x: f64, y: f64) -> PyResult<usize> {
+    /// Ink from the Draw tab: strokes [(points, colour, width px, kind 0 pen 1 pencil 2 highlighter)]
+    /// in sheet pixels at 100 %. Returns the new object's index.
+    fn add_ink(&mut self, s: usize, strokes: Vec<(Vec<(f64, f64)>, u32, f64, u8)>) -> PyResult<usize> {
+        self.sheet(s)?;
+        let st = strokes.into_iter().map(|(pts, color, width, kind)| crate::ink::Stroke { pts, color, width, kind }).collect();
+        self.b.add_ink(s, st).map_err(verr)
+    }
+    fn ink_strokes(&self, s: usize, i: usize) -> PyResult<Option<Vec<(Vec<(f64, f64)>, u32, f64, u8)>>> {
+        self.sheet(s)?;
+        Ok(self.b.ink_strokes(s, i).map(|v| v.into_iter().map(|k| (k.pts, k.color, k.width, k.kind)).collect()))
+    }
+    fn ink_at(&self, s: usize, x: f64, y: f64, radius: f64) -> PyResult<Vec<usize>> {
+        self.sheet(s)?;
+        Ok(self.b.ink_at(s, x, y, radius))
+    }
+    /// True when the workbook holds a VBA project (kept, never run).
+    fn has_macros(&self) -> bool {
+        self.b.has_macros()
+    }
+    /// The macros a user could run: (shown name, module, standard module).
+    fn macros(&self) -> Vec<(String, String, bool)> {
+        self.b.macros()
+    }
+    fn drop_macros(&mut self) {
+        self.b.drop_macros()
+    }
+        fn insert_chart(&mut self, s: usize, rg: R4, kind: &str, x: f64, y: f64) -> PyResult<usize> {
         self.sheet(s)?;
         self.b.insert_chart(s, rect(rg), kind, x, y).map_err(verr)
     }

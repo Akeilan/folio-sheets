@@ -1360,6 +1360,21 @@ impl Book {
     }
 
     // ------------------------------------------------------------------ names
+    /// Hides or shows a defined name (hidden names, like the ones queries keep their settings in,
+    /// don't appear in the Name Manager).
+    pub fn set_name_hidden(&mut self, name: &str, scope: Option<usize>, hidden: bool) -> Result<(), String> {
+        let mut names = self.names.clone();
+        let n = names.iter_mut().find(|n| n.name.eq_ignore_ascii_case(name) && n.scope == scope).ok_or("There is no such name.")?;
+        if n.hidden == hidden {
+            return Ok(());
+        }
+        n.hidden = hidden;
+        self.begin("Define Name", scope.unwrap_or(self.active));
+        self.record(Delta::Names(names));
+        self.commit();
+        Ok(())
+    }
+
     pub fn define_name(&mut self, name: &str, refers_to: &str, scope: Option<usize>, comment: Option<&str>,
                        old: Option<(String, Option<usize>)>) -> Result<(), String> {
         if !valid_name(name) {
