@@ -209,7 +209,16 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 book = Book.open(path)
                 self.imported_from = None
                 self.path = os.path.abspath(path)
-            elif ext in (".csv", ".txt", ".tsv"):
+            elif ext in (".txt", ".prn"):
+                # a text file opens through the Text Import Wizard (CSV opens directly)
+                book = self._import_text_wizard(path)
+                if book is None:
+                    if self.book is None:
+                        self.new_book()
+                    return
+                self.imported_from = os.path.abspath(path)
+                self.path = None
+            elif ext in (".csv", ".tsv"):
                 book = self._import_text(path)
                 self.imported_from = os.path.abspath(path)
                 self.path = None
@@ -262,6 +271,24 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 for c, v in enumerate(row):
                     if v != "" and r < MAX_ROWS and c < MAX_COLS:
                         book.set_input(0, r, c, v if not v.startswith("=") else "'" + v)
+        book.mark_saved()
+        return book
+
+    def _import_text_wizard(self, path):
+        from . import text_ui
+        res = text_ui.import_wizard(self, path)
+        if res is None:
+            return None
+        opts, lines = res
+        book = Book.open(self.app.blank_template())
+        cells = opts.cells(lines)
+        text_cols = {j for row in cells for j, (_t, f) in enumerate(row) if f == "text"}
+        for j in text_cols:
+            book.set_number_format(0, [(0, j, max(len(cells), 1) - 1, j)], "@")
+        for i, row in enumerate(cells[:MAX_ROWS]):
+            for j, (t, _f) in enumerate(row[:MAX_COLS]):
+                if t != "":
+                    book.set_input(0, i, j, t)
         book.mark_saved()
         return book
 
@@ -2017,6 +2044,25 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def act_filter_reapply(self):
         from . import data_ui
         data_ui.reapply_filter(self)
+
+    def act_text_to_columns(self):
+        from . import text_ui
+        text_ui.text_to_columns(self)
+
+    def act_from_text_csv(self):
+        d = Gtk.FileChooserNative.new("Import Text File", self, Gtk.FileChooserAction.OPEN, "Import", "Cancel")
+        f = Gtk.FileFilter()
+        f.set_name("Text Files (*.prn; *.txt; *.csv; *.tsv)")
+        for p in ("*.prn", "*.txt", "*.csv", "*.tsv", "*.PRN", "*.TXT", "*.CSV", "*.TSV"):
+            f.add_pattern(p)
+        d.add_filter(f)
+        r = d.run()
+        path = d.get_filename()
+        d.destroy()
+        if r != Gtk.ResponseType.ACCEPT or not path:
+            return
+        from . import text_ui
+        text_ui.import_into(self, path)
 
     def act_remove_duplicates(self):
         from . import data_ui
