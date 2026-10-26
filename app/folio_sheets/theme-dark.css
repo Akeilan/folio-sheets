@@ -1,0 +1,71 @@
+/* Folio Sheets — dark mode, used when the desktop is set to dark (S-08). Excel-like: the chrome
+   goes dark, the cells keep their own colours. Loaded after theme.css and sheets.css. */
+@define-color ribbon_bg #2b2b2b;
+@define-color ribbon_fg #f0f0f0;
+@define-color ribbon_line #404040;
+@define-color caption_fg #b0b0b0;
+@define-color hover_bg #3d3d3d;
+@define-color press_bg #4a4a4a;
+@define-color checked_bg #4f4220;
+@define-color canvas_bg #1f1f1f;
+@define-color status_bg #2b2b2b;
+@define-color status_fg #d0d0d0;
+@define-color backstage_bg #1f1f1f;
+
+.folio-tab.active { color: #e8c35a; border-bottom-color: #d1a32a; }
+.folio-tab.contextual { color: #f0b060; }
+.folio-btn:checked, .folio-btn.checked { border-color: #8a7330; }
+.folio-btn label, .folio-caption { color: @ribbon_fg; }
+.folio-caption { color: @caption_fg; }
+.folio-combo entry, .folio-gallery, .folio-style { background: #333333; color: #f0f0f0; }
+.folio-style:hover { background: #3d3d3d; border-color: #8a7330; }
+.folio-style.current { background: #463c22; }
+.folio-keytip { background: #f0f0f0; color: #1f1f1f; border-color: #ffffff; }
+
+.folio-bs-body { background: #1f1f1f; }
+.folio-bs-title, .folio-bs-cardtitle, .folio-backstage label { color: #f0f0f0; }
+.folio-bs-tile:hover, .folio-bs-list row:hover, .folio-bs-place:hover { background: #333333; border-color: #555555; }
+.folio-bs-card button, .folio-bs-printbtn { background: #2b2b2b; border-color: #555555; color: #f0f0f0; }
+.folio-bs-card button:hover, .folio-bs-printbtn:hover { background: #3a3a3a; border-color: #8a7330; }
+.folio-bs-propentry:hover, .folio-bs-propentry:focus { background: #2b2b2b; border-color: #555555; }
+.folio-bs-preview { background: #262626; border-left-color: #404040; }
+.folio-backstage link, .folio-backstage button.link { color: #e8c35a; }
+
+.folio-pane-slot, .folio-pane, .folio-pane treeview, .folio-pane list, .folio-pane list row { background: #252525; color: #f0f0f0; }
+.folio-pane label, .folio-pane-title { color: #f0f0f0; }
+.folio-pane treeview:selected { background: #4f4220; color: #ffffff; }
+.folio-pane list row:hover { background: #333333; }
+.folio-comment-card { background: #2e2a22; }
+.folio-navtabs button:checked { color: #e8c35a; border-bottom-color: #d1a32a; }
+
+.folio-dialog, .folio-dialog notebook header, .folio-dialog notebook stack { background: #2b2b2b; }
+.folio-dialog notebook header { border-bottom-color: #404040; }
+.folio-dialog treeview { background: #222222; color: #f0f0f0; }
+.folio-dialog treeview:selected { background: #4f4220; color: #ffffff; }
+.folio-charmap, .folio-symbol, .folio-symcell { background: #2b2b2b; color: #f0f0f0; border-color: #404040; }
+.folio-symbol:hover, .folio-symcell:hover, .folio-eq-item:hover { background: #3a3a3a; border-color: #8a7330; }
+.folio-gallery-head { background: #333333; color: #d0d0d0; }
+.folio-gridcell { background: #2b2b2b; border-color: #555555; }
+.folio-eqbar { background: #262626; }
+.folio-msgbar { background: #4a4024; border-bottom-color: #6a5a2a; }
+.folio-msgbar label { color: #f0f0f0; }
+.folio-msgbar button { background: #2b2b2b; border-color: #555555; color: #f0f0f0; }
+
+/* formula bar, sheet tabs, pop-ups */
+.folio-formulabar { background: #262626; border-bottom-color: #404040; border-top-color: #333333; }
+.folio-namebox entry, .folio-namebox button { background: #1f1f1f; color: #f0f0f0; border-color: #4a4a4a; }
+.folio-fbtn { color: #d0d0d0; }
+.folio-fbtn:disabled { color: #666666; }
+textview.folio-formula, textview.folio-formula text { background: #1f1f1f; color: #f0f0f0; }
+.folio-formulabar scrolledwindow { border-color: #4a4a4a; }
+.folio-sheetbar { background: #2b2b2b; border-top-color: #404040; }
+.folio-tabnav, .folio-tabadd { color: #d0d0d0; }
+button.folio-sheettab { color: #e0e0e0; border-right-color: #404040; }
+button.folio-sheettab:hover { background: #3a3a3a; }
+button.folio-sheettab.active { background: #1f1f1f; color: #e8c35a; border-bottom-color: #d1a32a; }
+.folio-popup { background: #2b2b2b; }
+.folio-popup frame > border { border-color: #555555; }
+popover, popover.background { background-color: #2b2b2b; color: #f0f0f0; }
+popover label { color: #f0f0f0; }
+menu, .menu, .context-menu { background-color: #2b2b2b; color: #f0f0f0; }
+menu menuitem:hover { background: #4f4220; }

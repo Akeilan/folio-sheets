@@ -1,6 +1,8 @@
 """Icons: Folio's own SVGs (folio_sheets/icons); LibreOffice's open-licensed
 Colibre theme (MPL 2.0 / CC BY-SA 4.0), if installed, is only a fallback."""
 import os
+import re
+import weakref
 import zipfile
 
 from gi.repository import GdkPixbuf, Gtk
@@ -52,10 +54,47 @@ def _resolve(name):
 _LOG = os.environ.get("FOLIO_ICON_LOG")
 
 
+# Dark mode: the icons' ink and bodies are recoloured so they read on the dark ribbon: greys are
+# turned round (dark ink becomes light, white bodies dark grey); the gold accent is lightened.
+ACCENT_DARK = {"f3e5b8": "5c4b1f", "7a5a00": "e0b84a", "a67c00": "d1a32a"}
+_HEX = re.compile(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-fA-F])")
+
+
+def _dark_hex(m):
+    h = m.group(1).lower()
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if h in ACCENT_DARK:
+        return "#" + ACCENT_DARK[h]
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    if max(r, g, b) - min(r, g, b) <= 6:          # a neutral grey: light and dark swap
+        v = max(0, min(255, round(263.6 - 0.806 * (r + g + b) / 3)))
+        return "#%02x%02x%02x" % (v, v, v)
+    return m.group(0)
+
+
+def _dark():
+    from . import appearance
+    return appearance.is_dark()
+
+
+def dark_svg(svg):
+    return _HEX.sub(_dark_hex, svg)
+
+
+def _load_svg(text, size):
+    loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+    loader.set_size(size, size)
+    loader.write(text.encode())
+    loader.close()
+    return loader.get_pixbuf()
+
+
 def pixbuf(name, size):
     """name: a command ('bold', '.uno:Bold') or a path inside the theme
     ('cmd/lc_bold'); size 16 or 32 (scaled to fit)."""
-    key = (name, size)
+    dark = _dark()
+    key = (name, size, dark)
     if _LOG:
         with open(_LOG, "a") as f:
             f.write("%s %d\n" % (name, size))
@@ -68,7 +107,11 @@ def pixbuf(name, size):
     candidates = []
     if os.path.exists(own):
         try:
-            pb = GdkPixbuf.Pixbuf.new_from_file_at_size(own, size, size)
+            if dark:
+                with open(own) as f:
+                    pb = _load_svg(dark_svg(f.read()), size)
+            else:
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_size(own, size, size)
         except Exception:
             pb = None
     if pb is None and _zip is not None:
@@ -124,6 +167,8 @@ def swatch_pixbuf(name, size, color):
     except OSError:
         return pixbuf(name, size)
     hexc = "#%06x" % (color & 0xFFFFFF)
+    if _dark():
+        svg = dark_svg(svg)
     svg2, n = re.subn(r'(<rect x="1" y="13"[^>]*fill=")#[0-9a-fA-F]{6}', lambda m: m.group(1) + hexc, svg)
     if not n:
         return pixbuf(name, size)
@@ -135,13 +180,31 @@ def swatch_pixbuf(name, size, color):
     return loader.get_pixbuf()
 
 
+_images = weakref.WeakSet()
+
+
 def image(name, size):
     pb = pixbuf(name, size)
     if pb is None:
         img = Gtk.Image.new_from_icon_name("image-missing", Gtk.IconSize.MENU)
         img.set_pixel_size(size)
         return img
-    return Gtk.Image.new_from_pixbuf(pb)
+    img = Gtk.Image.new_from_pixbuf(pb)
+    img._folio_icon = (name, size)
+    _images.add(img)
+    return img
+
+
+def restyle():
+    """After switching light/dark: every icon made by image() is drawn again in the new colours."""
+    for img in list(_images):
+        try:
+            name, size = img._folio_icon
+            pb = pixbuf(name, size)
+            if pb is not None:
+                img.set_from_pixbuf(pb)
+        except Exception:
+            pass
 
 
 def white_image(name, size):

@@ -11,6 +11,11 @@ from .selection import Selection, contains
 WHEEL_ROWS = 3
 
 
+def _dark():
+    from . import appearance
+    return appearance.is_dark()
+
+
 class SheetState:
     """What the window remembers per sheet while the workbook is open."""
     def __init__(self, info):
@@ -196,7 +201,7 @@ class GridView(Gtk.Box):
             "freeze_rows": st.freeze_rows, "freeze_cols": st.freeze_cols,
             "pane_top": st.pane_top if st.split else 0, "pane_left": st.pane_left if st.split else 0,
             "split": st.split,
-            "show_grid": st.show_grid, "show_headers": st.show_headers,
+            "show_grid": st.show_grid, "show_headers": st.show_headers, "dark": _dark(),
             "sel": st.sel.ranges, "active": st.sel.active,
             "editing": self.editor.cell if self.editing() and self.edit_sheet == self.sheet else None,
             "copy": self.copy_range, "ants_phase": self.ants,
