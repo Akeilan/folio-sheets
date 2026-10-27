@@ -323,6 +323,8 @@ fn color_opt(st: &Styles, c: &Color) -> Option<u32> {
     match c {
         Color::Auto => None,
         Color::Indexed(64) | Color::Indexed(65) => None,
+        // theme colours stay theme references (they follow the theme)
+        Color::Theme(i, t) => Some(crate::styles::theme_ref(*i, *t)),
         c => Some(st.rgb(c, 0)),
     }
 }
@@ -339,7 +341,7 @@ pub fn spec(st: &Styles, xi: u32) -> Spec {
         }
     }
     Spec {
-        font_name: if f.name.is_empty() { st.font_name(f) } else { f.name.clone() },
+        font_name: st.font_name(f),
         size: f.size,
         bold: f.bold,
         italic: f.italic,

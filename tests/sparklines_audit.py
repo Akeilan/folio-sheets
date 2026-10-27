@@ -66,8 +66,9 @@ def colored_in(img, r, c, pred):
     return n
 
 
-blue = lambda r, gg, bb: bb > 100 and r < 110 and bb - r > 40  # noqa: E731
-red = lambda r, gg, bb: r > 170 and gg < 80 and bb < 80  # noqa: E731
+# the default colours, on the theme: accent 1 darker 50% (dark blue), accent 2 for negative points (orange)
+blue = lambda r, gg, bb: bb > 80 and bb - r > 30 and r < 110  # noqa: E731
+red = lambda r, gg, bb: r > 180 and gg < 170 and bb < 110  # noqa: E731
 
 rows = [[3, 5, 2, 8, 6], [-2, 4, -1, 3, 5], [1, 1, 1, 1, 1], [7, 2, 9, 4, 10]]
 for r, vals in enumerate(rows):
@@ -146,7 +147,7 @@ check("and they're drawn as columns", colored_in(img, 0, 5, blue) > 20, colored_
 win.run("spark-show:negative:1")
 check("Show › Negative Points", b.sparklines(S)[0]["negative"] and win.spark_checks["negative"].get_active())
 img = grab()
-check("negative columns are drawn red", colored_in(img, 1, 5, red) > 4, colored_in(img, 1, 5, red))
+check("negative columns are drawn in the negative colour", colored_in(img, 1, 5, red) > 4, colored_in(img, 1, 5, red))
 win.spark_checks["high"].set_active(True)
 pump()
 check("ticking High Point in the ribbon shows it", b.sparklines(S)[0]["high"])
@@ -159,7 +160,7 @@ check("Marker Color › Low Point sets the colour and shows the low point",
       b.sparklines(S)[0]["low_color"] == 0x7030A0 and b.sparklines(S)[0]["low"])
 win.run("spark-type:winloss")
 img = grab()
-check("Win/Loss: wins up, losses down in red", b.sparklines(S)[0]["kind"] == "winloss"
+check("Win/Loss: wins up, losses down in the negative colour", b.sparklines(S)[0]["kind"] == "winloss"
       and colored_in(img, 1, 5, red) > 4, colored_in(img, 1, 5, red))
 win.run("undo")
 check("undo goes back a step", b.sparklines(S)[0]["kind"] == "column")

@@ -17,6 +17,8 @@ const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/rela
 const T_WORKSHEET: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
 const T_SST: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings";
 const T_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+const T_THEME: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
+const CT_THEME: &str = "application/vnd.openxmlformats-officedocument.theme+xml";
 const T_META: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata";
 const T_DRAWING: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
 const T_CHART: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
@@ -73,6 +75,8 @@ pub struct FileParts {
     pub sheet_rids: HashMap<String, String>,
     /// the persons part (threaded comments' authors)
     pub persons_part: Option<String>,
+    /// the theme part
+    pub theme_part: Option<String>,
 }
 
 fn rels_name(part: &str) -> String {
@@ -217,7 +221,8 @@ impl Book {
         b.file.styles_part = find_type("/styles").unwrap_or_else(|| "xl/styles.xml".into());
         let st_text = get(&b.file.styles_part).map(|d| xml::decode(d)).transpose()?;
         b.styles = Styles::parse(st_text.as_deref())?;
-        if let Some(t) = find_type("/theme").and_then(|p| get(&p)) {
+        b.file.theme_part = find_type("/theme");
+        if let Some(t) = b.file.theme_part.clone().and_then(|p| get(&p)) {
             b.styles.set_theme(&xml::decode(t)?);
         }
         // shared strings
@@ -1361,6 +1366,19 @@ impl Book {
             rels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", T_STYLES), ("Target", &relative(&wb_part, &styles_part))]));
             set_override(&mut ct, &styles_part, CT_STYLES);
         }
+        // the theme: as read unless changed; a workbook without one gets the default theme
+        let theme_text = self.theme_xml();
+        let theme_part = self.file.theme_part.clone().unwrap_or_else(|| format!("{}/theme/theme1.xml", if dir.is_empty() { "xl" } else { &dir }));
+        let unchanged = self.file.theme_part.as_ref().and_then(|p| self.file.parts.iter().find(|(n, _)| n == p))
+            .and_then(|(_, d)| xml::decode(d).ok()).map(|t| Some(t) == self.styles.theme_xml).unwrap_or(false);
+        if !unchanged {
+            out.push((theme_part.clone(), theme_text.into_bytes()));
+        }
+        if !rels.elems().any(|e| e.attr("Type") == Some(T_THEME)) {
+            let id = new_rid(&mut used_rids);
+            rels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", T_THEME), ("Target", &relative(&wb_part, &theme_part))]));
+            set_override(&mut ct, &theme_part, CT_THEME);
+        }
         // the workbook
         out.push((wb_part.clone(), self.write_workbook(&sheet_parts).into_bytes()));
         out.push((rels_name(&wb_part), xml::document(&rels_pro, &rels).into_bytes()));
@@ -2060,13 +2078,13 @@ impl Book {
         let had = e.child("tabColor").map(|t| crate::styles::Color::from_el(t));
         let same = match (had, sh.tab_color) {
             (None, None) => true,
-            (Some(c), Some(v)) => self.styles.rgb(&c, 0) == v,
+            (Some(c), Some(v)) => self.styles.rgb(&c, 0) == v || matches!((c, crate::styles::split_ref(v)), (crate::styles::Color::Theme(a, x), Some((b, y))) if a == b && (x - y).abs() < 0.0002),
             _ => false,
         };
         if !same {
             e.remove_children("tabColor");
             if let Some(v) = sh.tab_color {
-                let t = Element::with_attrs(&format!("{}tabColor", pfx), &[("rgb", &format!("FF{:06X}", v))]);
+                let t = crate::styles::color_el(&format!("{}tabColor", pfx), v);
                 e.children.insert(0, Node::Elem(t));
             }
         }

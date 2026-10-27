@@ -814,7 +814,7 @@ impl Book {
                 cairo_save(cr);
                 cairo_rectangle(cr, xx, yy, ww, hh);
                 cairo_clip(cr);
-                crate::sparkline::paint(cr, gr, &vals, xx, yy, ww, hh, z);
+                crate::sparkline::paint(cr, &gr.resolved(|c| self.styles.resolve(c)), &vals, xx, yy, ww, hh, z);
                 cairo_restore(cr);
             }
         }

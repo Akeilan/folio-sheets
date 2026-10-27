@@ -166,7 +166,8 @@ def swatch_pixbuf(name, size, color):
             svg = f.read()
     except OSError:
         return pixbuf(name, size)
-    hexc = "#%06x" % (color & 0xFFFFFF)
+    from .ribbon_defs import resolve
+    hexc = "#%06x" % (resolve(color) & 0xFFFFFF)
     if _dark():
         svg = dark_svg(svg)
     svg2, n = re.subn(r'(<rect x="1" y="13"[^>]*fill=")#[0-9a-fA-F]{6}', lambda m: m.group(1) + hexc, svg)

@@ -132,6 +132,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             self.new_book()
         from . import windows_ui
         windows_ui.watch(self)
+        from . import themes_ui
+        self.connect("focus-in-event", lambda *_: (themes_ui.sync(self), False)[1])
         GLib.idle_add(self.grid.area.grab_focus)
 
     def _share_from(self, other):
@@ -318,6 +320,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         return Book.open(conv)
 
     def _after_load(self):
+        from . import themes_ui
+        themes_ui.sync(self)
         self.macro_bar.show_for(self.book)
         self.grid.set_book(self.book)
         self.tabs.rebuild()
@@ -1114,6 +1118,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def _back_to(self, s):
         """After undo/redo: show the sheet the step changed."""
+        from . import themes_ui
+        themes_ui.changed(self)
         g = self.grid
         if s is not None and s < self.book.sheet_count and s != g.sheet:
             g.set_sheet(s)

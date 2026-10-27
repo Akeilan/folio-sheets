@@ -478,7 +478,7 @@ impl PyBook {
         d.set_item("name", &sh.name)?;
         d.set_item("state", &sh.state)?;
         d.set_item("kind", &sh.kind)?;
-        d.set_item("tab_color", sh.tab_color)?;
+        d.set_item("tab_color", sh.tab_color.map(|c| self.b.styles.resolve(c)))?;
         let v = &sh.view;
         d.set_item("freeze_rows", v.freeze_rows)?;
         d.set_item("freeze_cols", v.freeze_cols)?;
@@ -1813,6 +1813,99 @@ impl PyBook {
     }
     fn reorder_object(&mut self, s: usize, i: usize, by: i64) -> PyResult<usize> {
         self.b.reorder_object(s, i, by).map_err(verr)
+    }
+    // ---------------------------------------------------------------- themes (SH-22)
+    /// The theme: name, colours (part order dk1 lt1 dk2 lt2 accent1..6 hlink folHlink), fonts, effects.
+    fn theme_info<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let t = self.b.theme_info();
+        let d = PyDict::new_bound(py);
+        d.set_item("name", t.name)?;
+        d.set_item("colors_name", t.colors_name)?;
+        d.set_item("colors", t.colors.to_vec())?;
+        d.set_item("fonts_name", t.fonts_name)?;
+        d.set_item("major", t.major)?;
+        d.set_item("minor", t.minor)?;
+        d.set_item("effects_name", t.effects_name)?;
+        Ok(d)
+    }
+    /// The palette's theme columns: light 1, dark 1, light 2, dark 2, accents 1-6, hyperlinks.
+    fn theme_colors(&self) -> Vec<u32> {
+        self.b.styles.theme.to_vec()
+    }
+    /// A colour as it shows (theme references worked out).
+    fn resolve_color(&self, c: u32) -> u32 {
+        self.b.styles.resolve(c)
+    }
+    fn theme_xml(&self) -> String {
+        self.b.theme_xml()
+    }
+    fn set_theme_xml(&mut self, x: &str) -> PyResult<()> {
+        self.b.set_theme_xml(x, "Theme").map_err(verr)
+    }
+    fn apply_theme(&mut self, name: &str) -> PyResult<()> {
+        self.b.apply_theme(name).map_err(verr)
+    }
+    fn set_theme_colors(&mut self, name: &str, colors: Vec<u32>) -> PyResult<()> {
+        let c: [u32; 12] = colors.try_into().map_err(|_| verr("Twelve colours are needed.".to_string()))?;
+        self.b.set_theme_colors(name, &c).map_err(verr)
+    }
+    fn set_theme_fonts(&mut self, name: &str, major: &str, minor: &str) -> PyResult<()> {
+        self.b.set_theme_fonts(name, major, minor).map_err(verr)
+    }
+    fn set_theme_effects(&mut self, from_xml: &str) -> PyResult<()> {
+        self.b.set_theme_effects(from_xml).map_err(verr)
+    }
+    /// Save Current Theme: a theme file (.thmx).
+    fn save_theme(&self, path: &str, name: Option<&str>) -> PyResult<()> {
+        let mut x = self.b.theme_xml();
+        if let Some(n) = name {
+            x = crate::themes::renamed(&x, n).map_err(verr)?;
+        }
+        std::fs::write(path, crate::themes::thmx_bytes(&x)).map_err(|e| verr(e.to_string()))
+    }
+    /// Browse for Themes: the theme in a .thmx file, a workbook, or a theme part.
+    #[staticmethod]
+    fn read_theme_file(path: &str) -> PyResult<String> {
+        let d = std::fs::read(path).map_err(|e| verr(e.to_string()))?;
+        crate::themes::theme_from_bytes(&d).map_err(verr)
+    }
+    #[staticmethod]
+    fn theme_xml_info<'py>(py: Python<'py>, x: &str) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let t = match crate::themes::info(x) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+        let d = PyDict::new_bound(py);
+        d.set_item("name", t.name)?;
+        d.set_item("colors_name", t.colors_name)?;
+        d.set_item("colors", t.colors.to_vec())?;
+        d.set_item("fonts_name", t.fonts_name)?;
+        d.set_item("major", t.major)?;
+        d.set_item("minor", t.minor)?;
+        d.set_item("effects_name", t.effects_name)?;
+        Ok(Some(d))
+    }
+    #[staticmethod]
+    fn default_theme_xml() -> String {
+        crate::themes::default_theme_xml()
+    }
+    #[staticmethod]
+    fn color_sets() -> Vec<(String, Vec<u32>)> {
+        crate::themes::COLOR_SETS.iter().map(|(n, c)| (n.to_string(), c.to_vec())).collect()
+    }
+    #[staticmethod]
+    fn font_sets() -> Vec<(String, String, String)> {
+        crate::themes::FONT_SETS.iter().map(|(n, a, b)| (n.to_string(), a.to_string(), b.to_string())).collect()
+    }
+    /// The ready-made themes: (name, colours, headings font, body font).
+    #[staticmethod]
+    fn builtin_themes() -> Vec<(String, Vec<u32>, String, String)> {
+        crate::themes::THEMES.iter().map(|t| (t.0.to_string(), t.2.to_vec(), t.4.to_string(), t.5.to_string())).collect()
+    }
+    /// A theme reference for a palette pick: slot (palette column) and tint.
+    #[staticmethod]
+    fn theme_ref(slot: u32, tint: f64) -> u32 {
+        crate::styles::theme_ref(slot, tint)
     }
     /// Insert › Equation: a text box with an equation typed in the linear format.
     fn insert_equation(&mut self, s: usize, linear: &str, x: f64, y: f64) -> PyResult<usize> {

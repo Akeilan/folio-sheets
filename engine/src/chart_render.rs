@@ -129,7 +129,7 @@ impl Book {
                 if cats.is_empty() && !xpts.is_empty() && p.kind != Kind::Scatter {
                     cats = xpts.iter().map(|p| p.text.clone()).collect();
                 }
-                let color = se.color.unwrap_or_else(|| auto_color(theme, ch.palette, idx));
+                let color = se.color.map(|c| self.styles.resolve(c)).unwrap_or_else(|| auto_color(theme, ch.palette, idx));
                 if !pie {
                     entries.push(Entry { text: self.series_name(se, idx), color, line: matches!(p.kind, Kind::Line) || p.kind == Kind::Scatter && p.lines, marker: p.markers });
                 }
