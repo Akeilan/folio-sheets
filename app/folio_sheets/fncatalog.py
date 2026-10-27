@@ -356,6 +356,10 @@ F.INV.RT|Statistical|probability, deg_freedom1, deg_freedom2|The inverse of the 
 F.TEST|Statistical|array1, array2|The F-test probability.
 FISHER|Statistical|x|The Fisher transformation.
 FISHERINV|Statistical|y|The inverse Fisher transformation.
+FORECAST.ETS|Statistical|target_date, values, timeline, [seasonality], [data_completion], [aggregation]|A future value by exponential smoothing (with trend and seasonality).
+FORECAST.ETS.CONFINT|Statistical|target_date, values, timeline, [confidence_level], [seasonality], [data_completion], [aggregation]|The confidence interval of a FORECAST.ETS value.
+FORECAST.ETS.SEASONALITY|Statistical|values, timeline, [data_completion], [aggregation]|The length of the repeating pattern found in the values.
+FORECAST.ETS.STAT|Statistical|values, timeline, statistic_type, [seasonality], [data_completion], [aggregation]|A statistic of the FORECAST.ETS model (alpha, beta, gamma, MASE, SMAPE, MAE, RMSE, step).
 FORECAST.LINEAR|Statistical|x, known_ys, known_xs|A value on the linear trend.
 FREQUENCY|Statistical|data_array, bins_array|How often values fall within ranges.
 GAMMA|Statistical|x|The gamma function.

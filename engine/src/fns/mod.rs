@@ -10,6 +10,7 @@ pub mod date;
 pub mod db;
 pub mod dist;
 pub mod eng;
+pub mod ets;
 pub mod fin;
 pub mod logic;
 pub mod lookup;
@@ -42,7 +43,7 @@ pub(crate) use d;
 thread_local! {
     static TABLE: std::collections::HashMap<&'static str, &'static Def> = {
         let mut m = std::collections::HashMap::new();
-        for list in [math::DEFS, stats::DEFS, text::DEFS, date::DEFS, lookup::DEFS, logic::DEFS, fin::DEFS, eng::DEFS, dist::DEFS, db::DEFS] {
+        for list in [math::DEFS, stats::DEFS, text::DEFS, date::DEFS, lookup::DEFS, logic::DEFS, fin::DEFS, eng::DEFS, dist::DEFS, db::DEFS, ets::DEFS] {
             for d in list.iter() {
                 m.insert(d.name, d);
             }

@@ -51,6 +51,8 @@ pub mod book_shape;
 pub mod sparkline;
 pub mod math;
 pub mod themes;
+pub mod whatif;
+pub mod solver;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

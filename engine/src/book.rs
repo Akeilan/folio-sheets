@@ -145,6 +145,8 @@ pub struct Book {
     /// positions whose value changed and formulas edited, waiting for the calculation
     pub changed: Vec<Key>,
     pub forced: BTreeSet<Key>,
+    /// trying values (What-If Analysis): no data tables worked out meanwhile
+    pub in_what_if: bool,
     pub rebuild: bool,
     pub pending: bool,
     pub circ: Vec<Key>,
@@ -187,6 +189,7 @@ impl Book {
             deps: Deps::default(),
             changed: vec![],
             forced: BTreeSet::new(),
+            in_what_if: false,
             rebuild: false,
             pending: false,
             circ: vec![],
@@ -597,6 +600,7 @@ impl Book {
             return;
         }
         self.recalc(false);
+        self.recalc_data_tables();
     }
 
     // ------------------------------------------------------------------ reading cells
@@ -619,6 +623,11 @@ impl Book {
 
     /// What the formula bar shows.
     pub fn input(&self, s: usize, r: u32, c: u32) -> String {
+        if self.sheets.get(s).map(|sh| sh.has_data_tables.get()).unwrap_or(false) {
+            if let Some(t) = self.data_table_text(s, r, c) {
+                return t;
+            }
+        }
         let sh = match self.sheets.get(s) {
             Some(x) => x,
             None => return String::new(),
@@ -710,6 +719,9 @@ impl Book {
             if (rc.r1, rc.c1) != (r, c) || rc.count() > 1 {
                 return Err("You can't change part of an array.".into());
             }
+        }
+        if !self.in_what_if && self.data_table_at(s, r, c).is_some() {
+            return Err("Cannot change part of a data table.".into());
         }
         let cur = self.sheets[s].get(r, c).cloned();
         let xf = cur.as_ref().map(|x| x.s).unwrap_or_else(|| self.sheets[s].style_at(r, c));

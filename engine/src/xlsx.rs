@@ -1020,6 +1020,7 @@ fn read_sheet_data(sh: &mut Sheet, t: &mut Tokenizer, text: &str, sst: &[(Rc<str
                             }
                         }
                         "dataTable" => {
+                            sh.has_data_tables.set(true);
                             kind = FKind::DataTable(fraw.clone().unwrap_or_default());
                         }
                         _ => {}
