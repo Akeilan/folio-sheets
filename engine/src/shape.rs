@@ -720,7 +720,7 @@ pub const WORDART: &[(&str, (&str, Option<&str>))] = &[
 // ---------------------------------------------------------------------- edits
 
 fn color_xml(c: u32) -> String {
-    format!("<a:srgbClr val=\"{:06X}\"/>", c & 0xFFFFFF)
+    crate::chart::dml_color(c)
 }
 
 fn parse_frag(s: &str) -> Element {

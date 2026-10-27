@@ -42,28 +42,85 @@ def tint(rgb, t):
     return (round(r * 255) << 16) | (round(g * 255) << 8) | round(b * 255)
 
 
-def palette_rows(c):
-    """The five tint/shade rows under each theme colour."""
+def palette_tints(c):
+    """The tints of the five rows under a theme colour (lighter and darker), as the desktop
+    spreadsheet picks them for how light the colour is."""
     if c == 0xFFFFFF:
-        return [tint(c, t) for t in (-0.05, -0.15, -0.25, -0.35, -0.5)]
+        return (-0.05, -0.15, -0.25, -0.35, -0.5)
     if c == 0x000000:
-        return [tint(c, t) for t in (0.5, 0.35, 0.25, 0.15, 0.05)]
+        return (0.5, 0.35, 0.25, 0.15, 0.05)
     l = colorsys.rgb_to_hls(((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255)[1]
     if l < 0.2:
-        return [tint(c, t) for t in (0.9, 0.75, 0.5, 0.25, 0.1)]
+        return (0.9, 0.75, 0.5, 0.25, 0.1)
     if l > 0.8:
-        return [tint(c, t) for t in (-0.1, -0.25, -0.5, -0.75, -0.9)]
-    return [tint(c, t) for t in (0.8, 0.6, 0.4, -0.25, -0.5)]
+        return (-0.1, -0.25, -0.5, -0.75, -0.9)
+    return (0.8, 0.6, 0.4, -0.25, -0.5)
+
+
+def palette_rows(c):
+    """The five tint/shade rows under each theme colour."""
+    return [tint(c, t) for t in palette_tints(c)]
+
+
+# the theme of the workbook being worked on: the palette's theme columns follow it
+ACTIVE_THEME = list(THEME_COLORS) + [0x0563C1, 0x954F72]
+THEME_BIT = 0x80000000
+TINT_NAMES = {0.8: "Lighter 80%", 0.6: "Lighter 60%", 0.4: "Lighter 40%", 0.25: "Lighter 25%", 0.35: "Lighter 35%",
+              0.15: "Lighter 15%", 0.05: "Lighter 5%", 0.5: "Lighter 50%", 0.9: "Lighter 90%", 0.75: "Lighter 75%",
+              0.1: "Lighter 10%", -0.25: "Darker 25%", -0.5: "Darker 50%", -0.05: "Darker 5%", -0.15: "Darker 15%",
+              -0.35: "Darker 35%", -0.1: "Darker 10%", -0.75: "Darker 75%", -0.9: "Darker 90%"}
+SLOT_NAMES = ["Background 1", "Text 1", "Background 2", "Text 2", "Accent 1", "Accent 2", "Accent 3", "Accent 4",
+              "Accent 5", "Accent 6"]
+
+
+def set_active_theme(colors):
+    """The palette shows this theme (light 1, dark 1, light 2, dark 2, accents, hyperlinks)."""
+    ACTIVE_THEME[:] = list(colors)[:12]
+    THEME_COLORS[:] = ACTIVE_THEME[:10]
+
+
+def theme_ref(slot, t=0.0):
+    """A colour kept as a theme reference (it follows the theme): slot and tint."""
+    return THEME_BIT | ((slot & 15) << 24) | ((int(round(max(-1, min(1, t)) * 10000)) + 10000) & 0xFFFF)
+
+
+def split_ref(c):
+    if isinstance(c, int) and c & THEME_BIT:
+        return (c >> 24) & 15, ((c & 0xFFFF) - 10000) / 10000.0
+    return None
+
+
+def resolve(c):
+    """A colour as it shows: a theme reference in the active theme's colours."""
+    r = split_ref(c)
+    if r is None:
+        return c
+    slot, t = r
+    base = ACTIVE_THEME[slot] if slot < len(ACTIVE_THEME) else 0
+    return tint(base, t) if t else base
+
+
+def color_name(c):
+    r = split_ref(c)
+    if r is None:
+        return "#%06X" % c
+    slot, t = r
+    name = SLOT_NAMES[slot] if slot < len(SLOT_NAMES) else "Hyperlink"
+    near = [v for k, v in TINT_NAMES.items() if abs(k - t) < 0.001]
+    return name + (", " + near[0] if near else "")
 
 
 def color_palette(on_pick, none_label=None, more=None, popref=None):
+    """The colour picker: the theme's colours (kept as theme references, so they follow the theme),
+    the standard colours, More Colors."""
     def swatch(c):
         b = Gtk.Button()
         b.get_style_context().add_class("folio-swatch")
         css = Gtk.CssProvider()
-        css.load_from_data(("button { background: #%06x; }" % c).encode())
+        css.load_from_data(("button { background: #%06x; }" % resolve(c)).encode())
         b.get_style_context().add_provider(css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
-        b.set_tooltip_text("#%06X" % c)
+        b.set_tooltip_text(color_name(c))
+        b.value = c
         b.connect("clicked", lambda *_: pick(c))
         return b
 
@@ -80,10 +137,11 @@ def color_palette(on_pick, none_label=None, more=None, popref=None):
         box.pack_start(nb, False, False, 0)
     box.pack_start(Gtk.Label(label="Theme Colors", xalign=0), False, False, 0)
     grid = Gtk.Grid(column_spacing=3, row_spacing=1)
-    for col, c in enumerate(THEME_COLORS):
-        grid.attach(swatch(c), col, 0, 1, 1)
-        for row, v in enumerate(palette_rows(c), start=1):
-            grid.attach(swatch(v), col, row + 0, 1, 1)
+    grid.set_name("theme-colors")
+    for col, c in enumerate(ACTIVE_THEME[:10]):
+        grid.attach(swatch(theme_ref(col)), col, 0, 1, 1)
+        for row, t in enumerate(palette_tints(c), start=1):
+            grid.attach(swatch(theme_ref(col, t)), col, row + 0, 1, 1)
     box.pack_start(grid, False, False, 0)
     box.pack_start(Gtk.Label(label="Standard Colors", xalign=0), False, False, 4)
     std = Gtk.Box(spacing=3)
@@ -234,6 +292,11 @@ def _menu_pen(tool):
     items = [("#", "Thickness")] + [("%g mm" % mm, "ink-width:%s:%g" % (tool, mm)) for mm in WIDTHS[tool]]
     items += [None, ("#", "Colors")] + [(name, "ink-color:%s:%06X" % (tool, c)) for name, c in COLORS]
     return items
+
+
+def _themes_ui():
+    from . import themes_ui
+    return themes_ui
 
 
 def _screenshot_menu(win):
@@ -498,10 +561,10 @@ def build_ribbon(win):
     # ================================================================ Page Layout
     t = r.building(Tab("Page Layout", "P"))
     B.group(t, "Themes", [
-        B.big("Themes", "r-themes", None, "TH", menu=[("Themes gallery...", "themes")]),
-        [B.small("Colors", "r-colors-sm", None, "TC", menu=[("Theme colors...", "theme-colors")]),
-         B.small("Fonts", "r-fonts-sm", None, "TF", menu=[("Theme fonts...", "theme-fonts")]),
-         B.small("Effects", "r-effects-sm", None, "TE", menu=[("Theme effects...", "theme-effects")])],
+        B.big("Themes", "r-themes", None, "TH", menu=lambda: _themes_ui().themes_menu(win)),
+        [B.small("Colors", "r-colors-sm", None, "TC", menu=lambda: _themes_ui().colors_menu(win)),
+         B.small("Fonts", "r-fonts-sm", None, "TF", menu=lambda: _themes_ui().fonts_menu(win)),
+         B.small("Effects", "r-effects-sm", None, "TE", menu=lambda: _themes_ui().effects_menu(win))],
     ])
     B.group(t, "Page Setup", [
         B.big("Margins", "r-margins", None, "M", menu=[("Normal", "margins:normal"), ("Wide", "margins:wide"),

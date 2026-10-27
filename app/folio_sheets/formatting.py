@@ -28,6 +28,16 @@ BORDER_PRESETS = ["bottom", "top", "left", "right", "none", "all", "outside", "t
                   "bottom-thick", "top-bottom", "top-thick-bottom", "top-double-bottom"]
 
 
+
+def _resolve(c):
+    from .ribbon_defs import resolve
+    return resolve(c)
+
+
+def _cname(c):
+    from .ribbon_defs import color_name
+    return color_name(c)
+
 class FormattingMixin:
     last_fill = 0xFFFF00
     last_font_color = 0xFF0000
@@ -149,7 +159,7 @@ class FormattingMixin:
         d = Gtk.ColorChooserDialog(title=title, transient_for=self)
         from gi.repository import Gdk
         rgba = Gdk.RGBA()
-        rgba.parse("#%06X" % (initial or 0))
+        rgba.parse("#%06X" % _resolve(initial or 0))
         d.set_rgba(rgba)
         d.set_use_alpha(False)
         r = d.run()
@@ -298,7 +308,7 @@ class FormattingMixin:
             self.border_pen = (pen[0], c)
             if getattr(self, "border_mode", None) in (None, "erase"):
                 self.set_border_mode("draw")    # picking a pen picks up the pen
-            self.status.extra.set_text("Borders now draw in #%06X." % c)
+            self.status.extra.set_text("Borders now draw in %s." % _cname(c))
 
     def act_border_line_style(self, style=None):
         pen = getattr(self, "border_pen", (THIN, None))

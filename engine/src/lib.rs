@@ -50,6 +50,7 @@ pub mod shape;
 pub mod book_shape;
 pub mod sparkline;
 pub mod math;
+pub mod themes;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

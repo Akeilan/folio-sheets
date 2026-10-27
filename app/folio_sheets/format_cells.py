@@ -53,6 +53,16 @@ PATTERNS = [("Solid", "solid"), ("75% Gray", "darkGray"), ("50% Gray", "mediumGr
             ("Thin Vertical Stripe", "lightVertical"), ("Thin Reverse Diagonal Stripe", "lightDown"),
             ("Thin Diagonal Stripe", "lightUp"), ("Thin Horizontal Crosshatch", "lightGrid"),
             ("Thin Diagonal Crosshatch", "lightTrellis")]
+def resolve_c(c):
+    from .ribbon_defs import resolve
+    return resolve(c)
+
+
+def _T(slot, t=0.0):
+    from .ribbon_defs import theme_ref
+    return theme_ref(slot, t)
+
+
 CELL_STYLES = [
     ("Good, Bad and Neutral", [
         ("Normal", {"reset": True}),
@@ -74,31 +84,17 @@ CELL_STYLES = [
                     "border": {s: ("thin", 0x3F3F3F) for s in ("left", "right", "top", "bottom")}}),
         ("Warning Text", {"font": {"color": 0xFF0000}})]),
     ("Titles and Headings", [
-        ("Heading 1", {"font": {"bold": True, "size": 15, "color": 0x44546A}, "border": {"bottom": ("thick", 0x4472C4)}}),
-        ("Heading 2", {"font": {"bold": True, "size": 13, "color": 0x44546A}, "border": {"bottom": ("thick", 0xA2B8E1)}}),
-        ("Heading 3", {"font": {"bold": True, "color": 0x44546A}, "border": {"bottom": ("medium", 0x8EA9DB)}}),
-        ("Heading 4", {"font": {"bold": True, "color": 0x44546A}}),
-        ("Title", {"font": {"bold": True, "size": 18, "color": 0x44546A, "name": "Calibri Light"}}),
-        ("Total", {"font": {"bold": True}, "border": {"top": ("thin", 0x4472C4), "bottom": ("double", 0x4472C4)}})]),
-    ("Themed Cell Styles", [
-        ("20% - Accent1", {"fill": {"pattern": "solid", "fg": 0xD9E1F2}}),
-        ("20% - Accent2", {"fill": {"pattern": "solid", "fg": 0xFCE4D6}}),
-        ("20% - Accent3", {"fill": {"pattern": "solid", "fg": 0xEDEDED}}),
-        ("20% - Accent4", {"fill": {"pattern": "solid", "fg": 0xFFF2CC}}),
-        ("20% - Accent5", {"fill": {"pattern": "solid", "fg": 0xDDEBF7}}),
-        ("20% - Accent6", {"fill": {"pattern": "solid", "fg": 0xE2EFDA}}),
-        ("60% - Accent1", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0x8EA9DB}}),
-        ("60% - Accent2", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0xF4B084}}),
-        ("60% - Accent3", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0xC9C9C9}}),
-        ("60% - Accent4", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0xFFD966}}),
-        ("60% - Accent5", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0x9BC2E6}}),
-        ("60% - Accent6", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0xA9D08E}}),
-        ("Accent1", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0x4472C4}}),
-        ("Accent2", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0xED7D31}}),
-        ("Accent3", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0xA5A5A5}}),
-        ("Accent4", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0xFFC000}}),
-        ("Accent5", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0x5B9BD5}}),
-        ("Accent6", {"font": {"color": 0xFFFFFF}, "fill": {"pattern": "solid", "fg": 0x70AD47}})]),
+        ("Heading 1", {"font": {"bold": True, "size": 15, "color": _T(3)}, "border": {"bottom": ("thick", _T(4))}}),
+        ("Heading 2", {"font": {"bold": True, "size": 13, "color": _T(3)}, "border": {"bottom": ("thick", _T(4, 0.5))}}),
+        ("Heading 3", {"font": {"bold": True, "color": _T(3)}, "border": {"bottom": ("medium", _T(4, 0.4))}}),
+        ("Heading 4", {"font": {"bold": True, "color": _T(3)}}),
+        ("Title", {"font": {"bold": True, "size": 18, "color": _T(3), "name": "@major"}}),
+        ("Total", {"font": {"bold": True}, "border": {"top": ("thin", _T(4)), "bottom": ("double", _T(4))}})]),
+    ("Themed Cell Styles",
+     [("20%% - Accent%d" % k, {"fill": {"pattern": "solid", "fg": _T(3 + k, 0.8)}}) for k in range(1, 7)]
+     + [("40%% - Accent%d" % k, {"fill": {"pattern": "solid", "fg": _T(3 + k, 0.6)}}) for k in range(1, 7)]
+     + [("60%% - Accent%d" % k, {"font": {"color": _T(0)}, "fill": {"pattern": "solid", "fg": _T(3 + k, 0.4)}}) for k in range(1, 7)]
+     + [("Accent%d" % k, {"font": {"color": _T(0)}, "fill": {"pattern": "solid", "fg": _T(3 + k)}}) for k in range(1, 7)]),
     ("Number Format", [
         ("Comma", {"numfmt": '_(* #,##0.00_);_(* \\(#,##0.00\\);_(* "-"??_);_(@_)'}),
         ("Comma [0]", {"numfmt": '_(* #,##0_);_(* \\(#,##0\\);_(* "-"_);_(@_)'}),
@@ -109,23 +105,19 @@ CELL_STYLES = [
 
 
 def rgbf(c):
+    from .ribbon_defs import resolve
+    c = resolve(c)
     return ((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255
 
 
 def plain_color(c, default=0):
-    """A cell colour from the file (int, theme or indexed tuple) as an int for showing."""
+    """A cell colour from the file (int, theme or indexed tuple) as a colour value: theme colours
+    stay theme references (drawn with rgbf, which works them out)."""
     if isinstance(c, int):
         return c
     if isinstance(c, tuple) and c and c[0] == "theme":
-        base = [0xFFFFFF, 0x000000, 0xE7E6E6, 0x44546A] + THEME_COLORS[4:]
-        i = c[1]
-        # theme slots 0/1 are light1/dark1, swapped in the colour scheme order
-        order = {0: 0xFFFFFF, 1: 0x000000, 2: 0xE7E6E6, 3: 0x44546A}
-        v = order.get(i, base[i] if i < len(base) else default)
-        if len(c) > 2 and c[2]:
-            from .ribbon_defs import tint
-            v = tint(v, c[2])
-        return v
+        from .ribbon_defs import theme_ref
+        return theme_ref(c[1], c[2] if len(c) > 2 and c[2] else 0.0)
     if isinstance(c, tuple) and c and c[0] == "indexed":
         idx = [0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0xFFFF00, 0xFF00FF, 0x00FFFF] * 2
         return idx[c[1]] if c[1] < len(idx) else default
@@ -197,12 +189,14 @@ def palette_grid(on_pick, none_label=None, more=None):
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
     box.set_border_width(6)
 
+    from .ribbon_defs import ACTIVE_THEME, color_name, palette_tints, theme_ref
+
     def sw(c):
         b = Gtk.Button()
         b.set_relief(Gtk.ReliefStyle.NONE)
         b.get_style_context().add_class("folio-cswatch")
         b.add(Swatch(c, 14, 14))
-        b.set_tooltip_text("#%06X" % c)
+        b.set_tooltip_text(color_name(c))
         b.connect("clicked", lambda *_: on_pick(c))
         return b
     if none_label:
@@ -210,10 +204,10 @@ def palette_grid(on_pick, none_label=None, more=None):
         nb.connect("clicked", lambda *_: on_pick(None))
         box.pack_start(nb, False, False, 0)
     grid = Gtk.Grid(column_spacing=0, row_spacing=0)
-    for col, c in enumerate(THEME_COLORS):
-        grid.attach(sw(c), col, 0, 1, 1)
-        for row, v in enumerate(palette_rows(c), start=1):
-            grid.attach(sw(v), col, row, 1, 1)
+    for col, c in enumerate(ACTIVE_THEME[:10]):
+        grid.attach(sw(theme_ref(col)), col, 0, 1, 1)
+        for row, t in enumerate(palette_tints(c), start=1):
+            grid.attach(sw(theme_ref(col, t)), col, row, 1, 1)
     box.pack_start(grid, False, False, 0)
     std = Gtk.Box(spacing=0)
     for c in STANDARD_COLORS:
@@ -258,7 +252,7 @@ class ColorButton(Gtk.MenuButton):
         d = Gtk.ColorChooserDialog(title="Colors", transient_for=self.parent_win)
         d.set_use_alpha(False)
         rgba = Gdk.RGBA()
-        rgba.parse("#%06X" % (self.color or 0))
+        rgba.parse("#%06X" % resolve_c(self.color or 0))
         d.set_rgba(rgba)
         if d.run() == Gtk.ResponseType.OK:
             c = d.get_rgba()

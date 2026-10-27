@@ -5,6 +5,7 @@ use crate::book::{Book, Delta};
 use crate::cellref::{parse_range, Rect};
 use crate::sheet::Piece;
 use crate::value::Value;
+use crate::styles::theme_ref;
 use crate::xml::{self, Element, Node};
 use std::rc::Rc;
 
@@ -40,14 +41,16 @@ pub struct SparkGroup {
 impl SparkGroup {
     pub fn new(kind: &str) -> SparkGroup {
         SparkGroup {
+            // the desktop spreadsheet's defaults, on the theme: accent 1 darker 50%, accent 2 for
+            // negative points, accent 1 (lighter 40% for the first and last points)
             kind: kind.to_string(),
-            color: 0x376092,
-            negative: 0xD00000,
-            markers_color: 0xD00000,
-            high_color: 0xD00000,
-            low_color: 0xD00000,
-            first_color: 0xD00000,
-            last_color: 0xD00000,
+            color: theme_ref(4, -0.5),
+            negative: theme_ref(5, 0.0),
+            markers_color: theme_ref(4, -0.5),
+            high_color: theme_ref(4, 0.0),
+            low_color: theme_ref(4, 0.0),
+            first_color: theme_ref(4, 0.4),
+            last_color: theme_ref(4, 0.4),
             markers: false,
             high: false,
             low: false,
@@ -61,8 +64,30 @@ impl SparkGroup {
     }
 }
 
+impl SparkGroup {
+    /// The group with its theme colours worked out, for drawing.
+    pub fn resolved(&self, f: impl Fn(u32) -> u32) -> SparkGroup {
+        let mut g = self.clone();
+        for c in [&mut g.color, &mut g.negative, &mut g.markers_color, &mut g.high_color, &mut g.low_color, &mut g.first_color, &mut g.last_color] {
+            *c = f(*c);
+        }
+        g
+    }
+}
+
 fn argb(e: Option<&Element>, d: u32) -> u32 {
-    e.and_then(|e| e.attr("rgb")).and_then(|v| u32::from_str_radix(v, 16).ok()).map(|v| v & 0xFFFFFF).unwrap_or(d)
+    let e = match e {
+        Some(e) => e,
+        None => return d,
+    };
+    if let Some(v) = e.attr("rgb").and_then(|v| u32::from_str_radix(&v[v.len().saturating_sub(6)..], 16).ok()) {
+        return v & 0xFFFFFF;
+    }
+    if let Some(t) = e.attr("theme").and_then(|v| v.parse::<u32>().ok()) {
+        let tint = e.attr("tint").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        return theme_ref(t, tint);
+    }
+    d
 }
 
 fn flag(e: &Element, n: &str) -> bool {
@@ -121,7 +146,7 @@ pub fn read_groups(pieces: &[Piece]) -> Vec<SparkGroup> {
 }
 
 fn color_el(name: &str, c: u32) -> Element {
-    Element::with_attrs(&format!("x14:{}", name), &[("rgb", &format!("FF{:06X}", c & 0xFFFFFF))])
+    crate::styles::color_el(&format!("x14:{}", name), c)
 }
 
 fn write_group(g: &SparkGroup) -> Element {

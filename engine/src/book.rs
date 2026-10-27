@@ -105,6 +105,8 @@ pub enum Delta {
     Notes(usize, BTreeMap<(u32, u32), crate::notes::Note>),
     Threads(usize, BTreeMap<(u32, u32), crate::notes::Thread>),
     Fit(usize, bool),
+    /// the theme part (None: the default theme)
+    Theme(Option<String>),
 }
 
 #[derive(Clone, Debug)]
@@ -390,6 +392,12 @@ impl Book {
                     self.rebuild = true;
                 }
                 Delta::Meta(s, old)
+            }
+            Delta::Theme(x) => {
+                let old = self.styles.theme_xml.clone();
+                self.styles.use_theme(x.as_deref());
+                self.styles.dirty = true;
+                Delta::Theme(old)
             }
             Delta::Names(n) => {
                 let old = std::mem::replace(&mut self.names, n);

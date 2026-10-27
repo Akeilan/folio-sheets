@@ -142,6 +142,8 @@ pub fn color_of(e: &Element, theme: &[u32; 12]) -> Option<u32> {
                 "bg1" | "lt1" => 0,
                 "tx2" | "dk2" => 3,
                 "bg2" | "lt2" => 2,
+                "hlink" => 10,
+                "folHlink" => 11,
                 _ => return None,
             };
             theme[i]
@@ -623,7 +625,48 @@ fn read_title(t: &Element) -> Title {
 fn sp_color(e: &Element, theme: &[u32; 12], line: bool) -> Option<u32> {
     let sp = e.child("spPr")?;
     let fill = if line { sp.child("ln")?.child("solidFill")? } else { sp.child("solidFill").or_else(|| sp.child("ln").and_then(|l| l.child("solidFill")))? };
-    fill.elems().find_map(|c| color_of(c, theme))
+    fill.elems().find_map(|c| scheme_ref(c).or_else(|| color_of(c, theme)))
+}
+
+/// A schemeClr that a theme reference says exactly (lighter/darker by lumMod/lumOff): kept as one,
+/// so the colour follows the theme.
+pub fn scheme_ref(e: &Element) -> Option<u32> {
+    if e.local() != "schemeClr" {
+        return None;
+    }
+    let i = match e.attr("val")? {
+        "bg1" | "lt1" => 0, "tx1" | "dk1" => 1, "bg2" | "lt2" => 2, "tx2" | "dk2" => 3,
+        "accent1" => 4, "accent2" => 5, "accent3" => 6, "accent4" => 7, "accent5" => 8, "accent6" => 9,
+        "hlink" => 10, "folHlink" => 11,
+        _ => return None,
+    };
+    let (mut lm, mut lo) = (1.0, 0.0);
+    for m in e.elems() {
+        let v = m.attr("val").and_then(|v| v.parse::<f64>().ok())? / 100000.0;
+        match m.local() {
+            "lumMod" => lm = v,
+            "lumOff" => lo = v,
+            _ => return None,
+        }
+    }
+    let t = if lo > 0.0 && (lm + lo - 1.0).abs() < 0.001 { lo } else if lo == 0.0 { lm - 1.0 } else { return None };
+    Some(crate::styles::theme_ref(i, t))
+}
+
+/// The automatic colour of the i-th series as a theme reference (what Office writes).
+pub fn auto_ref(palette: u8, i: usize) -> u32 {
+    use crate::styles::theme_ref;
+    if palette >= 1 && palette <= 6 {
+        let tints = [0.0, 0.4, -0.2, 0.5, 0.6, -0.25];
+        return theme_ref(3 + palette as u32, tints[i % tints.len()]);
+    }
+    let slot = 4 + (i % 6) as u32;
+    match (i / 6) % 4 {
+        0 => theme_ref(slot, 0.0),
+        1 => theme_ref(slot, -0.4),
+        2 => theme_ref(slot, 0.4),
+        _ => theme_ref(slot, 0.2),
+    }
 }
 
 impl Chart {
@@ -869,7 +912,26 @@ fn write_src(book: &Book, tag: &str, src: &Src, num: bool, out: &mut String) {
 }
 
 fn solid(c: u32) -> String {
-    format!("<a:solidFill><a:srgbClr val=\"{:06X}\"/></a:solidFill>", c)
+    format!("<a:solidFill>{}</a:solidFill>", dml_color(c))
+}
+
+/// A DrawingML colour element: srgbClr, or schemeClr for a theme reference.
+pub fn dml_color(c: u32) -> String {
+    match crate::styles::split_ref(c) {
+        Some((i, t)) => {
+            let name = ["bg1", "tx1", "bg2", "tx2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"]
+                .get(i as usize).copied().unwrap_or("accent1");
+            let mods = if t > 0.0 {
+                format!("<a:lumMod val=\"{}\"/><a:lumOff val=\"{}\"/>", ((1.0 - t) * 100000.0).round(), (t * 100000.0).round())
+            } else if t < 0.0 {
+                format!("<a:lumMod val=\"{}\"/>", ((1.0 + t) * 100000.0).round())
+            } else {
+                String::new()
+            };
+            format!("<a:schemeClr val=\"{}\">{}</a:schemeClr>", name, mods)
+        }
+        None => format!("<a:srgbClr val=\"{:06X}\"/>", c & 0xFFFFFF),
+    }
 }
 
 const TEXT_GRAY: &str = "595959";
@@ -996,7 +1058,8 @@ impl Chart {
                 Kind::Scatter => o.push_str(&format!("<c:scatterChart><c:scatterStyle val=\"{}\"/><c:varyColors val=\"0\"/>", if p.lines { if p.smooth_any() { "smoothMarker" } else { "lineMarker" } } else { "lineMarker" })),
             }
             for s in &p.series {
-                let color = s.color.unwrap_or_else(|| auto_color(theme, self.palette, idx));
+                let color = s.color.unwrap_or_else(|| auto_ref(self.palette, idx));
+                let _ = theme;
                 o.push_str(&format!("<c:ser><c:idx val=\"{}\"/><c:order val=\"{}\"/>", idx, idx));
                 if let Some(n) = &s.name {
                     write_src(book, "tx", n, false, &mut o);
@@ -1020,7 +1083,7 @@ impl Chart {
                         let n = s.val.as_ref().map(|v| book.chart_values(v).len()).unwrap_or(0).min(255);
                         for i in 0..n {
                             o.push_str(&format!("<c:dPt><c:idx val=\"{}\"/><c:bubble3D val=\"0\"/><c:spPr>{}<a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"FFFFFF\"/></a:solidFill></a:ln></c:spPr></c:dPt>",
-                                i, solid(auto_color(theme, self.palette, i))));
+                                i, solid(auto_ref(self.palette, i))));
                         }
                     }
                     _ => {

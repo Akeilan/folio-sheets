@@ -118,6 +118,62 @@ pub struct Styles {
     pub theme: [u32; 12],
     pub theme_fonts: (String, String),
     pub indexed: Vec<u32>,
+    /// the theme part's XML (None: the default theme)
+    pub theme_xml: Option<String>,
+}
+
+/// Colours picked from the theme's columns of the palette are kept as theme references, so they
+/// follow the theme: a u32 with this bit set holds a theme slot (bits 24..28) and a tint (low bits).
+pub const THEME_BIT: u32 = 0x8000_0000;
+
+pub fn theme_ref(idx: u32, tint: f64) -> u32 {
+    THEME_BIT | ((idx & 15) << 24) | (((tint.clamp(-1.0, 1.0) * 10000.0).round() as i32 + 10000) as u32 & 0xFFFF)
+}
+
+pub fn split_ref(c: u32) -> Option<(u32, f64)> {
+    if c & THEME_BIT != 0 {
+        Some(((c >> 24) & 15, ((c & 0xFFFF) as i32 - 10000) as f64 / 10000.0))
+    } else {
+        None
+    }
+}
+
+/// A tint as Office writes it (its own rounding of the palette's steps).
+pub fn tint_text(t: f64) -> String {
+    let known: [(f64, &str); 18] = [(0.8, "0.79998168889431442"), (0.6, "0.59999389629810485"), (0.4, "0.39997558519241921"),
+        (-0.25, "-0.249977111117893"), (-0.5, "-0.499984740745262"), (-0.35, "-0.34998626667073579"),
+        (-0.15, "-0.14999847407452621"), (-0.05, "-4.9989318521683403E-2"), (0.5, "0.499984740745262"),
+        (0.35, "0.34998626667073579"), (0.25, "0.249977111117893"), (0.15, "0.14999847407452621"),
+        (0.05, "4.9989318521683403E-2"), (-0.1, "-9.9978637043366805E-2"), (-0.75, "-0.749992370372631"),
+        (-0.9, "-0.89999084444715716"), (0.9, "0.89999084444715716"), (0.75, "0.749992370372631")];
+    for (v, txt) in known {
+        if (t - v).abs() < 0.0002 {
+            return txt.to_string();
+        }
+    }
+    format!("{}", (t * 10000.0).round() / 10000.0)
+}
+
+/// The attributes of a spreadsheet colour element (rgb, or theme and tint).
+pub fn color_attrs(c: u32) -> Vec<(&'static str, String)> {
+    match split_ref(c) {
+        Some((i, t)) => {
+            let mut v = vec![("theme", i.to_string())];
+            if t != 0.0 {
+                v.push(("tint", tint_text(t)));
+            }
+            v
+        }
+        None => vec![("rgb", format!("FF{:06X}", c & 0xFFFFFF))],
+    }
+}
+
+pub fn color_el(name: &str, c: u32) -> Element {
+    let mut e = Element::new(name);
+    for (k, v) in color_attrs(c) {
+        e.set_attr(k, &v);
+    }
+    e
 }
 
 fn flag(e: &Element, name: &str) -> bool {
@@ -250,6 +306,7 @@ impl Styles {
             theme: DEFAULT_THEME,
             theme_fonts: ("Calibri Light".into(), "Calibri".into()),
             indexed: crate::numfmt::PALETTE.to_vec(),
+            theme_xml: None,
         };
         st.ensure_defaults();
         st.reload();
@@ -317,7 +374,26 @@ impl Styles {
         }
     }
 
+    /// A colour as it shows: theme references resolved.
+    pub fn resolve(&self, c: u32) -> u32 {
+        match split_ref(c) {
+            Some((i, t)) => self.rgb(&Color::Theme(i, t), 0),
+            None => c & 0xFFFFFF,
+        }
+    }
+
+    /// Use a theme (None: the default one).
+    pub fn use_theme(&mut self, theme_xml: Option<&str>) {
+        self.theme = DEFAULT_THEME;
+        self.theme_fonts = ("Calibri Light".into(), "Calibri".into());
+        self.theme_xml = None;
+        if let Some(x) = theme_xml {
+            self.set_theme(x);
+        }
+    }
+
     pub fn set_theme(&mut self, theme_xml: &str) {
+        self.theme_xml = Some(theme_xml.to_string());
         if let Ok((_, root)) = crate::xml::parse(theme_xml) {
             // a:theme/a:themeElements/a:clrScheme
             let scheme = root.child("themeElements").and_then(|t| t.child("clrScheme"));
@@ -397,9 +473,8 @@ impl Styles {
     pub fn font_name(&self, f: &Font) -> String {
         match f.scheme.as_deref() {
             Some("major") => self.theme_fonts.0.clone(),
-            Some("minor") => {
-                if f.name.is_empty() { self.theme_fonts.1.clone() } else { f.name.clone() }
-            }
+            // a theme font follows the theme (the name in the file is a cached copy)
+            Some("minor") => self.theme_fonts.1.clone(),
             _ => f.name.clone(),
         }
     }
@@ -461,7 +536,18 @@ impl Styles {
         let mut xf = self.get_el("cellXfs", base);
         if let Some(fc) = &ch.font {
             let mut font = self.get_el("fonts", xf.attr("fontId").and_then(|v| v.parse().ok()).unwrap_or(0));
-            edit_font(&mut font, fc);
+            // "@major"/"@minor": the theme's headings or body font (it follows the theme)
+            let slot = fc.name.as_deref().and_then(|n| n.strip_prefix('@')).map(|n| n.to_string());
+            match slot.as_deref() {
+                Some(which @ ("major" | "minor")) => {
+                    let mut f2 = fc.clone();
+                    f2.name = Some(if which == "major" { self.theme_fonts.0.clone() } else { self.theme_fonts.1.clone() });
+                    edit_font(&mut font, &f2);
+                    font.remove_children("scheme");
+                    font.push(Element::with_attrs(&name_like_tag(&font.name, "scheme"), &[("val", which)]));
+                }
+                _ => edit_font(&mut font, fc),
+            }
             let id = self.intern(0, "fonts", font);
             xf.set_attr("fontId", &id.to_string());
             xf.set_attr("applyFont", "1");
@@ -475,10 +561,10 @@ impl Styles {
                 Some((pattern, fg, bg)) => {
                     let mut pf = Element::with_attrs(&pf_tag, &[("patternType", pattern)]);
                     if let Some(c) = fg {
-                        pf.push(Element::with_attrs(&name_like_tag(&pf_tag, "fgColor"), &[("rgb", &format!("FF{:06X}", c))]));
+                        pf.push(color_el(&name_like_tag(&pf_tag, "fgColor"), *c));
                     }
                     match bg {
-                        Some(c) => pf.push(Element::with_attrs(&name_like_tag(&pf_tag, "bgColor"), &[("rgb", &format!("FF{:06X}", c))])),
+                        Some(c) => pf.push(color_el(&name_like_tag(&pf_tag, "bgColor"), *c)),
                         None => pf.push(Element::with_attrs(&name_like_tag(&pf_tag, "bgColor"), &[("indexed", "64")])),
                     }
                     fe.push(pf);
@@ -710,7 +796,7 @@ fn edit_font(f: &mut Element, c: &FontChange) {
     if let Some(col) = &c.color {
         f.remove_children("color");
         if let Some(rgb) = col {
-            f.push(Element::with_attrs(&name_like_tag(&f.name, "color"), &[("rgb", &format!("FF{:06X}", rgb))]));
+            f.push(color_el(&name_like_tag(&f.name, "color"), *rgb));
         }
     }
 }
@@ -734,7 +820,11 @@ fn edit_border(b: &mut Element, sides: &[(String, Option<(String, Option<u32>)>)
                 e.set_attr("style", style);
                 let mut ce = Element::new(&name_like_tag(&b.name, "color"));
                 match color {
-                    Some(rgb) => ce.set_attr("rgb", &format!("FF{:06X}", rgb)),
+                    Some(rgb) => {
+                        for (k, v) in color_attrs(*rgb) {
+                            ce.set_attr(k, &v);
+                        }
+                    }
                     None => ce.set_attr("indexed", "64"),
                 }
                 e.push(ce);
