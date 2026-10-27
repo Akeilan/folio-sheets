@@ -1199,3 +1199,103 @@ fn equations_round_trip() {
     let b2 = Book::open(p.to_str().unwrap()).unwrap();
     assert_eq!(b2.equation_linear(0, 0).as_deref(), Some("x=(−b±√(b^2−4ac))/2a"));
 }
+
+#[test]
+fn goal_seek_and_data_tables() {
+    let mut b = Book::new_empty();
+    // A1 rate, A2 years, A3 =100*(1+A1)^A2
+    b.set_input(0, 0, 0, "0.05").unwrap();
+    b.set_input(0, 1, 0, "10").unwrap();
+    b.set_input(0, 2, 0, "=100*(1+A1)^A2").unwrap();
+    let (x, v, ok) = b.goal_seek(0, (2, 0), 200.0, (0, 0)).unwrap();
+    assert!(ok && (v - 200.0).abs() < 0.01 && (x - 0.071773).abs() < 1e-4, "{} {}", x, v);
+    // nothing changed
+    assert_eq!(b.value(0, 0, 0), Value::num(0.05));
+    assert!(b.goal_seek(0, (0, 0), 1.0, (1, 0)).is_err());
+    // one-variable data table: rates down C2:C4, formula in D1
+    for (i, r) in ["0.03", "0.05", "0.08"].iter().enumerate() {
+        b.set_input(0, 1 + i as u32, 2, r).unwrap();
+    }
+    b.set_input(0, 0, 3, "=A3").unwrap();
+    b.create_data_table(0, crate::cellref::Rect::new(0, 2, 3, 3), None, Some((0, 0))).unwrap();
+    let want = |r: f64| 100.0 * (1.0 + r).powf(10.0);
+    match b.value(0, 1, 3) { Value::Num(v) => assert!((v - want(0.03)).abs() < 1e-9, "{}", v), o => panic!("{:?}", o) }
+    match b.value(0, 3, 3) { Value::Num(v) => assert!((v - want(0.08)).abs() < 1e-9), o => panic!("{:?}", o) }
+    assert_eq!(b.input(0, 2, 3), "{=TABLE(,A1)}");
+    assert!(b.set_input(0, 2, 3, "5").is_err());
+    // it follows the sheet
+    b.set_input(0, 1, 0, "20").unwrap();
+    match b.value(0, 1, 3) { Value::Num(v) => assert!((v - 100.0 * 1.03f64.powf(20.0)).abs() < 1e-9), o => panic!("{:?}", o) }
+    // two-variable: years across F1:H1? (row input A2), rates down E2:E3 (column input A1), formula at E1
+    b.set_input(0, 0, 4, "=A3").unwrap();
+    b.set_input(0, 0, 5, "5").unwrap();
+    b.set_input(0, 0, 6, "10").unwrap();
+    b.set_input(0, 1, 4, "0.1").unwrap();
+    b.set_input(0, 2, 4, "0.2").unwrap();
+    b.create_data_table(0, crate::cellref::Rect::new(0, 4, 2, 6), Some((1, 0)), Some((0, 0))).unwrap();
+    match b.value(0, 2, 6) { Value::Num(v) => assert!((v - 100.0 * 1.2f64.powf(10.0)).abs() < 1e-9, "{}", v), o => panic!("{:?}", o) }
+    // saved and read back
+    let p = std::env::temp_dir().join("fs-dt.xlsx");
+    b.save(p.to_str().unwrap()).unwrap();
+    let mut b2 = Book::open(p.to_str().unwrap()).unwrap();
+    assert_eq!(b2.data_tables().len(), 2);
+    b2.set_input(0, 1, 0, "10").unwrap();
+    match b2.value(0, 3, 3) { Value::Num(v) => assert!((v - want(0.08)).abs() < 1e-9), o => panic!("{:?}", o) }
+}
+
+#[test]
+fn scenarios_and_solver() {
+    use crate::solver::*;
+    let mut b = Book::new_empty();
+    // product mix: x (B1), y (B2); profit 3x+5y (B3); constraints x<=4, 2y<=12, 3x+2y<=18
+    b.set_input(0, 0, 1, "0").unwrap();
+    b.set_input(0, 1, 1, "0").unwrap();
+    b.set_input(0, 2, 1, "=3*B1+5*B2").unwrap();
+    b.set_input(0, 3, 1, "=2*B2").unwrap();
+    b.set_input(0, 4, 1, "=3*B1+2*B2").unwrap();
+    let r = |s: &str| crate::cellref::parse_range(s).unwrap();
+    let mut m = Model {
+        objective: Some((2, 1)), goal: Goal::Max, vars: vec![r("B1:B2")],
+        constraints: vec![Constraint { lhs: r("B1"), rel: Rel::Le, rhs: "4".into() },
+                          Constraint { lhs: r("B4"), rel: Rel::Le, rhs: "12".into() },
+                          Constraint { lhs: r("B5"), rel: Rel::Le, rhs: "18".into() }],
+        method: Method::Simplex, ..Default::default()
+    };
+    let o = b.solve(0, &m);
+    assert_eq!(o.status, Status::Optimal);
+    assert!((o.x[0] - 2.0).abs() < 1e-6 && (o.x[1] - 6.0).abs() < 1e-6 && (o.objective - 36.0).abs() < 1e-6, "{:?}", o);
+    assert_eq!(b.value(0, 0, 1), Value::num(0.0));
+    m.method = Method::Grg;
+    let o = b.solve(0, &m);
+    assert!(o.status.found() && (o.objective - 36.0).abs() < 0.01, "{:?}", o);
+    // nonlinear: min (B1-3)^2+(B2+1)^2 free
+    b.set_input(0, 6, 1, "=(B1-3)^2+(B2+1)^2").unwrap();
+    let m2 = Model { objective: Some((6, 1)), goal: Goal::Min, vars: vec![r("B1:B2")], nonneg: false, method: Method::Grg, ..Default::default() };
+    let o = b.solve(0, &m2);
+    assert!(o.status.found() && (o.x[0] - 3.0).abs() < 1e-3 && (o.x[1] + 1.0).abs() < 1e-3, "{:?}", o);
+    let m3 = Model { method: Method::Simplex, ..m2.clone() };
+    assert_eq!(b.solve(0, &m3).status, Status::NotLinear);
+    // the model is saved in hidden names
+    b.set_solver_model(0, &m).unwrap();
+    let back = b.solver_model(0);
+    assert_eq!(back.objective, m.objective);
+    assert_eq!(back.vars, m.vars);
+    assert_eq!(back.constraints, m.constraints);
+    assert_eq!(back.method, Method::Grg);
+    assert!(b.names.iter().any(|n| n.name == "solver_opt" && n.hidden && n.text == "Sheet1!$B$3"));
+    // scenarios
+    let sc = crate::whatif::Scenario { name: "Best".into(), cells: vec![((0, 1), "4".into()), ((1, 1), "3".into())], locked: true, ..Default::default() };
+    b.set_scenarios(0, &[sc.clone()], "Add Scenario").unwrap();
+    let res = b.scenario_results(0, &[(2, 1)]);
+    assert_eq!(res[0][0], Value::num(27.0));
+    assert_eq!(b.value(0, 2, 1), Value::num(0.0));
+    b.show_scenario(0, 0).unwrap();
+    assert_eq!(b.value(0, 2, 1), Value::num(27.0));
+    b.undo();
+    assert_eq!(b.value(0, 2, 1), Value::num(0.0));
+    let p = std::env::temp_dir().join("fs-sc.xlsx");
+    b.save(p.to_str().unwrap()).unwrap();
+    let b2 = Book::open(p.to_str().unwrap()).unwrap();
+    assert_eq!(b2.scenarios(0), vec![sc]);
+    assert_eq!(b2.solver_model(0).constraints.len(), 3);
+}

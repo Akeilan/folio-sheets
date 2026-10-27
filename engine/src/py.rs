@@ -152,6 +152,53 @@ fn spec_dict<'py>(py: Python<'py>, sp: &crate::book_chart::ChartSpec) -> PyResul
     Ok(d)
 }
 
+fn solver_dict<'py>(py: Python<'py>, m: &crate::solver::Model) -> PyResult<Bound<'py, PyDict>> {
+    use crate::solver::{Goal, Method};
+    let d = PyDict::new_bound(py);
+    d.set_item("objective", m.objective)?;
+    let (g, v) = match m.goal {
+        Goal::Max => ("max", 0.0),
+        Goal::Min => ("min", 0.0),
+        Goal::Value(v) => ("value", v),
+    };
+    d.set_item("goal", g)?;
+    d.set_item("value", v)?;
+    d.set_item("vars", m.vars.iter().map(tup).collect::<Vec<_>>())?;
+    d.set_item("constraints", m.constraints.iter().map(|c| (tup(&c.lhs), c.rel.text().to_string(), c.rhs.clone())).collect::<Vec<_>>())?;
+    d.set_item("nonneg", m.nonneg)?;
+    d.set_item("method", match m.method { Method::Grg => "grg", Method::Simplex => "simplex", Method::Evolutionary => "evolutionary" })?;
+    d.set_item("max_iter", m.max_iter)?;
+    d.set_item("precision", m.precision)?;
+    d.set_item("int_gap", m.int_gap)?;
+    Ok(d)
+}
+
+fn dict_solver(d: &Bound<'_, PyDict>) -> PyResult<crate::solver::Model> {
+    use crate::solver::{Constraint, Goal, Method, Model, Rel};
+    let mut m = Model::default();
+    m.objective = get(d, "objective");
+    let v: f64 = get(d, "value").unwrap_or(0.0);
+    m.goal = match get::<String>(d, "goal").as_deref() {
+        Some("min") => Goal::Min,
+        Some("value") => Goal::Value(v),
+        _ => Goal::Max,
+    };
+    let vars: Vec<R4> = get(d, "vars").unwrap_or_default();
+    m.vars = rects(vars);
+    let cons: Vec<(R4, String, String)> = get(d, "constraints").unwrap_or_default();
+    m.constraints = cons.into_iter().map(|(r, rel, rhs)| Constraint { lhs: rects(vec![r]).remove(0), rel: Rel::parse(&rel), rhs }).collect();
+    m.nonneg = get(d, "nonneg").unwrap_or(true);
+    m.method = match get::<String>(d, "method").as_deref() {
+        Some("simplex") => Method::Simplex,
+        Some("evolutionary") => Method::Evolutionary,
+        _ => Method::Grg,
+    };
+    if let Some(x) = get::<u32>(d, "max_iter") { m.max_iter = x; }
+    if let Some(x) = get::<f64>(d, "precision") { m.precision = x; }
+    if let Some(x) = get::<f64>(d, "int_gap") { m.int_gap = x; }
+    Ok(m)
+}
+
 fn dict_spec(d: &Bound<'_, PyDict>) -> PyResult<crate::book_chart::ChartSpec> {
     let mut sp = crate::book_chart::ChartSpec {
         kind: get(d, "kind").unwrap_or_else(|| "col".into()),
@@ -1813,6 +1860,87 @@ impl PyBook {
     }
     fn reorder_object(&mut self, s: usize, i: usize, by: i64) -> PyResult<usize> {
         self.b.reorder_object(s, i, by).map_err(verr)
+    }
+    // ---------------------------------------------------------------- What-If Analysis, Solver (SH-20)
+    /// Goal Seek: (the value found, the target's value with it, whether it got there).
+    fn goal_seek(&mut self, s: usize, tr: u32, tc: u32, goal: f64, cr: u32, cc: u32) -> PyResult<(f64, f64, bool)> {
+        self.sheet(s)?;
+        self.b.goal_seek(s, (tr, tc), goal, (cr, cc)).map_err(verr)
+    }
+    #[pyo3(signature = (s, r1, c1, r2, c2, row_input=None, col_input=None))]
+    fn create_data_table(&mut self, s: usize, r1: u32, c1: u32, r2: u32, c2: u32, row_input: Option<(u32, u32)>, col_input: Option<(u32, u32)>) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.create_data_table(s, crate::cellref::Rect::new(r1, c1, r2, c2), row_input, col_input).map_err(verr)
+    }
+    fn data_table_at(&self, s: usize, r: u32, c: u32) -> Option<R4> {
+        self.b.data_table_at(s, r, c).map(|t| tup(&t.rect))
+    }
+    fn scenarios<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let mut out = Vec::new();
+        for sc in self.b.scenarios(s) {
+            let d = PyDict::new_bound(py);
+            d.set_item("name", &sc.name)?;
+            d.set_item("comment", &sc.comment)?;
+            d.set_item("user", &sc.user)?;
+            d.set_item("locked", sc.locked)?;
+            d.set_item("hidden", sc.hidden)?;
+            d.set_item("cells", sc.cells.iter().map(|((r, c), v)| (*r, *c, v.clone())).collect::<Vec<_>>())?;
+            out.push(d);
+        }
+        Ok(out)
+    }
+    #[pyo3(signature = (s, list, label="Scenario"))]
+    fn set_scenarios(&mut self, s: usize, list: Vec<Bound<'_, PyDict>>, label: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let mut v = Vec::new();
+        for d in list {
+            let cells: Vec<(u32, u32, String)> = get(&d, "cells").unwrap_or_default();
+            v.push(crate::whatif::Scenario {
+                name: get(&d, "name").unwrap_or_default(),
+                comment: get(&d, "comment").unwrap_or_default(),
+                user: get(&d, "user").unwrap_or_default(),
+                locked: get(&d, "locked").unwrap_or(true),
+                hidden: get(&d, "hidden").unwrap_or(false),
+                cells: cells.into_iter().map(|(r, c, x)| ((r, c), x)).collect(),
+            });
+        }
+        self.b.set_scenarios(s, &v, label).map_err(verr)
+    }
+    fn show_scenario(&mut self, s: usize, i: usize) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.show_scenario(s, i).map_err(verr)
+    }
+    fn scenario_results(&mut self, py: Python<'_>, s: usize, cells: Vec<(u32, u32)>) -> PyResult<Vec<Vec<PyObject>>> {
+        self.sheet(s)?;
+        Ok(self.b.scenario_results(s, &cells).iter().map(|r| r.iter().map(|v| py_value(py, v)).collect()).collect())
+    }
+    /// The Solver model saved with the sheet.
+    fn solver_model<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Bound<'py, PyDict>> {
+        self.sheet(s)?;
+        let m = self.b.solver_model(s);
+        solver_dict(py, &m)
+    }
+    fn set_solver_model(&mut self, s: usize, d: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.sheet(s)?;
+        let m = dict_solver(d)?;
+        self.b.set_solver_model(s, &m).map_err(verr)
+    }
+    /// Solve: {status, message, found, x, start, objective, objective_start, cells} (the sheet isn't changed).
+    fn solve<'py>(&mut self, py: Python<'py>, s: usize, d: &Bound<'_, PyDict>) -> PyResult<Bound<'py, PyDict>> {
+        self.sheet(s)?;
+        let m = dict_solver(d)?;
+        let o = self.b.solve(s, &m);
+        let r = PyDict::new_bound(py);
+        r.set_item("status", format!("{:?}", o.status).split('(').next().unwrap_or("").to_string())?;
+        r.set_item("message", o.status.message())?;
+        r.set_item("found", o.status.found())?;
+        r.set_item("x", o.x)?;
+        r.set_item("start", o.start)?;
+        r.set_item("objective", o.objective)?;
+        r.set_item("objective_start", o.objective_start)?;
+        r.set_item("cells", o.cells)?;
+        Ok(r)
     }
     // ---------------------------------------------------------------- themes (SH-22)
     /// The theme: name, colours (part order dk1 lt1 dk2 lt2 accent1..6 hlink folHlink), fonts, effects.

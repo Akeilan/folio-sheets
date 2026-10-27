@@ -131,6 +131,8 @@ pub enum Piece {
 
 #[derive(Clone, Debug)]
 pub struct Sheet {
+    /// holds a data table (What-If Analysis): looked for only then
+    pub has_data_tables: std::cell::Cell<bool>,
     pub id: u32,
     pub name: String,
     pub state: String,
@@ -194,6 +196,7 @@ impl Sheet {
             state: "visible".into(),
             kind: "work".into(),
             tab_color: None,
+            has_data_tables: std::cell::Cell::new(false),
             cells: BTreeMap::new(),
             colidx: BTreeSet::new(),
             rows: BTreeMap::new(),

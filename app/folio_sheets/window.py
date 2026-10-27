@@ -662,6 +662,27 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         i = shapes_ui.insert_wordart(self, int(k))
         GLib.idle_add(lambda: (self.shapes.edit(i, first=""), False)[1])
 
+    # ------------------------------------------------------------ What-If Analysis, Solver, Forecast Sheet
+    def act_goal_seek(self):
+        from . import whatif_ui
+        whatif_ui.goal_seek(self)
+
+    def act_data_table(self):
+        from . import whatif_ui
+        whatif_ui.data_table(self)
+
+    def act_scenario_manager(self):
+        from . import whatif_ui
+        whatif_ui.scenario_manager(self)
+
+    def act_solver(self):
+        from . import whatif_ui
+        whatif_ui.solver(self)
+
+    def act_forecast_sheet(self):
+        from . import whatif_ui
+        whatif_ui.forecast_sheet(self)
+
     # ------------------------------------------------------------ symbols, equations, screenshots
     def act_symbol(self):
         from . import symbol_ui
