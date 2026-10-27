@@ -43,6 +43,8 @@ pub struct Obj {
     pub ink_part: Option<String>,
     /// an mc:AlternateContent object this version doesn't model, written back as read
     pub raw: Option<Element>,
+    /// a slicer or timeline
+    pub slicer: Option<Rc<crate::slicer::Slicer>>,
 }
 
 /// A sheet's drawing part as read.
@@ -70,6 +72,9 @@ fn marker(e: &Element) -> Marker {
 
 impl Obj {
     pub fn kind(&self) -> &'static str {
+        if let Some(s) = &self.slicer {
+            return if s.timeline { "timeline" } else { "slicer" };
+        }
         if self.chart.is_some() {
             return "chart";
         }
@@ -221,7 +226,7 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
             None => continue,
         };
         let body: Vec<Node> = a.children.iter().filter(|n| !matches!(n, Node::Elem(e) if matches!(e.local(), "from" | "to" | "ext" | "pos"))).cloned().collect();
-        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None };
+        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None };
         o.name = find_name(&o.body).unwrap_or_default();
         // an equation's text box is read as a shape (and wrapped again when written)
         let is_math = wrapper.is_some() && o.body.iter().any(|n| matches!(n, Node::Elem(e) if (e.local() == "sp") && crate::math::find_math(e).is_some()));
@@ -432,6 +437,27 @@ pub fn write_drawing(file: Option<&DrawingFile>, objs: &[Obj]) -> String {
             Anchor::Abs { x, y, cx, cy } => {
                 s.push_str(&format!("<xdr:absoluteAnchor><xdr:pos x=\"{}\" y=\"{}\"/><xdr:ext cx=\"{}\" cy=\"{}\"/>", x, y, cx, cy));
             }
+        }
+        if let Some(sl) = &o.slicer {
+            let (cx, cy) = match &o.anchor {
+                Anchor::One { cx, cy, .. } | Anchor::Abs { cx, cy, .. } => (*cx as i64, *cy as i64),
+                _ => (1828800, 2524125),
+            };
+            let (frame, note) = crate::slicer_xml::drawing_body(sl, 1000 + out.len() % 100000, cx, cy);
+            let tail = match o.anchor {
+                Anchor::Two { .. } => "</xdr:twoCellAnchor>",
+                Anchor::One { .. } => "</xdr:oneCellAnchor>",
+                Anchor::Abs { .. } => "</xdr:absoluteAnchor>",
+            };
+            let (req, ns) = crate::slicer_xml::requires(sl);
+            let mut x = format!("<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:{req}=\"{ns}\" Requires=\"{req}\">{s}{frame}{tail}</mc:Choice><mc:Fallback>{s}{note}{tail}</mc:Fallback></mc:AlternateContent>",
+                                req = req, ns = ns, s = s, frame = frame, tail = tail, note = note);
+            if pfx != "xdr" {
+                let p = if pfx.is_empty() { String::new() } else { format!("{}:", pfx) };
+                x = x.replace("<xdr:", &format!("<{}", p)).replace("</xdr:", &format!("</{}", p));
+            }
+            out.push_str(&x);
+            continue;
         }
         for n in &o.body {
             match n {

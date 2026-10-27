@@ -112,11 +112,13 @@ pub struct Chart {
     /// the part as read; written back with only the references updated while the
     /// chart isn't changed in ways only the model describes
     pub orig: Option<(String, Element)>,
+    /// a PivotChart: the PivotTable it plots (by name)
+    pub pivot: Option<String>,
 }
 
 impl Default for Chart {
     fn default() -> Self {
-        Chart { title: Title::Auto, plots: Vec::new(), legend: Some("b".into()), x_title: None, y_title: None, gridlines: true, palette: 0, orig: None }
+        Chart { title: Title::Auto, plots: Vec::new(), legend: Some("b".into()), x_title: None, y_title: None, gridlines: true, palette: 0, orig: None, pivot: None }
     }
 }
 
@@ -676,6 +678,8 @@ impl Chart {
         let (prolog, root) = xml::parse(text)?;
         let chart = root.child("chart").ok_or("no chart element")?;
         let mut ch = Chart::default();
+        ch.pivot = root.child("pivotSource").and_then(|ps| ps.child("name")).map(|n| n.text())
+            .and_then(|t| t.rsplit('!').next().map(|x| x.to_string())).filter(|x| !x.is_empty());
         ch.title = match chart.child("title") {
             Some(t) => read_title(t),
             None => {
@@ -1020,7 +1024,17 @@ impl Chart {
         let theme = &book.styles.theme;
         let mut o = String::from(xml::DECL);
         o.push_str(&format!("<c:chartSpace xmlns:c=\"{}\" xmlns:a=\"{}\" xmlns:r=\"{}\">", NS_C, NS_A, NS_R));
-        o.push_str(&format!("<c:date1904 val=\"{}\"/><c:roundedCorners val=\"0\"/><c:chart>", book.date1904 as u8));
+        o.push_str(&format!("<c:date1904 val=\"{}\"/><c:roundedCorners val=\"0\"/>", book.date1904 as u8));
+        if let Some(pn) = &self.pivot {
+            if let Some(p) = book.pivots.iter().find(|p| &p.name == pn) {
+                let file = book.file.path.as_deref().and_then(|x| std::path::Path::new(x).file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+                    .unwrap_or_else(|| "Book1.xlsx".into());
+                let sheet = book.sheets.get(p.sheet).map(|s| s.name.clone()).unwrap_or_default();
+                let sheet = if sheet.chars().all(|c| c.is_alphanumeric() || c == '_') { sheet } else { format!("'{}'", sheet.replace('\'', "''")) };
+                o.push_str(&format!("<c:pivotSource><c:name>[{}]{}!{}</c:name><c:fmtId val=\"0\"/></c:pivotSource>", xml::escape_text(&file), xml::escape_text(&sheet), xml::escape_text(pn)));
+            }
+        }
+        o.push_str("<c:chart>");
         match &self.title {
             Title::None => o.push_str("<c:autoTitleDeleted val=\"1\"/>"),
             Title::Auto => {

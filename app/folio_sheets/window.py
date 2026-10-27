@@ -2302,6 +2302,12 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g.sel_objects = [i for i in g.sel_objects if i < n]
         chart = g.selected_chart() is not None if self.book is not None else False
         self.ribbon.show_contextual("Chart Design", chart)
+        from . import slicer_ui
+        sk = slicer_ui.sync(self) if self.book is not None else None
+        if sk and switch_tab:
+            t = self.ribbon.tab_by_name("Slicer" if sk == "slicer" else "Timeline")
+            if t is not None:
+                self.ribbon.select(t)
         from . import shapes_ui
         shapes = shapes_ui.sync_tab(self) if self.book is not None else []
         if shapes and switch_tab:
@@ -2322,7 +2328,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                  ("Change Chart Type...", "chart-change-type"), ("Select Data...", "chart-select-data"),
                  ("Switch Row/Column", "chart-switch-row-col"), None, ("Format Chart...", "chart-format")]
         kind = self.book.objects(self.grid.sheet)[i]["kind"]
-        if kind != "chart":
+        if kind in ("slicer", "timeline"):
+            noun = "Slicer" if kind == "slicer" else "Timeline"
+            items = [("Clear Filter", "slicer-clear"), None, ("Report Connections...", "filter-connections"),
+                     ("%s Settings..." % noun, "slicer-settings"), None, ("Delete", "chart-delete")]
+        elif kind != "chart":
             items = [("Delete", "chart-delete")]
         items = [it for it in items if it is None or getattr(self, commands.method_name(it[1]), None)]
         self._popup_menu(items, ev)
@@ -2535,6 +2545,65 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if pivot_ui.current(self) is not None:
             return pivot_ui.refresh(self)
         getdata_ui.refresh_current(self)
+
+    def act_pivot_chart(self, kind=None):
+        from . import pivot_ui, chart_ui
+        pi = pivot_ui.current(self)
+        if pi is None:
+            self.dialogs.message("Select a cell in a PivotTable, then insert a PivotChart of it. "
+                                 "(Insert › PivotTable makes one from your data.)", "PivotChart")
+            return
+        x, y = chart_ui._visible_center(self)
+        try:
+            i = self.book.insert_pivot_chart(pi, kind or "col", x, y)
+        except ValueError as e:
+            self.dialogs.message(str(e), "PivotChart")
+            return
+        self.grid.select_object(i)
+        self.on_object_selection(switch_tab=True)
+        self.update_title()
+
+    # ------------------------------------------------------------ slicers and timelines (SH-20)
+    def act_insert_slicer(self):
+        from . import slicer_ui
+        slicer_ui.insert(self, False)
+
+    def act_slicer(self):
+        self.act_insert_slicer()
+
+    def act_insert_timeline(self):
+        from . import slicer_ui
+        slicer_ui.insert(self, True)
+
+    def act_timeline(self):
+        self.act_insert_timeline()
+
+    def act_filter_connections(self):
+        from . import slicer_ui
+        slicer_ui.connections(self)
+
+    def act_slicer_settings(self):
+        from . import slicer_ui
+        slicer_ui.settings(self)
+
+    def act_slicer_clear(self):
+        from . import slicer_ui
+        slicer_ui.clear(self)
+
+    def act_slicer_style(self, name):
+        from . import slicer_ui
+        slicer_ui.set_style(self, name)
+
+    def act_slicer_header(self):
+        from . import slicer_ui
+        slicer_ui.toggle_header(self)
+
+    def act_slicer_level(self, k):
+        from . import slicer_ui
+        i = slicer_ui.selected(self)
+        if i is None:
+            return slicer_ui._need(self)
+        slicer_ui.set_level(self, i, int(k))
 
     # ------------------------------------------------------------ PivotTables (SH-20)
     def act_pivot_table(self, arg=None):

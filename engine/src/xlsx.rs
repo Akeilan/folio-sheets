@@ -81,14 +81,14 @@ pub struct FileParts {
     pub pivot_parts: Vec<(String, String, String)>,
 }
 
-fn rels_name(part: &str) -> String {
+pub(crate) fn rels_name(part: &str) -> String {
     match part.rfind('/') {
         Some(i) => format!("{}/_rels/{}.rels", &part[..i], &part[i + 1..]),
         None => format!("_rels/{}.rels", part),
     }
 }
 
-fn resolve(base_part: &str, target: &str) -> String {
+pub(crate) fn resolve(base_part: &str, target: &str) -> String {
     if let Some(t) = target.strip_prefix('/') {
         return t.to_string();
     }
@@ -109,7 +109,7 @@ fn resolve(base_part: &str, target: &str) -> String {
     parts.join("/")
 }
 
-fn relative(base_part: &str, target: &str) -> String {
+pub(crate) fn relative(base_part: &str, target: &str) -> String {
     let dir: Vec<&str> = match base_part.rfind('/') {
         Some(i) => base_part[..i].split('/').collect(),
         None => vec![],
@@ -374,6 +374,7 @@ impl Book {
         for p in read_pivots {
             b.adopt_pivot(p);
         }
+        crate::slicer_xml::read(&mut b);
         b.undo_stack.clear();
         b.redo_stack.clear();
         b.state = 0;
@@ -387,7 +388,7 @@ fn find_part<'a>(parts: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a Vec<u
     parts.iter().find(|(n, _)| n == name).map(|(_, d)| d)
 }
 
-fn read_rels(part: &str, parts: &[(String, Vec<u8>)]) -> Vec<(String, String, String, bool)> {
+pub(crate) fn read_rels(part: &str, parts: &[(String, Vec<u8>)]) -> Vec<(String, String, String, bool)> {
     let mut out = Vec::new();
     if let Some(d) = find_part(parts, &rels_name(part)) {
         if let Ok((_, rels)) = xml::parse_bytes(d) {
@@ -1449,8 +1450,11 @@ impl Book {
             }
             rels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Id").map(|i| drop_rids.iter().any(|d| d == i)).unwrap_or(false)));
         }
+        // slicers and timelines
+        let sl = crate::slicer_xml::write(self, &wb_part, &sheet_parts, &pv.ids, &mut out, &mut dropped, &mut ct, &mut rels, &mut used_rids);
         // the workbook
-        out.push((wb_part.clone(), self.write_workbook(&sheet_parts, &cache_adds, &drop_rids).into_bytes()));
+        let wbx = crate::slicer_xml::patch_workbook(self.write_workbook(&sheet_parts, &cache_adds, &drop_rids), &sl);
+        out.push((wb_part.clone(), wbx.into_bytes()));
         out.push((rels_name(&wb_part), xml::document(&rels_pro, &rels).into_bytes()));
         out.push(("[Content_Types].xml".into(), xml::document(&ct_pro, &ct).into_bytes()));
         // everything else as read
@@ -2462,7 +2466,7 @@ fn set_default(ct: &mut Element, ext: &str, typ: &str) {
     ct.children.insert(0, Node::Elem(Element::with_attrs("Default", &[("Extension", ext), ("ContentType", typ)])));
 }
 
-fn set_override(ct: &mut Element, part: &str, typ: &str) {
+pub(crate) fn set_override(ct: &mut Element, part: &str, typ: &str) {
     let name = format!("/{}", part);
     for n in ct.children.iter_mut() {
         if let Node::Elem(e) = n {
@@ -2475,7 +2479,7 @@ fn set_override(ct: &mut Element, part: &str, typ: &str) {
     ct.push(Element::with_attrs("Override", &[("PartName", &name), ("ContentType", typ)]));
 }
 
-fn remove_override(ct: &mut Element, part: &str) {
+pub(crate) fn remove_override(ct: &mut Element, part: &str) {
     let name = format!("/{}", part);
     ct.children.retain(|n| !matches!(n, Node::Elem(e) if e.local() == "Override" && e.attr("PartName").map(|p| p.eq_ignore_ascii_case(&name)).unwrap_or(false)));
 }
@@ -2494,6 +2498,8 @@ struct PivotWrite {
     /// cache parts the pivots use after this
     used_caches: std::collections::HashSet<String>,
     next_id: u32,
+    /// each pivot's cache as written: name -> (cache part, cacheId)
+    pub ids: HashMap<String, (String, u32)>,
 }
 
 impl PivotWrite {
@@ -2516,7 +2522,7 @@ impl PivotWrite {
                 }
             }
         }
-        PivotWrite { new_caches: vec![], used_caches: used, next_id: next.max(1) }
+        PivotWrite { new_caches: vec![], used_caches: used, next_id: next.max(1), ids: HashMap::new() }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2562,6 +2568,9 @@ impl PivotWrite {
                 if let Some(tp) = &p.table_part {
                     add_rel(srels, tp);
                 }
+                if let Some(cp) = &p.cache_part {
+                    self.ids.insert(p.name.clone(), (cp.clone(), p.cache_id));
+                }
                 continue;
             }
             let src = match b.pivot_source(p) {
@@ -2571,6 +2580,7 @@ impl PivotWrite {
                     if let (Some(tp), Some(cp)) = (&p.table_part, &p.cache_part) {
                         add_rel(srels, tp);
                         self.used_caches.insert(cp.clone());
+                        self.ids.insert(p.name.clone(), (cp.clone(), p.cache_id));
                     }
                     continue;
                 }
@@ -2590,7 +2600,14 @@ impl PivotWrite {
             self.used_caches.insert(cache_part.clone());
             let rec_part = read_rels(&cache_part, &b.file.parts).into_iter().find(|r| r.1.ends_with("/pivotCacheRecords")).map(|r| r.2)
                 .unwrap_or_else(|| fresh(&format!("{}/pivotCache/pivotCacheRecords", base), taken));
-            let (def, rec) = px::write_cache(b, p, &src, "rId1");
+            let (mut def, rec) = px::write_cache(b, p, &src, "rId1");
+            self.ids.insert(p.name.clone(), (cache_part.clone(), cache_id));
+            if !p.slicer_fields.is_empty() {
+                // slicers find the cache by its 2010 id
+                def = def.replace("</cacheFields></pivotCacheDefinition>", &format!(
+                    "</cacheFields><extLst><ext uri=\"{{725AE2AE-9491-48be-B2B4-4EB974FC3084}}\" xmlns:x14=\"{}\"><x14:pivotCacheDefinition pivotCacheId=\"{}\"/></ext></extLst></pivotCacheDefinition>",
+                    crate::slicer_xml::NS_X14, cache_id));
+            }
             out.push((cache_part.clone(), def.into_bytes()));
             out.push((rec_part.clone(), rec.into_bytes()));
             out.push((rels_name(&cache_part), format!("{}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{}\" Target=\"{}\"/></Relationships>",

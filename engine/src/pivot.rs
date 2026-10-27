@@ -199,6 +199,8 @@ pub struct Pivot {
     pub refreshable: bool,
     /// changed since it was read: its parts are written anew
     pub dirty: bool,
+    /// fields a slicer or timeline filters (their hidden items count even outside the areas)
+    pub slicer_fields: Vec<usize>,
 }
 
 impl Pivot {
@@ -237,6 +239,7 @@ impl Pivot {
             raw: None,
             refreshable: true,
             dirty: true,
+            slicer_fields: Vec::new(),
         }
     }
 
@@ -474,7 +477,7 @@ pub fn compute(b: &Book, p: &Pivot, src: &Source) -> Output {
         for (i, f) in p.fields.iter().enumerate() {
             if !f.hidden.is_empty() {
                 if let Some(v) = rec.get(i) {
-                    if f.hidden.contains(&item_text(b, v)) && (p.rows.contains(&i) || p.cols.contains(&i) || p.pages.iter().any(|x| x.0 == i)) {
+                    if f.hidden.contains(&item_text(b, v)) && (p.rows.contains(&i) || p.cols.contains(&i) || p.pages.iter().any(|x| x.0 == i) || p.slicer_fields.contains(&i)) {
                         return false;
                     }
                 }
@@ -1075,6 +1078,7 @@ impl Book {
                 let mut all = self.pivots.clone();
                 all[i] = p;
                 self.record(Delta::Pivots(all));
+                self.relink_pivot_charts(i);
                 self.commit();
                 Ok(())
             }
@@ -1190,6 +1194,7 @@ impl Book {
                 let mut all = keep;
                 all[i] = q;
                 self.record(Delta::Pivots(all));
+                self.relink_pivot_charts(i);
                 self.commit();
                 Ok(())
             }
@@ -1252,7 +1257,7 @@ impl Book {
             p.rows.iter().zip(rp.iter()).all(|(f, t)| rec.get(*f).map(|v| &item_text(self, v) == t).unwrap_or(false))
                 && p.cols.iter().zip(cp.iter()).all(|(f, t)| rec.get(*f).map(|v| &item_text(self, v) == t).unwrap_or(false))
                 && p.pages.iter().all(|(f, sel)| sel.as_ref().map(|s| rec.get(*f).map(|v| &item_text(self, v) == s).unwrap_or(false)).unwrap_or(true))
-                && p.fields.iter().enumerate().all(|(k, fd)| fd.hidden.is_empty() || !(p.rows.contains(&k) || p.cols.contains(&k) || p.pages.iter().any(|x| x.0 == k))
+                && p.fields.iter().enumerate().all(|(k, fd)| fd.hidden.is_empty() || !(p.rows.contains(&k) || p.cols.contains(&k) || p.pages.iter().any(|x| x.0 == k) || p.slicer_fields.contains(&k))
                     || rec.get(k).map(|v| !fd.hidden.contains(&item_text(self, v))).unwrap_or(true))
         }).collect();
         let rows: Vec<Vec<Value>> = keep.into_iter().cloned().collect();

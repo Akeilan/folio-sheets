@@ -55,6 +55,9 @@ pub mod whatif;
 pub mod solver;
 pub mod pivot;
 pub mod pivot_xml;
+pub mod slicer;
+pub mod slicer_xml;
+pub mod pivot_chart;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

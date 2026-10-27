@@ -26,7 +26,7 @@ impl Book {
                 }
             }
         }
-        let obj = Obj { anchor, body, chart: None, name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None };
+        let obj = Obj { anchor, body, chart: None, name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
         let i = objs.len() - 1;
