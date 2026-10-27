@@ -53,6 +53,8 @@ pub mod math;
 pub mod themes;
 pub mod whatif;
 pub mod solver;
+pub mod pivot;
+pub mod pivot_xml;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

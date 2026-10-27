@@ -131,6 +131,65 @@ impl Book {
         self.shift(s, sh, "Delete Cells")
     }
 
+    /// The PivotTables after a shift: they move whole (never cut through, gone when all of one is
+    /// deleted); sources on the sheet grow and shrink as tables do.
+    fn pivots_shifted(&self, s: usize, sh: &Shift) -> Result<Option<Vec<crate::pivot::Pivot>>, String> {
+        if self.pivots.is_empty() {
+            return Ok(None);
+        }
+        let name = self.sheets[s].name.clone();
+        let mut v = self.pivots.clone();
+        let mut changed = false;
+        let mut gone = Vec::new();
+        for (k, p) in v.iter_mut().enumerate() {
+            if p.sheet == s {
+                if let Some(o) = p.out {
+                    if let Some((a, b)) = sh.span {
+                        let (x1, x2, end) = if sh.rows { (o.c1, o.c2, o.r2) } else { (o.r1, o.r2, o.c2) };
+                        if a <= x2 && b >= x1 && !(a <= x1 && b >= x2) && end >= sh.at {
+                            return Err(crate::pivot::PIVOT_CHANGE.into());
+                        }
+                    }
+                    let corners = [(o.r1, o.c1), (o.r1, o.c2), (o.r2, o.c1), (o.r2, o.c2)];
+                    let m: Vec<Option<(u32, u32)>> = corners.iter().map(|(r, c)| sh.map(*r, *c)).collect();
+                    if m.iter().all(|x| x.is_none()) && sh.n < 0 {
+                        gone.push(k);
+                        continue;
+                    }
+                    let d: Vec<(i64, i64)> = m.iter().zip(corners.iter()).filter_map(|(x, (r, c))| x.map(|(a, b)| (a as i64 - *r as i64, b as i64 - *c as i64))).collect();
+                    if d.len() < 4 || d.iter().any(|x| *x != d[0]) {
+                        return Err(crate::pivot::PIVOT_CHANGE.into());
+                    }
+                    // no part of it in the band that goes or opens
+                    let (dr, dc) = d[0];
+                    if dr != 0 || dc != 0 {
+                        let mv = |(r, c): (u32, u32)| ((r as i64 + dr) as u32, (c as i64 + dc) as u32);
+                        p.at = mv(p.at);
+                        p.out = Some(Rect::new(mv((o.r1, o.c1)).0, mv((o.r1, o.c1)).1, mv((o.r2, o.c2)).0, mv((o.r2, o.c2)).1));
+                        p.roles = std::rc::Rc::new(p.roles.iter().map(|(k, x)| (mv(*k), *x)).collect());
+                        p.paths = std::rc::Rc::new(p.paths.iter().map(|(k, x)| (mv(*k), x.clone())).collect());
+                        p.dirty = true;
+                        changed = true;
+                    }
+                }
+            }
+            if p.source_table.is_none() && p.source_sheet == name {
+                if let Some(nr) = sh.rect(&p.source) {
+                    if nr != p.source {
+                        p.source = nr;
+                        p.dirty = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        for k in gone.iter().rev() {
+            v.remove(*k);
+            changed = true;
+        }
+        Ok(if changed { Some(v) } else { None })
+    }
+
     pub fn shift(&mut self, s: usize, mut sh: Shift, label: &str) -> Result<(), String> {
         if s >= self.sheets.len() || self.sheets[s].kind != "work" {
             return Err("This command works on worksheets only.".into());
@@ -172,9 +231,13 @@ impl Book {
                 }
             }
         }
+        let pivots = self.pivots_shifted(s, &sh)?;
         let name = sheet.name.clone();
         let how = sh.how(&name);
         self.begin(label, s);
+        if let Some(v) = pivots {
+            self.record(Delta::Pivots(v));
+        }
         // ---- formulas on the other sheets
         self.rewrite_formulas(&how, Some(s));
         // ---- this sheet, moved and rewritten

@@ -104,6 +104,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import getdata_ui
         self.queries_pane = getdata_ui.make_pane(self)
         mid.pack_start(self.queries_pane, False, False, 0)
+        from . import pivot_ui
+        self.pivot_pane = pivot_ui.make_pane(self)
+        mid.pack_start(self.pivot_pane, False, False, 0)
         self.outer.pack_start(mid, True, True, 0)
         self.tabs = SheetTabs(self)
         self.outer.pack_start(self.tabs, False, False, 0)
@@ -395,6 +398,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.sync_table_tab()
         from . import sparkline_ui
         sparkline_ui.sync_tab(self)
+        from . import pivot_ui
+        pivot_ui.sync(self)
         title_dirty = self.book.modified
         if getattr(self, "_last_dirty", None) != title_dirty:
             self._last_dirty = title_dirty
@@ -516,7 +521,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             (self.formula_bar.view if self.formula_bar.view.has_focus() else g.editor).grab_focus()
             return
         r, c = g.sel.active
-        self.book.set_input(g.sheet, r, c, "=" + s)
+        try:
+            self.book.set_input(g.sheet, r, c, "=" + s)
+        except ValueError as e:
+            self.dialogs.message(str(e))
+            return
         g.refresh()
 
     def fill_selection_with_edit(self):
@@ -1695,6 +1704,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             items = common + [("Insert", "insert-rows"), ("Delete", "delete-rows"),
                               ("Clear Contents", "clear-contents"), None, ("Format Cells...", "format-cells"),
                               ("Row Height...", "row-height"), ("Hide", "hide-rows"), ("Unhide", "unhide-rows")]
+        elif self.book is not None and self.book.pivot_at(self.grid.sheet, *self.grid.sel.active) is not None:
+            from . import pivot_ui
+            items = pivot_ui.menu_items(self)
         else:
             items = common + [("Smart Lookup", None), ("Insert...", "insert-cells"), ("Delete...", "delete-cells"),
                               ("Clear Contents", "clear-contents"), None, ("Quick Analysis", None),
@@ -1729,15 +1741,21 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         return [("New Note", "new-note")]
 
     def _popup_menu(self, items, ev):
-        menu = Gtk.Menu()
-        menu.get_style_context().add_class("folio-menu")
-        for it in items:
-            if it is None:
-                menu.append(Gtk.SeparatorMenuItem())
-                continue
-            mi = Gtk.MenuItem(label=it[0])
-            mi.connect("activate", lambda _m, c=it[1]: GLib.idle_add(lambda: (self.run(c), False)[1]))
-            menu.append(mi)
+        def build(items):
+            menu = Gtk.Menu()
+            menu.get_style_context().add_class("folio-menu")
+            for it in items:
+                if it is None:
+                    menu.append(Gtk.SeparatorMenuItem())
+                    continue
+                mi = Gtk.MenuItem(label=it[0])
+                if isinstance(it[1], list):
+                    mi.set_submenu(build(it[1]))
+                else:
+                    mi.connect("activate", lambda _m, c=it[1]: GLib.idle_add(lambda: (self.run(c), False)[1]))
+                menu.append(mi)
+            return menu
+        menu = build(items)
         menu.show_all()
         menu.attach_to_widget(self, None)
         menu.popup_at_pointer(ev)
@@ -2507,12 +2525,136 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         getdata_ui.not_available(self, what)
 
     def act_refresh_all(self):
-        from . import getdata_ui
+        from . import getdata_ui, pivot_ui
         getdata_ui.refresh_all(self)
+        if self.book is not None and self.book.pivot_count():
+            pivot_ui.refresh(self, True)
 
     def act_refresh(self):
-        from . import getdata_ui
+        from . import getdata_ui, pivot_ui
+        if pivot_ui.current(self) is not None:
+            return pivot_ui.refresh(self)
         getdata_ui.refresh_current(self)
+
+    # ------------------------------------------------------------ PivotTables (SH-20)
+    def act_pivot_table(self, arg=None):
+        from . import pivot_ui
+        pivot_ui.create(self, arg)
+
+    def act_recommended_pivots(self):
+        from . import pivot_ui
+        pivot_ui.recommended(self)
+
+    def act_pivot_options(self):
+        from . import pivot_ui
+        pivot_ui.options(self)
+
+    def act_pivot_field_settings(self):
+        from . import pivot_ui
+        pivot_ui.field_settings(self)
+
+    def act_pivot_refresh(self):
+        from . import pivot_ui
+        pivot_ui.refresh(self)
+
+    def act_pivot_refresh_all(self):
+        from . import pivot_ui
+        pivot_ui.refresh(self, True)
+
+    def act_pivot_change_source(self):
+        from . import pivot_ui
+        i = pivot_ui.current(self)
+        if i is not None:
+            pivot_ui._run(self, pivot_ui.SourceDialog(self, i), "Change PivotTable Data Source")
+
+    def act_pivot_move(self):
+        from . import pivot_ui
+        i = pivot_ui.current(self)
+        if i is not None:
+            pivot_ui._run(self, pivot_ui.MoveDialog(self, i), "Move PivotTable")
+
+    def act_pivot_clear(self, arg="all"):
+        from . import pivot_ui
+        pivot_ui.clear(self, arg)
+
+    def act_pivot_select(self, arg="both"):
+        from . import pivot_ui
+        pivot_ui.select(self, arg)
+
+    def act_pivot_field_list(self):
+        from . import pivot_ui
+        pivot_ui.show_pane(self)
+
+    def act_pivot_field_headers(self):
+        from . import pivot_ui
+        i = pivot_ui.current(self)
+        if i is not None:
+            pivot_ui.apply(self, i, {"field_headers": not self.book.pivot(i)["field_headers"]}, "Field Headers")
+
+    def act_pivot_design(self, arg):
+        from . import pivot_ui
+        pivot_ui.design(self, arg)
+
+    def act_pivot_details(self):
+        from . import pivot_ui
+        pivot_ui.show_details(self)
+
+    def act_pivot_sort(self, arg="1"):
+        from . import pivot_ui
+        pivot_ui.sort_active(self, int(arg))
+
+    def act_pivot_remove_field(self):
+        from . import pivot_ui
+        pivot_ui.remove_active(self)
+
+    def act_pivot_summarize(self, arg):
+        from . import pivot_ui
+        pivot_ui.summarize(self, arg)
+
+    def act_pivot_show_as(self, arg):
+        from . import pivot_ui
+        pivot_ui.show_as(self, arg)
+
+    def act_pivot_number_format(self):
+        from . import pivot_ui
+        pivot_ui.number_format(self)
+
+    def _pivot_missing(self, what, more=""):
+        from . import pivot_ui
+        self.dialogs.info(pivot_ui.NOT_HERE % (what, APP_NAME) + more, "PivotTable")
+
+    def act_pivot_drill_down(self):
+        self._pivot_missing("Drill Down", " It works on Data Model PivotTables.")
+
+    def act_pivot_drill_up(self):
+        self._pivot_missing("Drill Up", " It works on Data Model PivotTables.")
+
+    def act_pivot_expand(self):
+        self._pivot_missing("Expanding and collapsing fields")
+
+    act_pivot_collapse = act_pivot_expand
+    act_pivot_expand_buttons = act_pivot_expand
+
+    def act_pivot_group(self):
+        self._pivot_missing("Grouping PivotTable items")
+
+    act_pivot_ungroup = act_pivot_group
+    act_pivot_group_field = act_pivot_group
+
+    def act_pivot_calculated(self):
+        self._pivot_missing("Calculated fields and items")
+
+    def act_pivot_olap(self):
+        self._pivot_missing("OLAP Tools")
+
+    def act_pivot_relationships(self):
+        self._pivot_missing("Relationships (the Data Model)")
+
+    def act_pivot_filter_pages(self):
+        self._pivot_missing("Show Report Filter Pages")
+
+    def act_pivot_getpivotdata(self):
+        self._pivot_missing("GETPIVOTDATA")
 
     def act_queries_connections(self):
         from . import getdata_ui

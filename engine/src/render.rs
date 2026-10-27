@@ -145,6 +145,7 @@ impl Book {
                 self.paint_cells(s, cr, p, &g, &bands, &rows, &cols, &mut pen);
                 if !p.print {
                     self.paint_filter_buttons(s, cr, p, &rows, &cols);
+                    self.paint_pivot_placeholders(s, cr, p, &g, &mut pen);
                     if p.page_breaks {
                         self.paint_page_breaks(s, cr, p, &g, &rows, &cols, &mut pen);
                     }
@@ -729,6 +730,18 @@ impl Book {
                 }
             }
         }
+        // ---- pivot styles
+        for pv in self.pivots.iter().filter(|x| x.sheet == s && x.out.map(|o| o.intersects(&view)).unwrap_or(false)) {
+            for &(r, _, _) in rows {
+                for &(c, _, _) in cols {
+                    if pv.roles.contains_key(&(r, c)) {
+                        if let Some(t) = self.pivot_cell(pv, r, c) {
+                            tcm.insert((r, c), t);
+                        }
+                    }
+                }
+            }
+        }
         // ---- fills
         let mut filled: HashMap<(u32, u32), u32> = HashMap::new();
         for &(r, y, h) in rows {
@@ -1099,8 +1112,46 @@ impl Book {
         }
     }
 
+    /// An empty PivotTable: the box that asks for fields.
+    unsafe fn paint_pivot_placeholders(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, pen: &mut Pen) {
+        for pv in self.pivots.iter().filter(|x| x.sheet == s && x.rows.is_empty() && x.cols.is_empty() && x.values.is_empty()) {
+            let t = match pv.table_rect() {
+                Some(t) => t,
+                None => continue,
+            };
+            let (x0, x1) = (self.screen_x(s, p, g, t.c1), self.screen_x(s, p, g, t.c2 + 1));
+            let (y0, y1) = (self.screen_y(s, p, g, t.r1), self.screen_y(s, p, g, t.r2 + 1));
+            if x1 <= x0 || y1 <= y0 {
+                continue;
+            }
+            rgb(cr, 0xFFFFFF);
+            cairo_rectangle(cr, x0, y0, x1 - x0, y1 - y0);
+            cairo_fill(cr);
+            rgb(cr, 0xA0A0A0);
+            cairo_set_line_width(cr, 1.0);
+            cairo_rectangle(cr, x0.round() + 0.5, y0.round() + 0.5, (x1 - x0).round() - 1.0, (y1 - y0).round() - 1.0);
+            cairo_stroke(cr);
+            let f = FontSpec { family: self.styles.theme_fonts.1.clone(), size: 11.0, bold: true, italic: false, underline: 0, strike: false, vert: 0, color: 0 };
+            let w = (x1 - x0 - 16.0).max(20.0);
+            let (_, h1) = pen.set(&pv.name, &f, p.zoom, Some(w));
+            rgb(cr, 0x404040);
+            let top = y0 + (y1 - y0) * 0.3;
+            cairo_move_to(cr, x0 + 8.0, top);
+            pango_cairo_show_layout(cr, pen.layout);
+            let f2 = FontSpec { bold: false, size: 9.0, ..f };
+            pen.set("To build a report, choose fields from the PivotTable Field List", &f2, p.zoom, Some(w));
+            cairo_move_to(cr, x0 + 8.0, top + h1 + 8.0 * p.zoom);
+            pango_cairo_show_layout(cr, pen.layout);
+        }
+    }
+
     unsafe fn paint_filter_buttons(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, rows: &[(u32, f64, f64)], cols: &[(u32, f64, f64)]) {
-        for (hr, c1, c2, filtered_cols) in self.filter_headers(s) {
+        let mut heads = self.filter_headers(s);
+        // a PivotTable's buttons, one cell each
+        for (r, c, f, _, _) in self.pivot_buttons(s) {
+            heads.push((r, c, c, if f { vec![c] } else { vec![] }));
+        }
+        for (hr, c1, c2, filtered_cols) in heads {
         let row = match rows.iter().find(|(r, _, _)| *r == hr) {
             Some(x) => *x,
             None => continue,
@@ -1168,7 +1219,8 @@ impl Book {
         let (bx, by, bw, bh) = cell;
         let pad = (3.0 * z).round().max(1.0);
         let mdw = self.mdw(s);
-        let indent = xf.indent as f64 * 3.0 * mdw * z;
+        let indent = xf.indent as f64 * 3.0 * mdw * z
+            + self.pivots.iter().find(|q| q.sheet == s && q.out.map(|o| o.contains(r, c)).unwrap_or(false)).map(|q| self.pivot_indent(q, r, c) * z).unwrap_or(0.0);
         // the text and its colour
         let mut color = font.color;
         let mut fill_char: Option<(usize, char)> = None;

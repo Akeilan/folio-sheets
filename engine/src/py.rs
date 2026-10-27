@@ -152,6 +152,113 @@ fn spec_dict<'py>(py: Python<'py>, sp: &crate::book_chart::ChartSpec) -> PyResul
     Ok(d)
 }
 
+fn pivot_dict<'py>(py: Python<'py>, p: &crate::pivot::Pivot) -> PyResult<Bound<'py, PyDict>> {
+    use crate::pivot::{Layout, Subtotals};
+    let d = PyDict::new_bound(py);
+    d.set_item("name", &p.name)?;
+    d.set_item("source_sheet", &p.source_sheet)?;
+    d.set_item("source", tup(&p.source))?;
+    d.set_item("source_table", p.source_table.clone())?;
+    d.set_item("sheet", p.sheet)?;
+    d.set_item("at", p.at)?;
+    let fields = pyo3::types::PyList::empty_bound(py);
+    for f in &p.fields {
+        let fd = PyDict::new_bound(py);
+        fd.set_item("name", &f.name)?;
+        let mut h: Vec<String> = f.hidden.iter().cloned().collect();
+        h.sort();
+        fd.set_item("hidden", h)?;
+        fd.set_item("sort", f.sort)?;
+        fd.set_item("subtotal", f.subtotal)?;
+        fields.append(fd)?;
+    }
+    d.set_item("fields", fields)?;
+    d.set_item("rows", p.rows.clone())?;
+    d.set_item("cols", p.cols.clone())?;
+    d.set_item("pages", p.pages.clone())?;
+    let vals = pyo3::types::PyList::empty_bound(py);
+    for v in &p.values {
+        let vd = PyDict::new_bound(py);
+        vd.set_item("field", v.field)?;
+        vd.set_item("agg", v.agg.code())?;
+        vd.set_item("name", &v.name)?;
+        vd.set_item("show", v.show.code())?;
+        vd.set_item("numfmt", v.numfmt.clone())?;
+        vals.append(vd)?;
+    }
+    d.set_item("values", vals)?;
+    d.set_item("values_in_rows", p.values_in_rows)?;
+    d.set_item("layout", match p.layout { Layout::Compact => "compact", Layout::Outline => "outline", Layout::Tabular => "tabular" })?;
+    d.set_item("subtotals", match p.subtotals { Subtotals::Top => "top", Subtotals::Bottom => "bottom", Subtotals::None => "none" })?;
+    for (k, v) in [("grand_rows", p.grand_rows), ("grand_cols", p.grand_cols), ("repeat_labels", p.repeat_labels), ("blank_rows", p.blank_rows),
+                   ("row_headers", p.row_headers), ("col_headers", p.col_headers), ("banded_rows", p.banded_rows), ("banded_cols", p.banded_cols),
+                   ("field_headers", p.field_headers), ("refreshable", p.refreshable)] {
+        d.set_item(k, v)?;
+    }
+    d.set_item("style", &p.style)?;
+    d.set_item("out", p.out.map(|o| tup(&o)))?;
+    d.set_item("table", p.table_rect().map(|o| tup(&o)))?;
+    Ok(d)
+}
+
+/// The settings in `d` (any subset of pivot_dict's keys) onto a pivot.
+fn dict_into_pivot(d: &Bound<'_, PyDict>, p: &mut crate::pivot::Pivot) -> PyResult<()> {
+    use crate::pivot::{Agg, DataField, Layout, ShowAs, Subtotals};
+    if let Some(x) = get::<String>(d, "name") { p.name = x; }
+    if let Some(fl) = d.get_item("fields")? {
+        let fl = fl.downcast::<pyo3::types::PyList>()?;
+        for (k, f) in fl.iter().enumerate() {
+            if k >= p.fields.len() { break; }
+            let f = f.downcast::<PyDict>()?;
+            if let Some(h) = get::<Vec<String>>(f, "hidden") { p.fields[k].hidden = h.into_iter().collect(); }
+            if let Some(x) = get::<i8>(f, "sort") { p.fields[k].sort = x; }
+            if let Some(x) = get::<bool>(f, "subtotal") { p.fields[k].subtotal = x; }
+        }
+    }
+    let n = p.fields.len();
+    if let Some(x) = get::<Vec<usize>>(d, "rows") { p.rows = x.into_iter().filter(|i| *i < n).collect(); }
+    if let Some(x) = get::<Vec<usize>>(d, "cols") { p.cols = x.into_iter().filter(|i| *i < n).collect(); }
+    if let Some(x) = get::<Vec<(usize, Option<String>)>>(d, "pages") { p.pages = x.into_iter().filter(|i| i.0 < n).collect(); }
+    if let Some(vl) = d.get_item("values")? {
+        let vl = vl.downcast::<pyo3::types::PyList>()?;
+        let mut vals = Vec::new();
+        for v in vl.iter() {
+            let v = v.downcast::<PyDict>()?;
+            let field: usize = get(v, "field").unwrap_or(0);
+            if field >= n { continue; }
+            let agg = Agg::from_code(&get::<String>(v, "agg").unwrap_or_else(|| "sum".into()));
+            let name = get::<String>(v, "name").unwrap_or_else(|| format!("{} of {}", agg.name(), p.fields[field].name));
+            vals.push(DataField { field, agg, name, show: ShowAs::from_code(&get::<String>(v, "show").unwrap_or_default()), numfmt: get(v, "numfmt") });
+        }
+        p.values = vals;
+    }
+    // a field is in one area at a time (values aside)
+    let rows = p.rows.clone();
+    p.cols.retain(|i| !rows.contains(i));
+    let cols = p.cols.clone();
+    p.pages.retain(|(i, _)| !rows.contains(i) && !cols.contains(i));
+    if let Some(x) = get::<bool>(d, "values_in_rows") { p.values_in_rows = x; }
+    if let Some(x) = get::<String>(d, "layout") {
+        p.layout = match x.as_str() { "outline" => Layout::Outline, "tabular" => Layout::Tabular, _ => Layout::Compact };
+    }
+    if let Some(x) = get::<String>(d, "subtotals") {
+        p.subtotals = match x.as_str() { "bottom" => Subtotals::Bottom, "none" => Subtotals::None, _ => Subtotals::Top };
+    }
+    if let Some(x) = get(d, "grand_rows") { p.grand_rows = x; }
+    if let Some(x) = get(d, "grand_cols") { p.grand_cols = x; }
+    if let Some(x) = get(d, "repeat_labels") { p.repeat_labels = x; }
+    if let Some(x) = get(d, "blank_rows") { p.blank_rows = x; }
+    if let Some(x) = get(d, "row_headers") { p.row_headers = x; }
+    if let Some(x) = get(d, "col_headers") { p.col_headers = x; }
+    if let Some(x) = get(d, "banded_rows") { p.banded_rows = x; }
+    if let Some(x) = get(d, "banded_cols") { p.banded_cols = x; }
+    if let Some(x) = get(d, "field_headers") { p.field_headers = x; }
+    if let Some(x) = get::<String>(d, "style") { if crate::pivot::pivot_style(&x).is_some() || x.is_empty() { p.style = x; } }
+    if let Some(x) = get::<R4>(d, "source") { p.source = Rect::new(x.0, x.1, x.2, x.3); p.source_table = None; }
+    if let Some(x) = get::<String>(d, "source_sheet") { p.source_sheet = x; }
+    Ok(())
+}
+
 fn solver_dict<'py>(py: Python<'py>, m: &crate::solver::Model) -> PyResult<Bound<'py, PyDict>> {
     use crate::solver::{Goal, Method};
     let d = PyDict::new_bound(py);
@@ -1107,6 +1214,12 @@ impl PyBook {
         self.b.resize_table(s, i, rect(rg)).map_err(verr)
     }
     /// A thumbnail of a table style (the gallery).
+    #[pyo3(signature = (cr, style, w, h, banded_rows=false, banded_cols=false))]
+    fn render_pivot_style(&self, cr: &Bound<'_, PyAny>, style: &str, w: f64, h: f64, banded_rows: bool, banded_cols: bool) -> PyResult<()> {
+        let ctx = cairo_ptr(cr)?;
+        unsafe { self.b.paint_pivot_style(ctx, style, w, h, banded_rows, banded_cols) };
+        Ok(())
+    }
     fn render_table_style(&self, cr: &Bound<'_, PyAny>, style: &str, w: f64, h: f64) -> PyResult<()> {
         let ctx = cairo_ptr(cr)?;
         unsafe { self.b.paint_table_style(ctx, style, w, h) };
@@ -1941,6 +2054,79 @@ impl PyBook {
         r.set_item("objective_start", o.objective_start)?;
         r.set_item("cells", o.cells)?;
         Ok(r)
+    }
+    // ---------------------------------------------------------------- PivotTables (SH-20)
+    fn pivot_count(&self) -> usize {
+        self.b.pivots.len()
+    }
+    fn pivot<'py>(&self, py: Python<'py>, i: usize) -> PyResult<Bound<'py, PyDict>> {
+        let p = self.b.pivots.get(i).ok_or_else(|| PyIndexError::new_err("no such PivotTable"))?;
+        pivot_dict(py, p)
+    }
+    fn pivot_at(&self, s: usize, r: u32, c: u32) -> Option<usize> {
+        self.b.pivot_at(s, r, c)
+    }
+    /// What a cell of a pivot is: page_label, page_value, header, col_item, row_item, subtotal, data, grand_label, grand_row, grand_col.
+    fn pivot_role(&self, s: usize, r: u32, c: u32) -> Option<(String, u8)> {
+        use crate::pivot::Role;
+        let i = self.b.pivot_at(s, r, c)?;
+        let role = *self.b.pivots[i].roles.get(&(r, c))?;
+        Some(match role {
+            Role::PageLabel => ("page_label".into(), 0),
+            Role::PageValue => ("page_value".into(), 0),
+            Role::Header => ("header".into(), 0),
+            Role::ColItem => ("col_item".into(), 0),
+            Role::RowItem(l) => ("row_item".into(), l),
+            Role::Subtotal(l) => ("subtotal".into(), l),
+            Role::Data => ("data".into(), 0),
+            Role::GrandLabel => ("grand_label".into(), 0),
+            Role::GrandRow => ("grand_row".into(), 0),
+            Role::GrandCol => ("grand_col".into(), 0),
+        })
+    }
+    /// The (row items, column items) a value cell sums.
+    fn pivot_path(&self, s: usize, r: u32, c: u32) -> Option<(Vec<String>, Vec<String>)> {
+        let i = self.b.pivot_at(s, r, c)?;
+        self.b.pivots[i].paths.get(&(r, c)).cloned()
+    }
+    /// The pivot drop-down at a cell: (pivot, what, index) — what: rows / cols / page.
+    fn pivot_button_at(&self, s: usize, r: u32, c: u32) -> Option<(usize, String, usize)> {
+        let i = self.b.pivot_at(s, r, c)?;
+        self.b.pivot_buttons(s).into_iter().find(|b| b.0 == r && b.1 == c).map(|b| (i, b.3.to_string(), b.4))
+    }
+    fn pivot_field_items(&self, i: usize, f: usize) -> Vec<String> {
+        self.b.pivot_field_items(i, f)
+    }
+    fn create_pivot(&mut self, src_sheet: usize, src: R4, dest_sheet: usize, at: (u32, u32)) -> PyResult<usize> {
+        self.sheet(src_sheet)?;
+        self.sheet(dest_sheet)?;
+        self.b.create_pivot(src_sheet, Rect::new(src.0, src.1, src.2, src.3), dest_sheet, at).map_err(verr)
+    }
+    #[pyo3(signature = (i, d, label="PivotTable"))]
+    fn set_pivot(&mut self, i: usize, d: &Bound<'_, PyDict>, label: &str) -> PyResult<()> {
+        let mut p = self.b.pivots.get(i).cloned().ok_or_else(|| PyIndexError::new_err("no such PivotTable"))?;
+        dict_into_pivot(d, &mut p)?;
+        if p.name != self.b.pivots[i].name && self.b.pivots.iter().enumerate().any(|(k, q)| k != i && q.name.eq_ignore_ascii_case(&p.name)) {
+            return Err(verr("A PivotTable with that name already exists.".into()));
+        }
+        self.b.edit_pivot(i, label, move |q| *q = p).map_err(verr)
+    }
+    fn refresh_pivot(&mut self, i: usize) -> PyResult<()> {
+        self.b.refresh_pivot(i).map_err(verr)
+    }
+    fn refresh_all_pivots(&mut self) -> PyResult<()> {
+        self.b.refresh_all_pivots().map_err(verr)
+    }
+    fn delete_pivot(&mut self, i: usize) -> PyResult<()> {
+        self.b.delete_pivot(i).map_err(verr)
+    }
+    fn move_pivot(&mut self, i: usize, sheet: usize, at: (u32, u32)) -> PyResult<()> {
+        self.sheet(sheet)?;
+        self.b.move_pivot(i, sheet, at).map_err(verr)
+    }
+    /// Show Details: the new sheet's index.
+    fn pivot_details(&mut self, i: usize, r: u32, c: u32) -> PyResult<usize> {
+        self.b.pivot_details(i, r, c).map_err(verr)
     }
     // ---------------------------------------------------------------- themes (SH-22)
     /// The theme: name, colours (part order dk1 lt1 dk2 lt2 accent1..6 hlink folHlink), fonts, effects.

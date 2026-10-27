@@ -51,6 +51,11 @@ NEEDS = {
     "spark-type": "never", "spark-show": "never", "spark-color": "never", "spark-weight": "never",
     "spark-marker": "never", "spark-clear": "never", "spark-clear-group": "never", "spark-group": "never",
     "spark-ungroup": "never", "spark-edit-data": "never",
+    "pivot-options": "pivotTables", "pivot-field-settings": "pivotTables", "pivot-refresh": "pivotTables",
+    "pivot-refresh-all": "pivotTables", "pivot-change-source": "pivotTables", "pivot-move": "never",
+    "pivot-clear": "pivotTables", "pivot-design": "pivotTables", "pivot-sort": "pivotTables",
+    "pivot-remove-field": "pivotTables", "pivot-summarize": "pivotTables", "pivot-show-as": "pivotTables",
+    "pivot-number-format": "pivotTables", "pivot-field-headers": "pivotTables",
 }
 # sheet commands that Protect Workbook (structure) stops
 STRUCTURE = {"insert-sheet", "delete-sheet", "rename-sheet", "move-copy-sheet", "hide-sheet", "unhide-sheet",

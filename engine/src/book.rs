@@ -107,6 +107,7 @@ pub enum Delta {
     Fit(usize, bool),
     /// the theme part (None: the default theme)
     Theme(Option<String>),
+    Pivots(Vec<crate::pivot::Pivot>),
 }
 
 #[derive(Clone, Debug)]
@@ -147,6 +148,8 @@ pub struct Book {
     pub forced: BTreeSet<Key>,
     /// trying values (What-If Analysis): no data tables worked out meanwhile
     pub in_what_if: bool,
+    /// the PivotTables (each knows its sheet)
+    pub pivots: Vec<crate::pivot::Pivot>,
     pub rebuild: bool,
     pub pending: bool,
     pub circ: Vec<Key>,
@@ -190,6 +193,7 @@ impl Book {
             changed: vec![],
             forced: BTreeSet::new(),
             in_what_if: false,
+            pivots: vec![],
             rebuild: false,
             pending: false,
             circ: vec![],
@@ -396,6 +400,7 @@ impl Book {
                 }
                 Delta::Meta(s, old)
             }
+            Delta::Pivots(v) => Delta::Pivots(std::mem::replace(&mut self.pivots, v)),
             Delta::Theme(x) => {
                 let old = self.styles.theme_xml.clone();
                 self.styles.use_theme(x.as_deref());
@@ -410,6 +415,11 @@ impl Book {
             Delta::AddSheet(at, sh) => {
                 self.sheets.insert(at, *sh);
                 self.shift_scopes(at, 1);
+                for p in self.pivots.iter_mut() {
+                    if p.sheet >= at {
+                        p.sheet += 1;
+                    }
+                }
                 if self.active >= at && self.sheets.len() > 1 && self.active + 1 < self.sheets.len() {
                     self.active += 1;
                 }
@@ -419,6 +429,11 @@ impl Book {
             Delta::RemoveSheet(at) => {
                 let sh = self.sheets.remove(at);
                 self.shift_scopes(at, -1);
+                for p in self.pivots.iter_mut() {
+                    if p.sheet > at {
+                        p.sheet -= 1;
+                    }
+                }
                 if self.active >= self.sheets.len() {
                     self.active = self.sheets.len().saturating_sub(1);
                 } else if self.active > at {
@@ -448,6 +463,9 @@ impl Book {
                     }
                 }
                 self.active = map(self.active);
+                for p in self.pivots.iter_mut() {
+                    p.sheet = map(p.sheet);
+                }
                 self.rebuild = true;
                 Delta::MoveSheet(to, from)
             }
@@ -723,6 +741,9 @@ impl Book {
         if !self.in_what_if && self.data_table_at(s, r, c).is_some() {
             return Err("Cannot change part of a data table.".into());
         }
+        if let Some(i) = self.pivot_at(s, r, c) {
+            return self.pivot_input(i, r, c, text);
+        }
         let cur = self.sheets[s].get(r, c).cloned();
         let xf = cur.as_ref().map(|x| x.s).unwrap_or_else(|| self.sheets[s].style_at(r, c));
         let code = self.styles.xf_numfmt(xf);
@@ -878,7 +899,30 @@ impl Book {
                 }
             }
         }
+        // a PivotTable goes when all of it is cleared; part of one can't be
+        let mut pv_gone: Vec<usize> = Vec::new();
+        for (k, p) in self.pivots.iter().enumerate().filter(|(_, p)| p.sheet == s) {
+            if let (Some(o), Some(t)) = (p.out, p.table_rect()) {
+                if ranges.iter().any(|rc| rc.contains_rect(&t) || rc.contains_rect(&o)) {
+                    pv_gone.push(k);
+                } else if ranges.iter().any(|rc| rc.intersects(&o) && p.roles.keys().any(|(r, c)| rc.contains(*r, *c))) {
+                    return Err(crate::pivot::PIVOT_CHANGE.into());
+                }
+            }
+        }
         self.begin(label, s);
+        if !pv_gone.is_empty() {
+            let mut all = self.pivots.clone();
+            for k in pv_gone.iter().rev() {
+                let o = all[*k].out.unwrap();
+                for (r, c) in self.sheets[s].positions_in(o) {
+                    let st = self.sheets[s].get(r, c).map(|x| x.s).unwrap_or(0);
+                    self.record(Delta::Cell(s, r, c, if st != 0 { Some(Cell { s: st, ..Default::default() }) } else { None }));
+                }
+                all.remove(*k);
+            }
+            self.record(Delta::Pivots(all));
+        }
         for rc in ranges {
             let rc = self.sheets[s].clamp_rect(*rc);
             let pos = self.sheets[s].positions_in(rc);
@@ -1266,6 +1310,10 @@ impl Book {
             n.text = formula::adjust(&n.text, &Adjust::DeleteSheet(&name));
         }
         self.record(Delta::Names(names));
+        if self.pivots.iter().any(|p| p.sheet == i) {
+            let keep: Vec<crate::pivot::Pivot> = self.pivots.iter().filter(|p| p.sheet != i).cloned().collect();
+            self.record(Delta::Pivots(keep));
+        }
         self.record(Delta::RemoveSheet(i));
         self.commit();
         Ok(())
@@ -1295,6 +1343,16 @@ impl Book {
         }
         if changed {
             self.record(Delta::Names(names));
+        }
+        if self.pivots.iter().any(|p| p.source_sheet == old) {
+            let mut ps = self.pivots.clone();
+            for p in ps.iter_mut() {
+                if p.source_sheet == old {
+                    p.source_sheet = name.to_string();
+                    p.dirty = true;
+                }
+            }
+            self.record(Delta::Pivots(ps));
         }
         let mut m = self.meta(i);
         m.name = name.to_string();

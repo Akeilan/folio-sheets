@@ -505,6 +505,19 @@ impl Styles {
         self.root.child(coll).and_then(|c| c.elems().nth(i as usize).or_else(|| c.elems().next())).cloned().unwrap_or_else(|| Element::new("x"))
     }
 
+    /// The id of a number format already in the book (or built in).
+    pub fn numfmt_id_ro(&self, code: &str) -> Option<u32> {
+        if code.eq_ignore_ascii_case("General") {
+            return Some(0);
+        }
+        for (id, c) in BUILTIN_FORMATS.iter().chain(BUILTIN_EXTRA.iter()) {
+            if *c == code {
+                return Some(*id);
+            }
+        }
+        self.numfmts.iter().find(|(_, c)| *c == code).map(|(id, _)| *id)
+    }
+
     pub fn numfmt_id(&mut self, code: &str) -> u32 {
         if code.eq_ignore_ascii_case("General") {
             return 0;
