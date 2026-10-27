@@ -471,7 +471,9 @@ def build_ribbon(win):
     # ================================================================ Insert
     t = r.building(Tab("Insert", "N"))
     B.group(t, "Tables", [
-        B.big("PivotTable", "r-pivot-table", "pivot-table", "V"),
+        B.big("PivotTable", "r-pivot-table", "pivot-table", "V", menu=[("From Table/Range", "pivot-table"),
+                                                                     ("From External Data Source", "pivot-table:external"),
+                                                                     ("From Data Model", "pivot-table:model")]),
         B.big("Recommended\nPivotTables", "r-recommended-pivots", "recommended-pivots", "SP"),
         B.big("Table", "r-table", "table", "T"),
     ])
@@ -829,6 +831,8 @@ def build_ribbon(win):
     r.show_contextual("Chart Design", False)
     from . import table_ui
     table_ui.build_tab(win, B)
+    from . import pivot_ui
+    pivot_ui.build_tabs(win, B)
     from . import shapes_ui
     shapes_ui.build_tab(win, B)
     from . import sparkline_ui

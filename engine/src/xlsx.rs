@@ -77,6 +77,8 @@ pub struct FileParts {
     pub persons_part: Option<String>,
     /// the theme part
     pub theme_part: Option<String>,
+    /// the PivotTables as read: (worksheet part, table part, cache definition part)
+    pub pivot_parts: Vec<(String, String, String)>,
 }
 
 fn rels_name(part: &str) -> String {
@@ -333,6 +335,33 @@ impl Book {
         }
         b.active = active_tab.min(b.sheets.len() - 1);
         b.file.wb_part = wb_part;
+        // PivotTables
+        let mut read_pivots = Vec::new();
+        for (i, sh) in b.sheets.iter().enumerate() {
+            if sh.raw_part.is_some() || sh.part.is_empty() {
+                continue;
+            }
+            for (_, typ, target, ext) in read_rels(&sh.part, &parts) {
+                if ext || !typ.ends_with("/pivotTable") {
+                    continue;
+                }
+                let cache = read_rels(&target, &parts).into_iter().find(|r| r.1.ends_with("/pivotCacheDefinition")).map(|r| r.2);
+                let cache = match cache {
+                    Some(c) => c,
+                    None => continue,
+                };
+                b.file.pivot_parts.push((sh.part.clone(), target.clone(), cache.clone()));
+                let tx = find_part(&parts, &target).and_then(|d| xml::decode(d).ok());
+                let cx = find_part(&parts, &cache).and_then(|d| xml::decode(d).ok());
+                if let (Some(tx), Some(cx)) = (tx, cx) {
+                    if let Some(mut p) = crate::pivot_xml::read_pivot(&b, i, &tx, &cx, None) {
+                        p.table_part = Some(target.clone());
+                        p.cache_part = Some(cache.clone());
+                        read_pivots.push(p);
+                    }
+                }
+            }
+        }
         b.file.wb = Some((wb_prolog, wb));
         b.file.parts = parts;
         // calculate everything once (files may hold stale or no values)
@@ -342,6 +371,9 @@ impl Book {
         b.calc.manual = false;
         b.recalc(true);
         b.calc.manual = manual;
+        for p in read_pivots {
+            b.adopt_pivot(p);
+        }
         b.undo_stack.clear();
         b.redo_stack.clear();
         b.state = 0;
@@ -1258,10 +1290,12 @@ impl Book {
         let mut table_rids: Vec<Vec<String>> = vec![vec![]; self.sheets.len()];
         let mut legacy_rids: Vec<Option<Option<String>>> = vec![None; self.sheets.len()];
         let mut link_rids: Vec<Vec<String>> = vec![vec![]; self.sheets.len()];
+        let mut pv = PivotWrite::new(self, &rels, &wb_part);
         for (i, sh) in self.sheets.iter().enumerate() {
             if sh.raw_part.is_some() {
                 continue;
             }
+            let has_p = self.pivots.iter().any(|p| p.sheet == i) || self.file.pivot_parts.iter().any(|x| x.0 == sheet_parts[i].0);
             let has_d = !(sh.objects.is_empty() && sh.drawing.is_none());
             let has_t = !sh.tables.is_empty() || sh.pieces.iter().any(|p| matches!(p, Piece::Known(t) if t == "tableParts"));
             let has_c = match &sh.comments_file {
@@ -1270,7 +1304,7 @@ impl Book {
             };
             let had_links = self.file.parts.iter().any(|(n, d)| *n == rels_name(&sheet_parts[i].0) && String::from_utf8_lossy(d).contains("/hyperlink\""));
             let has_l = crate::links::has_targets(sh) || had_links;
-            if !has_d && !has_t && !has_c && !has_l {
+            if !has_d && !has_t && !has_c && !has_l && !has_p {
                 continue;
             }
             let (part, _) = &sheet_parts[i];
@@ -1283,6 +1317,9 @@ impl Book {
             }
             if has_t {
                 table_rids[i] = self.write_table_parts(sh, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut used_parts, &mut srels);
+            }
+            if has_p {
+                pv.sheet(self, i, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut srels);
             }
             if has_c {
                 legacy_rids[i] = Some(self.write_comment_parts(i, part, &base, &mut out, &mut dropped, &mut ct, &mut taken_parts, &mut srels));
@@ -1380,8 +1417,40 @@ impl Book {
             rels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", T_THEME), ("Target", &relative(&wb_part, &theme_part))]));
             set_override(&mut ct, &theme_part, CT_THEME);
         }
+        // pivot caches: the new ones join the workbook, the unused ones go
+        let mut cache_adds: Vec<(u32, String)> = Vec::new();
+        for (id, cp) in &pv.new_caches {
+            let rid = new_rid(&mut used_rids);
+            rels.push(Element::with_attrs("Relationship", &[("Id", &rid), ("Type", crate::pivot_xml::T_CACHE_DEF), ("Target", &relative(&wb_part, cp))]));
+            cache_adds.push((*id, rid));
+        }
+        let mut cache_drops: Vec<String> = Vec::new();
+        for (_, _, cp) in &self.file.pivot_parts {
+            if pv.used_caches.contains(cp) || cache_drops.iter().any(|x| x == cp) {
+                continue;
+            }
+            cache_drops.push(cp.clone());
+        }
+        let mut drop_rids = Vec::new();
+        for cp in &cache_drops {
+            for (_, typ, t, _) in read_rels(cp, &self.file.parts) {
+                if typ.ends_with("/pivotCacheRecords") {
+                    remove_override(&mut ct, &t);
+                    dropped.push(t);
+                }
+            }
+            dropped.push(cp.clone());
+            dropped.push(rels_name(cp));
+            remove_override(&mut ct, cp);
+            for e in rels.elems() {
+                if e.attr("Type").map(|t| t.ends_with("/pivotCacheDefinition")).unwrap_or(false) && e.attr("Target").map(|t| resolve(&wb_part, t) == *cp).unwrap_or(false) {
+                    drop_rids.push(e.attr("Id").unwrap_or("").to_string());
+                }
+            }
+            rels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Id").map(|i| drop_rids.iter().any(|d| d == i)).unwrap_or(false)));
+        }
         // the workbook
-        out.push((wb_part.clone(), self.write_workbook(&sheet_parts).into_bytes()));
+        out.push((wb_part.clone(), self.write_workbook(&sheet_parts, &cache_adds, &drop_rids).into_bytes()));
         out.push((rels_name(&wb_part), xml::document(&rels_pro, &rels).into_bytes()));
         out.push(("[Content_Types].xml".into(), xml::document(&ct_pro, &ct).into_bytes()));
         // everything else as read
@@ -1767,7 +1836,7 @@ impl Book {
         Some(rid)
     }
 
-    fn write_workbook(&self, sheet_parts: &[(String, String)]) -> String {
+    fn write_workbook(&self, sheet_parts: &[(String, String)], cache_adds: &[(u32, String)], cache_drops: &[String]) -> String {
         let (pro, mut wb) = self.file.wb.clone().unwrap_or_else(|| {
             let (p, e) = xml::parse("<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><bookViews><workbookView/></bookViews><sheets/><calcPr calcId=\"191029\"/></workbook>").unwrap();
             (p, e)
@@ -1792,6 +1861,22 @@ impl Book {
                 let mut e = Element::new(&format!("{}workbookProtection", pfx));
                 e.attrs = attrs.clone();
                 wb.insert_ordered(e, &WB_ORDER);
+            }
+        }
+        // pivot caches
+        if !cache_adds.is_empty() || !cache_drops.is_empty() {
+            let rp = rprefix.clone();
+            let rid_of = |e: &Element| e.attrs.iter().find(|(k, _)| k.ends_with(":id")).map(|(_, v)| v.clone());
+            let ids: Vec<String> = cache_adds.iter().map(|(i, _)| i.to_string()).collect();
+            let mut pc = wb.child("pivotCaches").cloned().unwrap_or_else(|| Element::new(&format!("{}pivotCaches", pfx)));
+            pc.children.retain(|n| !matches!(n, Node::Elem(e) if rid_of(e).map(|r| cache_drops.contains(&r)).unwrap_or(false)
+                || e.attr("cacheId").map(|c| ids.iter().any(|i| i == c)).unwrap_or(false)));
+            for (id, rid) in cache_adds {
+                pc.push(Element::with_attrs(&format!("{}pivotCache", pfx), &[("cacheId", &id.to_string()), (&format!("{}:id", rp), rid)]));
+            }
+            wb.remove_children("pivotCaches");
+            if pc.elems().next().is_some() {
+                wb.insert_ordered(pc, &WB_ORDER);
             }
         }
         // workbookPr
@@ -2399,4 +2484,128 @@ fn remove_override(ct: &mut Element, part: &str) {
 fn unused() {
     let _ = col_index("A");
     let _: Option<Formula> = None;
+}
+
+
+/// Writing the PivotTables: the changed ones get their parts anew, the others keep theirs.
+struct PivotWrite {
+    /// caches added to the workbook: (cacheId, part)
+    new_caches: Vec<(u32, String)>,
+    /// cache parts the pivots use after this
+    used_caches: std::collections::HashSet<String>,
+    next_id: u32,
+}
+
+impl PivotWrite {
+    fn new(b: &Book, _rels: &Element, _wb_part: &str) -> PivotWrite {
+        let mut next = b.pivots.iter().map(|p| p.cache_id + 1).max().unwrap_or(1);
+        if let Some((_, wb)) = &b.file.wb {
+            if let Some(pc) = wb.child("pivotCaches") {
+                for e in pc.elems() {
+                    if let Some(i) = e.attr("cacheId").and_then(|v| v.parse::<u32>().ok()) {
+                        next = next.max(i + 1);
+                    }
+                }
+            }
+        }
+        let mut used = std::collections::HashSet::new();
+        for p in &b.pivots {
+            if !p.dirty {
+                if let Some(c) = &p.cache_part {
+                    used.insert(c.clone());
+                }
+            }
+        }
+        PivotWrite { new_caches: vec![], used_caches: used, next_id: next.max(1) }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sheet(&mut self, b: &Book, i: usize, sheet_part: &str, base: &str, out: &mut Vec<(String, Vec<u8>)>, dropped: &mut Vec<String>,
+             ct: &mut Element, taken: &mut std::collections::HashSet<String>, srels: &mut Element) {
+        use crate::pivot_xml as px;
+        let fresh = |stem: &str, taken: &mut std::collections::HashSet<String>| -> String {
+            let mut k = 1;
+            loop {
+                let p = format!("{}{}.xml", stem, k);
+                if !taken.contains(&p) {
+                    taken.insert(p.clone());
+                    return p;
+                }
+                k += 1;
+            }
+        };
+        srels.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("Type").map(|t| t.ends_with("/pivotTable")).unwrap_or(false)));
+        // the file's pivots no longer here go
+        let live: Vec<&str> = b.pivots.iter().filter_map(|p| p.table_part.as_deref()).collect();
+        for (sp, tp, _) in &b.file.pivot_parts {
+            if sp == sheet_part && !live.contains(&tp.as_str()) {
+                dropped.push(tp.clone());
+                dropped.push(rels_name(tp));
+                remove_override(ct, tp);
+            }
+        }
+        let mut ids: Vec<String> = srels.elems().filter_map(|e| e.attr("Id").map(|s| s.to_string())).collect();
+        let mut add_rel = |srels: &mut Element, target: &str| {
+            let mut k = 1;
+            let id = loop {
+                let id = format!("rId{}", k);
+                if !ids.contains(&id) {
+                    break id;
+                }
+                k += 1;
+            };
+            ids.push(id.clone());
+            srels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", px::T_TABLE), ("Target", &relative(sheet_part, target))]));
+        };
+        for p in b.pivots.iter().filter(|p| p.sheet == i) {
+            if !p.dirty {
+                if let Some(tp) = &p.table_part {
+                    add_rel(srels, tp);
+                }
+                continue;
+            }
+            let src = match b.pivot_source(p) {
+                Some(s) => s,
+                None => {
+                    // can't be remade: kept as it was, if it was in the file
+                    if let (Some(tp), Some(cp)) = (&p.table_part, &p.cache_part) {
+                        add_rel(srels, tp);
+                        self.used_caches.insert(cp.clone());
+                    }
+                    continue;
+                }
+            };
+            // its cache: its own, unless another pivot shares it
+            let shared = p.cache_part.as_ref().map(|c| b.pivots.iter().any(|q| !std::ptr::eq(q, p) && q.cache_part.as_ref() == Some(c))).unwrap_or(true);
+            let (cache_part, cache_id) = match &p.cache_part {
+                Some(c) if !shared && !self.used_caches.contains(c) => (c.clone(), p.cache_id),
+                _ => {
+                    let c = fresh(&format!("{}/pivotCache/pivotCacheDefinition", base), taken);
+                    let id = self.next_id;
+                    self.next_id += 1;
+                    self.new_caches.push((id, c.clone()));
+                    (c, id)
+                }
+            };
+            self.used_caches.insert(cache_part.clone());
+            let rec_part = read_rels(&cache_part, &b.file.parts).into_iter().find(|r| r.1.ends_with("/pivotCacheRecords")).map(|r| r.2)
+                .unwrap_or_else(|| fresh(&format!("{}/pivotCache/pivotCacheRecords", base), taken));
+            let (def, rec) = px::write_cache(b, p, &src, "rId1");
+            out.push((cache_part.clone(), def.into_bytes()));
+            out.push((rec_part.clone(), rec.into_bytes()));
+            out.push((rels_name(&cache_part), format!("{}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{}\" Target=\"{}\"/></Relationships>",
+                                                      xml::DECL, px::T_CACHE_REC, relative(&cache_part, &rec_part)).into_bytes()));
+            set_override(ct, &cache_part, px::CT_CACHE_DEF);
+            set_override(ct, &rec_part, px::CT_CACHE_REC);
+            let table_part = match &p.table_part {
+                Some(t) => t.clone(),
+                None => fresh(&format!("{}/pivotTables/pivotTable", base), taken),
+            };
+            out.push((table_part.clone(), px::write_table(b, p, &src, cache_id).into_bytes()));
+            out.push((rels_name(&table_part), format!("{}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{}\" Target=\"{}\"/></Relationships>",
+                                                      xml::DECL, px::T_CACHE_DEF, relative(&table_part, &cache_part)).into_bytes()));
+            set_override(ct, &table_part, px::CT_TABLE);
+            add_rel(srels, &table_part);
+        }
+    }
 }

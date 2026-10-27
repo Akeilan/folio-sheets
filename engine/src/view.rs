@@ -368,6 +368,16 @@ impl Book {
                     }
                 }
             }
+            for (pr, pc, _, _, _) in self.pivot_buttons(s) {
+                if r == pr && c == pc {
+                    let (_, ry, rh) = *g.rows.iter().find(|x| x.0 == r).unwrap();
+                    let (_, cx, cw) = *g.cols.iter().find(|x| x.0 == c).unwrap();
+                    let (bx, by, bs) = crate::render::filter_button(cx, ry, cw, rh, p.zoom);
+                    if x >= bx && x <= bx + bs && y >= by && y <= by + bs {
+                        return vec![HitPart::S("pivotbtn"), HitPart::N(r), HitPart::N(c)];
+                    }
+                }
+            }
             // the validation list's drop-down beside the active cell
             let (ar, ac) = p.active;
             if c == ac + 1 && r == ar && self.dv_dropdown_at(s, ar, ac) {
