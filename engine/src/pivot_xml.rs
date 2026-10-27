@@ -78,7 +78,7 @@ fn num_attr(x: f64) -> String {
 
 /// The cache definition and its records.
 pub fn write_cache(b: &Book, p: &Pivot, src: &Source, records_rid: &str) -> (String, String) {
-    let axis: Vec<bool> = (0..src.headers.len()).map(|i| p.rows.contains(&i) || p.cols.contains(&i) || p.pages.iter().any(|x| x.0 == i)).collect();
+    let axis: Vec<bool> = (0..src.headers.len()).map(|i| p.rows.contains(&i) || p.cols.contains(&i) || p.pages.iter().any(|x| x.0 == i) || p.slicer_fields.contains(&i)).collect();
     let mut def = format!("{}<pivotCacheDefinition xmlns=\"{}\" xmlns:r=\"{}\" r:id=\"{}\" refreshOnLoad=\"1\" createdVersion=\"6\" refreshedVersion=\"6\" minRefreshableVersion=\"3\" recordCount=\"{}\">",
                           xml::DECL, NS_MAIN, NS_R, records_rid, src.records.len());
     match &p.source_table {
@@ -110,13 +110,21 @@ pub fn write_cache(b: &Book, p: &Pivot, src: &Source, records_rid: &str) -> (Str
         if has_blank {
             attrs.push_str(" containsBlank=\"1\"");
         }
-        def.push_str(&format!("<cacheField name=\"{}\" numFmtId=\"0\">", esc(h)));
+        let is_date = !nums.is_empty() && !has_str && is_date_field(b, p, i);
+        if is_date {
+            let mn = nums.iter().cloned().fold(f64::INFINITY, f64::min);
+            let mx = nums.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            attrs = format!(" containsSemiMixedTypes=\"0\" containsNonDate=\"0\" containsDate=\"1\" containsString=\"0\"{} minDate=\"{}\" maxDate=\"{}\"",
+                            if has_blank { " containsBlank=\"1\"" } else { "" }, serial_iso(mn, b.date1904), serial_iso(mx + 1.0, b.date1904));
+        }
+        def.push_str(&format!("<cacheField name=\"{}\" numFmtId=\"{}\">", esc(h), if is_date { 14 } else { 0 }));
         // items are listed for the fields on an axis (and for text, which records refer to)
         let list = axis[i] || has_str;
         if list {
             def.push_str(&format!("<sharedItems{} count=\"{}\">", attrs, sh.items.len()));
             for v in &sh.items {
                 match v {
+                    Value::Num(x) if is_date => def.push_str(&format!("<d v=\"{}\"/>", serial_iso(*x, b.date1904))),
                     Value::Num(x) => def.push_str(&format!("<n v=\"{}\"/>", num_attr(*x))),
                     Value::Bool(t) => def.push_str(&format!("<b v=\"{}\"/>", if *t { 1 } else { 0 })),
                     Value::Err(e) => def.push_str(&format!("<e v=\"{}\"/>", esc(e.text()))),
@@ -129,18 +137,19 @@ pub fn write_cache(b: &Book, p: &Pivot, src: &Source, records_rid: &str) -> (Str
             def.push_str(&format!("<sharedItems{}/>", attrs));
         }
         def.push_str("</cacheField>");
-        shares.push((sh, list));
+        shares.push((sh, list, is_date));
     }
     def.push_str("</cacheFields></pivotCacheDefinition>");
     let mut rec = format!("{}<pivotCacheRecords xmlns=\"{}\" xmlns:r=\"{}\" count=\"{}\">", xml::DECL, NS_MAIN, NS_R, src.records.len());
     for r in &src.records {
         rec.push_str("<r>");
-        for (i, (sh, list)) in shares.iter().enumerate() {
+        for (i, (sh, list, is_date)) in shares.iter().enumerate() {
             let v = r.get(i).cloned().unwrap_or(Value::Empty);
             if *list {
                 rec.push_str(&format!("<x v=\"{}\"/>", sh.index.get(&text_of(b, &v)).copied().unwrap_or(0)));
             } else {
                 match v {
+                    Value::Num(x) if *is_date => rec.push_str(&format!("<d v=\"{}\"/>", serial_iso(x, b.date1904))),
                     Value::Num(x) => rec.push_str(&format!("<n v=\"{}\"/>", num_attr(x))),
                     Value::Bool(t) => rec.push_str(&format!("<b v=\"{}\"/>", if t { 1 } else { 0 })),
                     Value::Empty => rec.push_str("<m/>"),
@@ -225,7 +234,7 @@ pub fn write_table(b: &Book, p: &Pivot, src: &Source, cache_id: u32) -> String {
             s.push_str(" subtotalTop=\"0\"");
         }
         s.push_str(" showAll=\"0\"");
-        if axis.is_some() {
+        if axis.is_some() || p.slicer_fields.contains(&i) {
             let n = orders[i].len() + if sub_off { 0 } else { 1 };
             s.push_str(&format!("><items count=\"{}\">", n));
             for si in &orders[i] {
@@ -442,6 +451,7 @@ pub fn read_pivot(b: &Book, sheet: usize, table_xml: &str, cache_xml: &str, cach
             "m" => "(blank)".to_string(),
             "b" => if e.attr("v") == Some("1") { "TRUE".into() } else { "FALSE".into() },
             "n" => e.attr("v").and_then(|v| v.parse::<f64>().ok()).map(crate::numfmt::num_to_text).unwrap_or_default(),
+            "d" => e.attr("v").and_then(|v| iso_serial(v, b.date1904)).map(crate::numfmt::num_to_text).unwrap_or_default(),
             _ => e.attr("v").unwrap_or("").to_string(),
         }).collect()).unwrap_or_default();
         item_texts.push(texts);
@@ -684,4 +694,47 @@ mod tests {
         k.undo();
         assert_eq!(k.pivots[0].sheet, 1);
     }
+}
+
+/// A slicer's items as its cache lists them: (shared item index, selected), in the order shown.
+pub fn slicer_cache_items(b: &Book, p: &Pivot, src: &Source, f: usize) -> Vec<(usize, bool)> {
+    let sh = shared(b, src, f);
+    let hidden = p.fields.get(f).map(|x| x.hidden.clone()).unwrap_or_default();
+    let page = p.pages.iter().find(|x| x.0 == f).and_then(|x| x.1.clone());
+    shown_order(&sh, false).into_iter().map(|si| {
+        let t = &sh.texts[si];
+        (si, !hidden.contains(t) && page.as_ref().map_or(true, |x| x == t))
+    }).collect()
+}
+
+fn serial_iso(x: f64, d1904: bool) -> String {
+    let (y, m, d) = crate::dates::serial_to_ymd(x.floor(), d1904).unwrap_or((1900, 1, 1));
+    let secs = ((x - x.floor()) * 86400.0).round() as i64;
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", y, m, d, secs / 3600, secs / 60 % 60, secs % 60)
+}
+
+pub fn iso_serial(t: &str, d1904: bool) -> Option<f64> {
+    let mut it = t.get(0..10)?.split('-');
+    let y: i64 = it.next()?.parse().ok()?;
+    let m: i64 = it.next()?.parse().ok()?;
+    let d: i64 = it.next()?.parse().ok()?;
+    let mut v = crate::dates::ymd_to_serial(y, m, d, d1904)?;
+    if let Some(tm) = t.get(11..19) {
+        let p: Vec<f64> = tm.split(':').filter_map(|x| x.parse().ok()).collect();
+        if p.len() == 3 {
+            v += (p[0] * 3600.0 + p[1] * 60.0 + p[2]) / 86400.0;
+        }
+    }
+    Some(v)
+}
+
+/// A source column formatted as dates.
+pub fn is_date_field(b: &Book, p: &Pivot, f: usize) -> bool {
+    if p.source_table.is_some() {
+        return false;
+    }
+    b.sheet_index(&p.source_sheet).map(|s| {
+        let c = p.source.c1 + f as u32;
+        crate::numfmt::get(&b.number_format(s, p.source.r1 + 1, c)).is_date()
+    }).unwrap_or(false)
 }

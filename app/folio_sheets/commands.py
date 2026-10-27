@@ -103,6 +103,8 @@ LABELS = {
     "insert-slicer": "Insert Slicer",
     "insert-timeline": "Insert Timeline",
     "filter-connections": "Filter Connections",
+    "slicer-settings": "Slicer Settings", "slicer-clear": "Clear Filter", "slicer-style": "Slicer Style",
+    "slicer-header": "Header", "slicer-level": "Time Level",
     "pivot-table": "PivotTable", "recommended-pivots": "Recommended PivotTables", "table": "Table",
     "pictures": "Pictures", "shapes": "Shapes", "smartart": "SmartArt", "screenshot": "Screenshot",
     "recommended-charts": "Recommended Charts", "chart-column": "Insert Column or Bar Chart",

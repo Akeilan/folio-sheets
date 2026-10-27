@@ -615,6 +615,13 @@ class GridView(Gtk.Box):
                 else:
                     self.win.run("chart-format")
                 return True
+            if part == "body" and self.book.objects(self.sheet)[i]["kind"] in ("slicer", "timeline"):
+                from . import slicer_ui
+                if i not in self.sel_objects or len(self.sel_objects) > 1:
+                    self.select_object(i)
+                if slicer_ui.press(self.win, i, ev):
+                    self.win.on_object_selection()
+                    return True
             if ctrl or shift:
                 self.select_object(i, add=True)
                 return True
@@ -790,6 +797,10 @@ class GridView(Gtk.Box):
 
     def _drag_to(self, x, y):
         kind = self._drag[0]
+        if kind == "timeline":
+            from . import slicer_ui
+            slicer_ui.drag(self.win, self._drag, x, y)
+            return
         if kind == "obj":
             d = self._drag
             if self.obj_preview is None and abs(x - d[3]) < 3 and abs(y - d[4]) < 3:
@@ -901,6 +912,8 @@ class GridView(Gtk.Box):
                 self.win.apply_border_pen(rg)
                 self.win.update_title()
             self.area.queue_draw()
+            return True
+        if d and d[0] == "timeline":
             return True
         if d and d[0] == "obj":
             prev, self.obj_preview = self.obj_preview, None

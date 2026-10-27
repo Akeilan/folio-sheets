@@ -37,6 +37,10 @@ fn rect(cr: *mut cairo_t, x: f64, y: f64, w: f64, h: f64) {
     }
 }
 
+pub(crate) fn mix_pub(a: u32, b: u32, t: f64) -> u32 {
+    mix(a, b, t)
+}
+
 fn mix(a: u32, b: u32, t: f64) -> u32 {
     let ch = |s: u32| -> (f64, f64) { (((a >> s) & 255) as f64, ((b >> s) & 255) as f64) };
     let mut out = 0;
@@ -362,9 +366,13 @@ impl Book {
     }
 
     unsafe fn paint_objects(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, pen: &mut Pen) {
-        for o in &self.sheets[s].objects {
+        for (oi, o) in self.sheets[s].objects.iter().enumerate() {
             let (x, y, w, h) = self.obj_screen_rect(s, p, g, o);
             if x > p.width || y > p.height || x + w < 0.0 || y + h < 0.0 || w < 1.0 || h < 1.0 {
+                continue;
+            }
+            if o.slicer.is_some() {
+                self.paint_slicer(s, oi, cr, x, y, w, h, p.zoom, pen);
                 continue;
             }
             if let Some(pic) = &o.picture {

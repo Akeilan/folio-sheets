@@ -833,6 +833,8 @@ def build_ribbon(win):
     table_ui.build_tab(win, B)
     from . import pivot_ui
     pivot_ui.build_tabs(win, B)
+    from . import slicer_ui
+    slicer_ui.build_tabs(win, B)
     from . import shapes_ui
     shapes_ui.build_tab(win, B)
     from . import sparkline_ui

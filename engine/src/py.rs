@@ -2128,6 +2128,78 @@ impl PyBook {
     fn pivot_details(&mut self, i: usize, r: u32, c: u32) -> PyResult<usize> {
         self.b.pivot_details(i, r, c).map_err(verr)
     }
+    // ---------------------------------------------------------------- PivotCharts (SH-20)
+    #[pyo3(signature = (pivot, kind="col", x=0.0, y=0.0))]
+    fn insert_pivot_chart(&mut self, pivot: usize, kind: &str, x: f64, y: f64) -> PyResult<usize> {
+        self.b.insert_pivot_chart(pivot, kind, x, y).map_err(verr)
+    }
+    /// The PivotTable a chart plots (None: an ordinary chart).
+    fn chart_pivot(&self, s: usize, i: usize) -> Option<String> {
+        self.b.chart(s, i).and_then(|c| c.pivot.clone())
+    }
+    fn pivot_chart_series(&self, pivot: usize) -> PyResult<Vec<(String, String, String)>> {
+        self.b.pivot_chart_series(pivot).map(|v| v.into_iter().map(|x| (x.name, x.cat, x.val)).collect()).map_err(verr)
+    }
+    // ---------------------------------------------------------------- slicers and timelines (SH-20)
+    #[pyo3(signature = (pivot, field, timeline=false))]
+    fn insert_slicer(&mut self, pivot: usize, field: usize, timeline: bool) -> PyResult<usize> {
+        self.b.insert_slicer(pivot, field, timeline).map_err(verr)
+    }
+    /// A slicer's settings: name, caption, cache, field, pivots, timeline, level, span, columns, style, header.
+    fn slicer_info<'py>(&self, py: Python<'py>, s: usize, i: usize) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(x) = self.b.slicer(s, i) else { return Ok(None) };
+        let d = PyDict::new_bound(py);
+        d.set_item("name", &x.name)?;
+        d.set_item("caption", &x.caption)?;
+        d.set_item("cache", &x.cache)?;
+        d.set_item("field", &x.field)?;
+        d.set_item("pivots", x.pivots.clone())?;
+        d.set_item("timeline", x.timeline)?;
+        d.set_item("level", x.level)?;
+        d.set_item("span", x.span)?;
+        d.set_item("columns", x.columns)?;
+        d.set_item("style", &x.style)?;
+        d.set_item("header", x.show_header)?;
+        d.set_item("target", self.b.slicer_target(x))?;
+        Ok(Some(d))
+    }
+    fn slicer_items(&self, s: usize, i: usize) -> Vec<(String, bool)> {
+        self.b.slicer_items(s, i)
+    }
+    #[pyo3(signature = (s, i, item, add=false))]
+    fn slicer_choose(&mut self, s: usize, i: usize, item: usize, add: bool) -> PyResult<()> {
+        self.b.slicer_choose(s, i, item, add).map_err(verr)
+    }
+    fn slicer_clear(&mut self, s: usize, i: usize) -> PyResult<()> {
+        self.b.slicer_clear(s, i).map_err(verr)
+    }
+    /// What's under (x, y), an offset from the slicer's top left on screen.
+    fn slicer_hit(&self, s: usize, i: usize, x: f64, y: f64, w: f64, h: f64, z: f64) -> Option<(String, usize)> {
+        self.b.slicer_hit(s, i, x, y, w, h, z).map(|(k, n)| (k.to_string(), n))
+    }
+    /// Change a slicer: any of caption, columns, style, level, header, pivots.
+    #[pyo3(signature = (s, i, caption=None, columns=None, style=None, level=None, header=None, pivots=None, label="Slicer Settings"))]
+    #[allow(clippy::too_many_arguments)]
+    fn set_slicer(&mut self, s: usize, i: usize, caption: Option<String>, columns: Option<u32>, style: Option<String>, level: Option<u8>,
+                  header: Option<bool>, pivots: Option<Vec<String>>, label: &str) -> PyResult<()> {
+        self.b.set_slicer_object(s, i, label, |x| {
+            if let Some(c) = caption { x.caption = c; }
+            if let Some(c) = columns { x.columns = c; }
+            if let Some(c) = style { x.style = c; }
+            if let Some(c) = level { x.level = c.min(3); }
+            if let Some(c) = header { x.show_header = c; }
+            if let Some(c) = pivots { x.pivots = c; }
+        }).map_err(verr)
+    }
+    fn timeline_periods(&self, s: usize, i: usize) -> Vec<(String, f64, f64, String)> {
+        self.b.timeline_periods(s, i)
+    }
+    fn timeline_select(&mut self, s: usize, i: usize, first: usize, last: usize) -> PyResult<()> {
+        self.b.timeline_select(s, i, first, last).map_err(verr)
+    }
+    fn timeline_dates(&self, pivot: usize, field: usize) -> Vec<f64> {
+        self.b.timeline_dates(pivot, field)
+    }
     // ---------------------------------------------------------------- themes (SH-22)
     /// The theme: name, colours (part order dk1 lt1 dk2 lt2 accent1..6 hlink folHlink), fonts, effects.
     fn theme_info<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {

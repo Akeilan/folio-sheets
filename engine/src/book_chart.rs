@@ -269,6 +269,7 @@ impl Book {
             ink: None,
             ink_part: None,
             raw: None,
+            slicer: None,
         };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
@@ -301,6 +302,7 @@ impl Book {
             ink: Some(Rc::new(ink)),
             ink_part: None,
             raw: None,
+            slicer: None,
         };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
@@ -351,7 +353,7 @@ impl Book {
         let (id, name) = self.next_object_name(s, "Chart");
         let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: None };
         let anchor = self.anchor_at(s, &like, x, y, w, h);
-        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None };
+        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
         let i = objs.len() - 1;
@@ -370,8 +372,13 @@ impl Book {
     pub fn set_chart(&mut self, s: usize, i: usize, ch: Chart, label: &str) -> Result<(), String> {
         let mut objs = self.sheets.get(s).ok_or("no such sheet")?.objects.clone();
         let o = objs.get_mut(i).ok_or("no such chart")?;
-        if o.chart.is_none() {
+        let Some(old) = &o.chart else {
             return Err("That object isn't a chart.".into());
+        };
+        let mut ch = ch;
+        // a PivotChart stays one
+        if ch.pivot.is_none() {
+            ch.pivot = old.pivot.clone();
         }
         o.chart = Some(Rc::new(ch));
         self.begin(label, s);
