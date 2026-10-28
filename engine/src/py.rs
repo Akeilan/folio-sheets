@@ -1886,6 +1886,15 @@ impl PyBook {
                                 get(props, "rot"), get(props, "rot_by"), get(props, "flip_h").unwrap_or(false),
                                 get(props, "flip_v").unwrap_or(false), label).map_err(verr)
     }
+    fn object_ext(&self, s: usize, i: usize, uri: &str) -> PyResult<Option<String>> {
+        self.sheet(s)?;
+        Ok(self.b.object_ext(s, i, uri))
+    }
+    #[pyo3(signature = (s, i, uri, inner=None, label="Format Object"))]
+    fn set_object_ext(&mut self, s: usize, i: usize, uri: &str, inner: Option<&str>, label: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.set_object_ext(s, i, uri, inner, label).map_err(verr)
+    }
     fn group_objects(&mut self, s: usize, which: Vec<usize>) -> PyResult<usize> {
         self.sheet(s)?;
         self.b.group_objects(s, &which).map_err(verr)

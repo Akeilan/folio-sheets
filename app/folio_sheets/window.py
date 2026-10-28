@@ -2615,6 +2615,18 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.ribbon.update("hide-ink", "true" if self.hide_ink else "false")
         g.refresh()
 
+    def act_smartart(self):
+        from . import insert_extras
+        return insert_extras.insert_smartart(self)
+
+    def act_signature_line(self):
+        from . import insert_extras
+        return insert_extras.signature_setup(self)
+
+    def act_object(self):
+        from . import insert_extras
+        return insert_extras.insert_object(self)
+
     # ------------------------------------------------------------ review tools (Backlog 2)
     def act_workbook_statistics(self):
         from . import review_ui
