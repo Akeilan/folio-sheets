@@ -127,7 +127,7 @@ def accessibility_issues(win):
                         "Give the sheet a name that says what's on it."))
         for t in b.tables(s):
             if not t.get("header", True):
-                r1, c1 = t["range"][0], t["range"][1]
+                r1, c1 = t["ref"][0], t["ref"][1]
                 out.append(("Errors", "No header row specified", s, ("cell", r1, c1), "%s (%s)" % (t["name"], name),
                             "Turn on the table's header row."))
         ext = b.used_extent(s)

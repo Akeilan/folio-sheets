@@ -727,7 +727,8 @@ def build_ribbon(win):
          B.icon("r-data-validation-sm", "data-validation", "V", "Data Validation",
                 menu=[("Data Validation...", "data-validation"), ("Circle Invalid Data", "data-validation:circle"),
                       ("Clear Validation Circles", "data-validation:clear-circles")])],
-        [B.icon("r-consolidate-sm", "consolidate", "N", "Consolidate")],
+        [B.icon("r-consolidate-sm", "consolidate", "N", "Consolidate"),
+         B.icon("r-relationships-sm", "data-relationships", "RL", "Relationships")],
     ])
     B.group(t, "Forecast", [
         B.big("What-If\nAnalysis", "r-what-if", None, "W", key="what-if",
