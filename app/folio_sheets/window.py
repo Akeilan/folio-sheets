@@ -2720,6 +2720,10 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import data2_ui
         return data2_ui.advanced_filter(self)
 
+    def act_data_relationships(self):
+        from . import model_ui
+        return model_ui.relationships(self)
+
     def act_consolidate(self):
         from . import data2_ui
         return data2_ui.consolidate(self)

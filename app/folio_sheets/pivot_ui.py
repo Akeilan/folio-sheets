@@ -60,7 +60,7 @@ def parse_source(win, text):
     for s in range(b.sheet_count):
         for t in b.tables(s):
             if t["name"].lower() == text.lower():
-                return s, tuple(t["range"])
+                return s, tuple(t["ref"])
     s = win.grid.sheet
     m = re.match(r"^(?:'((?:[^']|'')+)'|([^!]+))!(.+)$", text)
     if m:
@@ -205,8 +205,8 @@ class CreateDialog:
         self.r_ext.set_tooltip_text(NOT_HERE % ("External data sources for PivotTables", APP_NAME))
         grid.attach(self.r_ext, 0, 3, 2, 1)
         self.r_model = Gtk.RadioButton.new_with_label_from_widget(self.r_range, "Use this workbook's Data Model")
-        self.r_model.set_sensitive(False)
-        self.r_model.set_tooltip_text(NOT_HERE % ("The Data Model", APP_NAME))
+        from . import model_ui
+        self.r_model.set_sensitive(bool(model_ui.load(win)["tables"]))
         grid.attach(self.r_model, 0, 4, 2, 1)
         lab = Gtk.Label(xalign=0)
         lab.set_markup("<b>Choose where you want the PivotTable report to be placed</b>")
@@ -224,8 +224,7 @@ class CreateDialog:
         lab.set_margin_top(8)
         grid.attach(lab, 0, 9, 2, 1)
         self.model = Gtk.CheckButton(label="Add this data to the Data Model")
-        self.model.set_sensitive(False)
-        self.model.set_tooltip_text(NOT_HERE % ("The Data Model", APP_NAME))
+        self.model.set_tooltip_text("Analyze this table with the tables it is related to (Data > Relationships).")
         grid.attach(self.model, 0, 10, 2, 1)
         self.d.show_all()
         self.index = None
@@ -233,10 +232,24 @@ class CreateDialog:
     def apply(self):
         w = self.win
         b = w.book
-        src = parse_source(w, self.source.get_text())
-        if isinstance(src, str):
+        from . import model_ui
+        use_model = self.r_model.get_active() or self.model.get_active()
+        fact = None
+        if use_model:
+            tabs = model_ui.all_tables(w)
+            text = self.source.get_text().strip()
+            fact = text if text in tabs else (model_ui.load(w).get("fact") if self.r_model.get_active() else None)
+            if fact is None:
+                t = next((n for n in tabs if text.lower() == n.lower()), None)
+                fact = t
+            if fact is None:
+                return "Only tables can be added to the Data Model. Format the data as a table first."
+        src = parse_source(w, self.source.get_text()) if not use_model else None
+        if not use_model and isinstance(src, str):
             return "The reference isn't valid."
-        ss, rg = src
+        if use_model:
+            src = None
+        ss, rg = src if src else (None, None)
         if self.r_new.get_active():
             dest = None
         else:
@@ -246,6 +259,8 @@ class CreateDialog:
                 return "Destination reference is not valid."
             dest = (loc[0], (loc[1][0], loc[1][1]))
         with b.group("PivotTable"):
+            if use_model:
+                ss, rg = model_ui.build(w, fact)
             if dest is None:
                 # a new sheet in front of the active one, the table at A3
                 s = w.grid.sheet
@@ -332,7 +347,7 @@ class RecommendedDialog:
         r1, c1, r2, c2 = g.sel.ranges[-1]
         t = b.table_at(g.sheet, r, c)
         if t is not None:
-            rg = tuple(b.tables(g.sheet)[t]["range"])
+            rg = tuple(b.tables(g.sheet)[t]["ref"])
         elif (r1, c1) == (r2, c2):
             rg = tuple(b.current_region(g.sheet, r, c))
         else:
@@ -1459,6 +1474,8 @@ def select(win, what):
 
 def refresh(win, every=False):
     b = win.book
+    from . import model_ui
+    model_ui.rebuild(win)
     try:
         if every:
             b.refresh_all_pivots()

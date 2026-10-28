@@ -603,6 +603,80 @@ xs = "".join(zipfile.ZipFile(p9).read(n).decode() for n in zipfile.ZipFile(p9).n
 check("chart parts: radarChart, stockChart with hiLowLines, surfaceChart", "<c:radarChart>" in xs and "radarStyle val=\"filled\"" in xs
       and "<c:hiLowLines>" in xs and "<c:surfaceChart>" in xs and "<c:serAx>" in xs)
 
+# ---------------------------------------------------------------- S2-11 Data Model
+from folio_sheets import model_ui, pivot_ui  # noqa: E402
+win.run("insert-sheet")
+pump()
+S = g.sheet
+for r, row in enumerate([("Region", "Amount"), ("East", "10"), ("West", "20"), ("East", "5"), ("North", "7")]):
+    for c, v in enumerate(row):
+        b.set_input(S, r, c, v)
+for r, row in enumerate([("Region", "Manager"), ("East", "Ann"), ("West", "Bob"), ("North", "Ann")]):
+    for c, v in enumerate(row):
+        b.set_input(S, r, 4 + c, v)
+b.create_table(S, (0, 0, 4, 1), True, "TableStyleMedium2") if hasattr(b, "create_table") else None
+b.create_table(S, (0, 4, 3, 5), True, "TableStyleMedium2")
+tn = [t["name"] for t in b.tables(S)]
+check("data model: two tables", len(tn) == 2, tn)
+sales, regions = tn[0], tn[1]
+bad = model_ui.check_relationship(win, (regions, "Manager", sales, "Region"))
+check("data model: a related column must be unique", bad and "duplicate" in bad, bad)
+
+
+def rel(d):
+    if d.get_title() == "Manage Relationships":
+        DIALOG.insert(0, lambda dd: (dd.combos[0].set_active_id(sales), dd.combos[1].set_active_id("Region"),
+                                     dd.combos[2].set_active_id(regions), dd.combos[3].set_active_id("Region"), Gtk.ResponseType.OK)[-1])
+        d.new()
+    return Gtk.ResponseType.CLOSE
+
+
+DIALOG.append(rel)
+win.run("data-relationships")
+m = model_ui.load(win)
+check("data model: relationship made and kept", m["rels"] == [[sales, "Region", regions, "Region"]], m)
+heads, rows = model_ui.joined(win, sales)
+check("data model: joined columns", heads == ["%s.Region" % sales, "%s.Amount" % sales, "%s.Manager" % regions] and rows[1][2] == "Bob",
+      (heads, rows))
+g.select_cell(1, 0)
+
+
+def pv(d):
+    for w in widgets(d, Gtk.CheckButton):
+        if w.get_label() == "Add this data to the Data Model":
+            w.set_active(True)
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(pv)
+win.run("pivot-table")
+i = pivot_ui.current(win)
+check("data model: a PivotTable from it", i is not None)
+if i is not None:
+    p = b.pivot(i)
+    names = [f["name"] for f in p["fields"]]
+    fm = names.index("%s.Manager" % regions)
+    fa = names.index("%s.Amount" % sales)
+    d = pivot_ui.with_layout(p, pivot_ui.place(p, pivot_ui.layout_of(p), fm, "rows"))
+    d["values"] = [pivot_ui.value_entry(win, p, fa, "sum")]
+    pivot_ui.apply(win, i, d)
+    p = b.pivot(i)
+    t = p["table"]
+    cells = {b.display(g.sheet, r, t[1]): b.value(g.sheet, r, t[1] + 1) for r in range(t[0], t[2] + 1)}
+    check("data model: sums by the related table's column", cells.get("Ann") == 22 and cells.get("Bob") == 20, cells)
+    ms = model_ui.model_sheet(win, create=False)
+    check("data model: its sheet is very hidden", ms is not None and b.sheet_info(ms)["state"] == "veryHidden")
+    ts = model_ui.all_tables(win)[sales][0]
+    b.set_input(ts, 1, 1, "100")
+    pivot_ui.refresh(win)
+    p = b.pivot(i)
+    t = p["table"]
+    cells = {b.display(g.sheet, r, t[1]): b.value(g.sheet, r, t[1] + 1) for r in range(t[0], t[2] + 1)}
+    check("data model: refresh reads the tables again", cells.get("Ann") == 112, cells)
+    p10 = os.path.join(TMP, "model.xlsx")
+    win.save_to(p10)
+    check("data model: saved", any(n[0] == model_ui.MODEL_NAME for n in Book.open(p10).names()))
+
 # ---------------------------------------------------------------- M-12 File > Share > Email
 fake = os.path.join(TMP, "bin")
 os.makedirs(fake, exist_ok=True)
