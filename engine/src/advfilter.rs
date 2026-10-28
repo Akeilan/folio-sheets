@@ -15,6 +15,7 @@ fn abs_ref(sheet: &str, r: &Rect) -> String {
 impl Book {
     /// The data rows of `list` (its first row is the headers) that the criteria let through.
     pub fn advanced_matches(&mut self, s: usize, list: Rect, crit: Option<(usize, Rect)>, unique: bool) -> Result<Vec<u32>, String> {
+        let list = self.adv_clamp(s, list);
         if list.r2 <= list.r1 {
             return Err("The list range must have a header row and at least one row of data.".into());
         }
@@ -99,7 +100,16 @@ impl Book {
     }
 
     /// Filter the list in place: rows that don't match are hidden. Returns the rows shown.
+    /// Whole rows or columns count as far as the sheet is used.
+    fn adv_clamp(&self, s: usize, r: Rect) -> Rect {
+        let (er, ec) = self.sheets[s].used_extent().unwrap_or((0, 0));
+        Rect::new(r.r1, r.c1, r.r2.min(er.max(r.r1 + 1)), r.c2.min(ec.max(r.c1)))
+    }
+
     pub fn advanced_filter(&mut self, s: usize, list: Rect, crit: Option<(usize, Rect)>, unique: bool) -> Result<usize, String> {
+        let list = self.adv_clamp(s, list);
+        let crit = crit.map(|(cs, cr)| (cs, self.adv_clamp(cs, cr)));
+        let crit = crit.map(|(cs, cr)| (cs, self.adv_clamp(cs, cr)));
         let keep = self.advanced_matches(s, list, crit, unique)?;
         let keep: HashSet<u32> = keep.into_iter().collect();
         self.begin("Advanced Filter", s);
@@ -122,12 +132,15 @@ impl Book {
     /// Copy the matching rows (headers first) to `dest` (its top-left cell, or a header row
     /// naming the columns to copy). Returns the rows copied.
     pub fn advanced_copy(&mut self, s: usize, list: Rect, crit: Option<(usize, Rect)>, unique: bool, ds: usize, dest: Rect) -> Result<usize, String> {
+        let list = self.adv_clamp(s, list);
+        let crit = crit.map(|(cs, cr)| (cs, self.adv_clamp(cs, cr)));
         if ds >= self.sheets.len() {
             return Err("no such sheet".into());
         }
         if ds != s {
             return Err("You can only copy filtered data to the active sheet.".into());
         }
+        let crit = crit.map(|(cs, cr)| (cs, self.adv_clamp(cs, cr)));
         let keep = self.advanced_matches(s, list, crit, unique)?;
         // the columns: those the destination's header row names, or all of them
         let heads: Vec<String> = (list.c1..=list.c2).map(|c| header_text(&self.sheets[s].value(list.r1, c))).collect();

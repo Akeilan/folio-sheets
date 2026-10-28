@@ -12,6 +12,31 @@ Build:
     engine/build.sh          # Rust tests + release build -> engine/out/folio_sheets_core.so
     ./build-deb.sh [outdir]  # the .deb (uses engine/out unless FOLIO_SHEETS_ENGINE is set)
 
+## 0.17.0 — Backlog 2: nothing left "not available yet"
+
+- Move or Copy > Create a copy (and Ctrl+drag a sheet tab): everything on the sheet comes along;
+  its tables get new names, formulas naming the sheet name the copy.
+- Objects: Selection Pane (names, show/hide, order), Select Objects, Align and Distribute,
+  Snap to Grid / Shape, Group / Ungroup / Regroup (saved as Excel's grpSp), Rotate and Flip,
+  Alt Text.
+- Data: Advanced Filter (in place or copy, unique records, computed criteria) and Consolidate
+  (by position or labels, links to the sources); Relationships and PivotTables from related
+  tables (the Data Model, joined into a very hidden sheet).
+- Charts: Waterfall, Funnel, Histogram, Pareto, Box and Whisker, Treemap, Sunburst (chartEx
+  parts, as Excel writes them), Radar, High-Low-Close and Contour.
+- View > Page Layout with rulers; the header and footer typed on the page.
+- Review: Allow Edit Ranges, Check Accessibility, Workbook Statistics, Select Comments;
+  Data > Workbook Links (values of other workbooks kept, Refresh, Change Source, Break Link).
+- Insert: SmartArt (seven layouts, edited again from their text), Signature Line, Object
+  (a file embedded in its icon, or linked), Copy as Picture.
+- View extras: Custom Views (Excel's own format), Background, Hide Ink, the Clipboard pane.
+- File > Share > Email: the workbook or a PDF of it attached in the mail app.
+- LibreOffice is only suggested now (old .xls/.ods need it); the app says so when it's missing.
+- Dark and coloured desktop themes no longer show through (X2-01); `tests/theme_run.sh`.
+
+Tests: `tests/backlog2_audit.py`, `tests/ui_theme.py`, Rust `tests_backlog2.rs`;
+`tests/run_all.sh` runs every UI audit and the command walk.
+
 ## 0.9.0 — pictures, and copy and paste with the other apps
 
 - Pictures on the sheet: Insert > Pictures (PNG, JPEG, GIF, BMP as they are; other types

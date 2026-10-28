@@ -71,6 +71,9 @@ for i, cmd in enumerate(cmds + extra):
         g.sel.ranges = list(rg)
         g.sel.active = rg[0][:2]
         answer[0] = resp
+        if os.environ.get("WALK_TRACE"):
+            import resource
+            print("RUN", cmd, resp, resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024, "MB", flush=True)
         n = len(ERRORS)
         try:
             win.run(cmd)
