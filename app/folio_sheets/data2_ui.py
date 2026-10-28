@@ -174,7 +174,12 @@ def consolidate_ranges(win, refs, fn, top, left, links, dest_sheet, at):
     # (row key, col key) -> [(sheet, r, c, value)]
     acc = {}
     row_keys, col_keys = [], []
+    clamped = []
     for s, (r1, c1, r2, c2) in refs:
+        # whole rows or columns: as far as the sheet is used
+        ext = b.used_extent(s) or (0, 0)
+        clamped.append((s, (r1, c1, min(r2, max(ext[0], r1)), min(c2, max(ext[1], c1)))))
+    for s, (r1, c1, r2, c2) in clamped:
         dr0 = r1 + (1 if top else 0)
         dc0 = c1 + (1 if left else 0)
         for r in range(dr0, r2 + 1):

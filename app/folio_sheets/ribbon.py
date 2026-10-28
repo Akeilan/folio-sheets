@@ -41,6 +41,9 @@ def menu_popover(relative_to, items, on_pick=None):
             box.pack_start(Gtk.Separator(), False, False, 3)
             continue
         if isinstance(it, Gtk.Widget):
+            # a widget shown in an earlier menu moves to this one
+            if it.get_parent() is not None:
+                it.get_parent().remove(it)
             box.pack_start(it, False, False, 0)
             continue
         if it[0] == "#":

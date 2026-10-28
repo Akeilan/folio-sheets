@@ -76,7 +76,7 @@ check("the PivotTable tabs are hidden outside a PivotTable", not win.ribbon.tab_
 d = P.CreateDialog(win)
 check("Create PivotTable picks the data around the active cell", d.source.get_text() == "Sheet1!$A$1:$D$7", d.source.get_text())
 check("a new worksheet by default", d.r_new.get_active())
-check("the Data Model choices say they aren't here", not d.r_model.get_sensitive() and not d.model.get_sensitive())
+check("the Data Model: add this data to it; use it once it has tables", d.model.get_sensitive() and not d.r_model.get_sensitive())
 err = d.apply()
 d.d.destroy()
 pump(0.1)
