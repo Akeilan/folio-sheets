@@ -620,6 +620,9 @@ impl Book {
     /// What is under a screen point: (object, "body" or a handle name nw..w).
     /// Handles of the selected objects come first.
     pub fn object_hit(&self, s: usize, x: f64, y: f64, p: &crate::view::ViewParams) -> Option<(usize, &'static str)> {
+        if p.page_layout {
+            return self.pl_object_hit(s, x, y, p);
+        }
         let sh = self.sheets.get(s)?;
         let g = self.geometry(s, p);
         if x < g.hw || y < g.hh {
@@ -649,6 +652,9 @@ impl Book {
 
     /// Screen rectangle of an object.
     pub fn object_screen_rect(&self, s: usize, i: usize, p: &crate::view::ViewParams) -> Option<(f64, f64, f64, f64)> {
+        if p.page_layout {
+            return self.pl_object_screen_rect(s, i, p);
+        }
         let g = self.geometry(s, p);
         let o = self.sheets.get(s)?.objects.get(i)?;
         Some(self.obj_screen_rect(s, p, &g, o))
@@ -667,6 +673,22 @@ impl Book {
 
     /// Move or size an object to a screen rectangle.
     pub fn place_object(&mut self, s: usize, i: usize, x: f64, y: f64, w: f64, h: f64, p: &crate::view::ViewParams, label: &str) -> Result<(), String> {
+        if p.page_layout {
+            // the page under the new top left (else the object's own page) measures it
+            let pages = self.pl_pages(s, p);
+            let pg = match pages.iter().find(|g| x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h) {
+                Some(g) => g.clone(),
+                None => {
+                    let o = self.sheets.get(s).ok_or("no such sheet")?.objects.get(i).ok_or("no such object")?;
+                    let (ox, oy, _, _) = self.obj_rect(s, o);
+                    self.pl_page_of(s, p, self.row_at(s, oy), self.col_at(s, ox))
+                }
+            };
+            let cz = self.pl_block(s, p, &pg).zoom;
+            let sx = self.col_x(s, pg.cols.0) + (x - pg.cx) / cz;
+            let sy = self.row_y(s, pg.rows.0) + (y - pg.cy) / cz;
+            return self.set_object_rect(s, i, sx.max(0.0), sy.max(0.0), w / cz, h / cz, label);
+        }
         let g = self.geometry(s, p);
         // screen -> sheet pixels at 100 %, measured from the top-left visible cell
         let z = p.zoom;

@@ -124,6 +124,10 @@ struct Bands {
 impl Book {
     /// Paint a sheet. `cr` is a cairo context the caller owns.
     pub unsafe fn render(&self, s: usize, cr: *mut cairo_t, p: &ViewParams) {
+        if p.page_layout {
+            let f = self.file.path.as_deref().map(|x| x.rsplit('/').next().unwrap_or("").to_string()).unwrap_or_default();
+            return self.pl_render(s, cr, p, &f);
+        }
         let g = self.geometry(s, p);
         let mut pen = Pen { layout: pango_cairo_create_layout(cr), fonts: HashMap::new() };
         cairo_save(cr);

@@ -216,6 +216,8 @@ class GridView(Gtk.Box):
             "edit_note": self.edit_note,
             "dv_circles": self.win.dv.circles_for(self.sheet),
             "hide_ink": getattr(self.win, "hide_ink", False),
+            "page_layout": st.view_mode == "pageLayout",
+            "ruler": getattr(self.win, "ruler", True),
         }
         if extra:
             p.update(extra)
@@ -315,6 +317,8 @@ class GridView(Gtk.Box):
 
     def ensure_visible(self, r, c):
         st = self.state()
+        if st.view_mode == "pageLayout":
+            return self._ensure_visible_pages(r, c)
         if st.split:
             # above (left of) the top (left) pane: that pane moves to it
             if r < st.pane_top:
@@ -362,6 +366,38 @@ class GridView(Gtk.Box):
                     used += w
                     left -= 1
                 st.left_col = left
+
+    def _ensure_visible_pages(self, r, c):
+        """Page Layout: scroll so the cell shows, as near the bottom (right) as it fits."""
+        st = self.state()
+        a = self.area.get_allocation()
+
+        def fits(axis):
+            rc = self.book.cell_rect(self.sheet, r, c, self.params())
+            if rc is None:
+                return True
+            g = self.geometry()
+            if axis == "row":
+                return rc[1] >= g["hh"] and rc[1] + rc[3] <= a.height
+            return rc[0] >= g["hw"] and rc[0] + rc[2] <= a.width
+        for axis in ("row", "col"):
+            if fits(axis):
+                continue
+            # the cell at the top (left), then back while it still shows
+            if axis == "row":
+                st.top_row = r
+                while st.top_row > 0 and r - st.top_row < 200:
+                    st.top_row -= 1
+                    if not fits(axis):
+                        st.top_row += 1
+                        break
+            else:
+                st.left_col = c
+                while st.left_col > 0 and c - st.left_col < 60:
+                    st.left_col -= 1
+                    if not fits(axis):
+                        st.left_col += 1
+                        break
 
     def update_scrollbars(self):
         if self.book is None:
@@ -687,6 +723,10 @@ class GridView(Gtk.Box):
                 return True
             if self.commit_edit() is False:
                 return True
+        if h[0] in ("header", "footer"):
+            from .pagelayout_ui import edit_on_page
+            edit_on_page(self.win, h[0], h[1], ev)
+            return True
         if ev.type == Gdk.EventType._2BUTTON_PRESS:
             if h[0] == "cell" and self.book.pivot_at(self.sheet, h[1], h[2]) is not None:
                 from .pivot_ui import double_click
