@@ -1,5 +1,9 @@
 """The ribbon: tabs of captioned groups of buttons, all owned by the app.
 
+One module for Folio Writer, Sheets, Deliver and Post (X2-02). The copy in folio-suite/shared
+is the one to change; folio-suite/tools/sync_shared.sh copies it into each app, and
+sync_shared.sh --check fails when an app's copy differs.
+
 Every control registers:
   * the command it runs (an engine command like '.uno:Bold' or an app
     action name like 'font-dialog'),
@@ -452,6 +456,16 @@ class Group(Gtk.Box):
         self.get_style_context().add_class("folio-group")
         body = Gtk.Box(spacing=2)
         body.set_vexpand(True)
+        # three rows at most, as the suite's ribbon has (96 px tall)
+        split = []
+        for col in columns:
+            if isinstance(col, (list, tuple)) and len(col) > 3:
+                col = list(col)
+                for k in range(0, len(col), 3):
+                    split.append(col[k:k + 3])
+            else:
+                split.append(col)
+        columns = split
         for col in columns:
             if isinstance(col, (list, tuple)):
                 v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
