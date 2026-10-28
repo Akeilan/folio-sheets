@@ -9,7 +9,7 @@ from . import APP_NAME, icons
 
 NAV = [("back", ""), ("home", "Home"), ("new", "New"), ("open", "Open"), None,
        ("info", "Info"), ("save", "Save"), ("saveas", "Save As"), ("print", "Print"),
-       ("export", "Export"), ("close", "Close"), "spacer", ("options", "Options")]
+       ("share", "Share"), ("export", "Export"), ("close", "Close"), "spacer", ("options", "Options")]
 
 
 def _heading(text, cls="folio-bs-title"):
@@ -308,6 +308,20 @@ class Backstage(Gtk.Box):
         from .print_ui import preview_widget
         self.print_view = preview_widget(self.win)
         box.pack_start(self.print_view, True, True, 0)
+        return box
+
+    def page_share(self):
+        box = self._page("Share")
+        box.pack_start(_heading("Email", "folio-bs-sub"), False, False, 0)
+        for label, desc, cmd in (("Send as Attachment", "Everyone gets a separate copy of the workbook.", "send-attachment"),
+                                 ("Send as PDF", "Everyone gets a PDF of the workbook; it keeps its layout and can't be changed easily.", "send-pdf")):
+            row = Gtk.Box(spacing=12)
+            b = Gtk.Button(label=label)
+            b.set_halign(Gtk.Align.START)
+            b.connect("clicked", lambda _b, c=cmd: (self.close(), self.win.run(c)))
+            row.pack_start(b, False, False, 0)
+            row.pack_start(Gtk.Label(label=desc, xalign=0), False, False, 0)
+            box.pack_start(row, False, False, 0)
         return box
 
     def page_export(self):

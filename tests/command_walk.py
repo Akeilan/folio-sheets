@@ -41,7 +41,7 @@ Gtk.MessageDialog.run = fake_run
 Gtk.NativeDialog.run = lambda d: Gtk.ResponseType.CANCEL
 
 SKIP = {"close", "exit", "new", "open", "print", "new-window", "help", "switch-windows", "context-menu",
-        "share", "account", "feedback"}
+        "share", "account", "feedback", "send-attachment", "send-pdf"}
 g = win.grid
 b = win.book
 for r in range(8):
@@ -78,6 +78,9 @@ for i, cmd in enumerate(cmds + extra):
             ERRORS.append(cmd + ": " + traceback.format_exc())
         if win.painter:
             win.painter_finish()
+        if win.last_menu is not None:
+            win.last_menu.popdown()
+            win.last_menu = None
         if g.editing():
             g.cancel_edit()
         if win.backstage_open():

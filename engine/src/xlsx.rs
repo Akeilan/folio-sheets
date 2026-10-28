@@ -79,6 +79,8 @@ pub struct FileParts {
     pub theme_part: Option<String>,
     /// the PivotTables as read: (worksheet part, table part, cache definition part)
     pub pivot_parts: Vec<(String, String, String)>,
+    /// the linked workbooks' kept values, read when first needed
+    pub ext_cache: std::cell::RefCell<Option<std::rc::Rc<Vec<crate::extlinks::ExtBook>>>>,
 }
 
 pub(crate) fn rels_name(part: &str) -> String {
@@ -286,6 +288,7 @@ impl Book {
                             load_tables(&mut sh, &parts);
                             load_comments(&mut sh, &parts, &persons);
                             load_links(&mut sh, &parts);
+                            load_background(&mut sh, &parts);
                             for p in sh.pieces.iter_mut() {
                                 if let Piece::Raw(t, x) = p {
                                     if t == "sheetProtection" {
@@ -404,6 +407,28 @@ pub(crate) fn read_rels(part: &str, parts: &[(String, Vec<u8>)]) -> Vec<(String,
 }
 
 /// Hyperlinks to outside addresses carry the address while the book is open.
+/// The sheet's background picture (Page Layout > Background).
+fn load_background(sh: &mut Sheet, parts: &[(String, Vec<u8>)]) {
+    let idx = match sh.pieces.iter().position(|p| matches!(p, Piece::Raw(t, _) if t == "picture")) {
+        Some(i) => i,
+        None => return,
+    };
+    let rid = match &sh.pieces[idx] {
+        Piece::Raw(_, x) => xml::parse(x).ok().and_then(|(_, e)| e.attrs.iter().find(|(k, _)| xml::local(k) == "id" && k.contains(':')).map(|(_, v)| v.clone())),
+        _ => None,
+    };
+    let rels = read_rels(&sh.part, parts);
+    if let Some(r) = rid.and_then(|rid| rels.into_iter().find(|r| r.0 == rid && !r.3)) {
+        if let Some(d) = find_part(parts, &r.2) {
+            if crate::picture::sniff(d).is_some() {
+                sh.background = Some(std::rc::Rc::new(crate::picture::Picture::lazy(d.clone())));
+                sh.bg_part = Some(r.2.clone());
+                sh.pieces[idx] = Piece::Known("picture".into());
+            }
+        }
+    }
+}
+
 fn load_links(sh: &mut Sheet, parts: &[(String, Vec<u8>)]) {
     if !sh.pieces.iter().any(|p| matches!(p, Piece::Raw(t, _) if t == "hyperlinks")) {
         return;
@@ -1291,6 +1316,7 @@ impl Book {
         let mut table_rids: Vec<Vec<String>> = vec![vec![]; self.sheets.len()];
         let mut legacy_rids: Vec<Option<Option<String>>> = vec![None; self.sheets.len()];
         let mut link_rids: Vec<Vec<String>> = vec![vec![]; self.sheets.len()];
+        let mut bg_rids: Vec<Option<String>> = vec![None; self.sheets.len()];
         let mut pv = PivotWrite::new(self, &rels, &wb_part);
         for (i, sh) in self.sheets.iter().enumerate() {
             if sh.raw_part.is_some() {
@@ -1305,7 +1331,8 @@ impl Book {
             };
             let had_links = self.file.parts.iter().any(|(n, d)| *n == rels_name(&sheet_parts[i].0) && String::from_utf8_lossy(d).contains("/hyperlink\""));
             let has_l = crate::links::has_targets(sh) || had_links;
-            if !has_d && !has_t && !has_c && !has_l && !has_p {
+            let has_b = sh.background.is_some();
+            if !has_d && !has_t && !has_c && !has_l && !has_p && !has_b {
                 continue;
             }
             let (part, _) = &sheet_parts[i];
@@ -1350,6 +1377,40 @@ impl Book {
                     }
                 }
             }
+            if let Some(pic) = &sh.background {
+                // the background picture: its media part and the sheet's relationship to it
+                let kept = sh.bg_part.as_ref().and_then(|bp| srels.elems().find(|e| e.attr("Type").map(|t| t.ends_with("/image")).unwrap_or(false)
+                    && e.attr("Target").map(|t| resolve(part, t) == *bp).unwrap_or(false)).and_then(|e| e.attr("Id")).map(|x| x.to_string()));
+                let rid = match kept {
+                    Some(r) => r,
+                    None => {
+                        let ext = if pic.ext == "jpeg" { "jpeg" } else { pic.ext };
+                        let mut k = 1;
+                        let media = loop {
+                            let p = format!("{}/media/image{}.{}", base, k, ext);
+                            if !taken_parts.contains(&p) {
+                                taken_parts.insert(p.clone());
+                                break p;
+                            }
+                            k += 1;
+                        };
+                        out.push((media.clone(), pic.bytes.clone()));
+                        set_default(&mut ct, ext, crate::picture::content_type(ext));
+                        let ids: Vec<String> = srels.elems().filter_map(|e| e.attr("Id").map(|s| s.to_string())).collect();
+                        let mut k = 1;
+                        let id = loop {
+                            let id = format!("rId{}", k);
+                            if !ids.contains(&id) {
+                                break id;
+                            }
+                            k += 1;
+                        };
+                        srels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", T_IMAGE), ("Target", &relative(part, &media))]));
+                        id
+                    }
+                };
+                bg_rids[i] = Some(rid);
+            }
             if srels.to_string() != before {
                 out.push((srels_name, xml::document(&srels_pro, &srels).into_bytes()));
             }
@@ -1371,7 +1432,7 @@ impl Book {
                 out.push((part.clone(), raw.clone()));
                 continue;
             }
-            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref(), &table_rids[i], legacy_rids[i].as_ref(), &link_rids[i]);
+            let x = self.write_sheet(i, &mut sst, dyn_cm, drawing_rids[i].as_deref(), &table_rids[i], legacy_rids[i].as_ref(), &link_rids[i], bg_rids[i].as_deref());
             out.push((part.clone(), x.into_bytes()));
         }
         // shared strings
@@ -1643,7 +1704,8 @@ impl Book {
         let old_rid = old.and_then(|d| srels.elems().find(|e| e.attr("Type").map(|t| t.ends_with("/drawing")).unwrap_or(false)
             && e.attr("Target").map(|t| resolve(sheet_part, t) == d.part).unwrap_or(false)).and_then(|e| e.attr("Id")).map(|s| s.to_string()));
         // charts that are gone take their parts with them
-        let live: Vec<&str> = sh.objects.iter().filter_map(|o| o.part.as_deref()).collect();
+        let flat = flatten_objs(&sh.objects);
+        let live: Vec<&str> = flat.iter().filter_map(|o| o.part.as_deref()).collect();
         let file_parts = &self.file.parts;
         let drop_chart = |target: &str, dropped: &mut Vec<String>, ct: &mut Element, used: &std::collections::HashSet<String>| {
             if used.contains(target) || live.contains(&target) {
@@ -1712,7 +1774,8 @@ impl Book {
         }
         let mut objs = sh.objects.clone();
         let mut ids: Vec<String> = drels.iter().map(|r| r.0.clone()).collect();
-        for o in objs.iter_mut() {
+        {
+        let mut each = |o: &mut crate::drawing::Obj| {
             // ink: its strokes as an InkML part
             if let Some(ink) = o.ink.clone() {
                 let ipart = match &o.ink_part {
@@ -1733,7 +1796,7 @@ impl Book {
                 };
                 drels.push((rid.clone(), T_CUSTOMXML.into(), ipart, false));
                 o.set_ink_rid(&rid);
-                continue;
+                return;
             }
             // a new picture: its image becomes a media part
             if o.chart.is_none() {
@@ -1762,11 +1825,11 @@ impl Book {
                     drels.push((rid.clone(), T_IMAGE.into(), media, false));
                     o.set_blip_rid(&rid);
                 }
-                continue;
+                return;
             }
             let ch = match &o.chart {
                 Some(c) => c.clone(),
-                None => continue,
+                None => return,
             };
             let cpart = match &o.part {
                 Some(p) if !used.contains(p) => p.clone(),
@@ -1801,6 +1864,8 @@ impl Book {
             };
             drels.push((rid.clone(), T_CHART.into(), cpart.clone(), false));
             o.set_chart_rid(&rid);
+        };
+        walk_objs(&mut objs, &mut each);
         }
         let dxml = crate::drawing::write_drawing(old, &objs);
         out.push((dpart.clone(), dxml.into_bytes()));
@@ -1981,7 +2046,7 @@ impl Book {
         xml::document(&pro, &wb)
     }
 
-    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>, table_rids: &[String], legacy: Option<&Option<String>>, link_rids: &[String]) -> String {
+    fn write_sheet(&self, i: usize, sst: &mut Sst, dyn_cm: Option<u32>, drawing_rid: Option<&str>, table_rids: &[String], legacy: Option<&Option<String>>, link_rids: &[String], bg_rid: Option<&str>) -> String {
         let sh = &self.sheets[i];
         let mut out = String::with_capacity(4096 + sh.cells.len() * 40);
         if sh.root_open.is_empty() {
@@ -2015,6 +2080,10 @@ impl Book {
         }
         if !table_rids.is_empty() && !pieces.iter().any(|x| matches!(x, Piece::Known(t) | Piece::Raw(t, _) if t == "tableParts")) {
             pieces.push(Piece::Known("tableParts".into()));
+        }
+        pieces.retain(|x| !matches!(x, Piece::Known(t) if t == "picture"));
+        if bg_rid.is_some() {
+            pieces.push(Piece::Known("picture".into()));
         }
         if legacy.is_some() {
             // the notes' drawing is written anew (or goes)
@@ -2113,6 +2182,11 @@ impl Book {
                     "drawing" => {
                         if let Some(rid) = drawing_rid {
                             out.push_str(&format!("<{}drawing r:id=\"{}\"/>", pfx, esc_attr(rid)));
+                        }
+                    }
+                    "picture" => {
+                        if let Some(rid) = bg_rid {
+                            out.push_str(&format!("<{}picture r:id=\"{}\"/>", pfx, esc_attr(rid)));
                         }
                     }
                     "sheetProtection" => {
@@ -2625,4 +2699,22 @@ impl PivotWrite {
             add_rel(srels, &table_part);
         }
     }
+}
+
+
+/// Every object and group member, depth first, for changes made while writing.
+pub(crate) fn walk_objs(objs: &mut [crate::drawing::Obj], f: &mut dyn FnMut(&mut crate::drawing::Obj)) {
+    for o in objs.iter_mut() {
+        f(o);
+        walk_objs(&mut o.members, f);
+    }
+}
+
+pub(crate) fn flatten_objs(objs: &[crate::drawing::Obj]) -> Vec<&crate::drawing::Obj> {
+    let mut out = Vec::new();
+    for o in objs {
+        out.push(o);
+        out.extend(flatten_objs(&o.members));
+    }
+    out
 }

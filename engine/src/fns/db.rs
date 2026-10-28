@@ -34,7 +34,7 @@ pub static DEFS: &[Def] = &[
     d!("DVARP", 3, 3, |ev, a| dfn(ev, a, Op::Var(false))),
 ];
 
-fn header_text(v: &Value) -> String {
+pub(crate) fn header_text(v: &Value) -> String {
     match v {
         Value::Str(s) => s.trim().to_lowercase(),
         Value::Num(n) => crate::numfmt::num_to_text(*n),
@@ -45,7 +45,7 @@ fn header_text(v: &Value) -> String {
 
 /// Text criteria in a criteria range match the start of the entry ("Smith" finds
 /// "Smithers"), unlike COUNTIF.
-fn db_criteria(v: &Value, d1904: bool) -> Option<Criteria> {
+pub(crate) fn db_criteria(v: &Value, d1904: bool) -> Option<Criteria> {
     match v {
         Value::Empty => None,
         Value::Str(s) => {

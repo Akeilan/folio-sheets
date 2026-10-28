@@ -215,6 +215,7 @@ class GridView(Gtk.Box):
             "page_breaks": st.view_mode == "pageBreakPreview",
             "edit_note": self.edit_note,
             "dv_circles": self.win.dv.circles_for(self.sheet),
+            "hide_ink": getattr(self.win, "hide_ink", False),
         }
         if extra:
             p.update(extra)
@@ -632,6 +633,14 @@ class GridView(Gtk.Box):
             self.obj_preview = None
             self.win.on_object_selection()
             return True
+        if getattr(self.win, "selecting_objects", False) and ev.button == 1 and not pointing:
+            # Select Objects: a rectangle round the objects to select
+            if self.editing() and self.commit_edit() is False:
+                return True
+            self.sel_objects = []
+            self._drag = ("marquee", ev.x, ev.y)
+            self.obj_preview = None
+            return True
         if self.sel_objects:
             self.sel_objects = []
             self.win.on_object_selection()
@@ -801,11 +810,19 @@ class GridView(Gtk.Box):
             from . import slicer_ui
             slicer_ui.drag(self.win, self._drag, x, y)
             return
+        if kind == "marquee":
+            x0, y0 = self._drag[1], self._drag[2]
+            self.obj_preview = (min(x0, x), min(y0, y), abs(x - x0), abs(y - y0))
+            self.area.queue_draw()
+            return
         if kind == "obj":
             d = self._drag
             if self.obj_preview is None and abs(x - d[3]) < 3 and abs(y - d[4]) < 3:
                 return
             self.obj_preview = self._object_rect_for(d, x, y)
+            if d[2] == "body" and (getattr(self.win, "snap_grid", False) or getattr(self.win, "snap_shape", False)):
+                from .objects_ui import snap
+                self.obj_preview = snap(self.win, self.obj_preview)
             self.area.queue_draw()
             return
         if kind in ("colresize", "rowresize"):
@@ -914,6 +931,14 @@ class GridView(Gtk.Box):
             self.area.queue_draw()
             return True
         if d and d[0] == "timeline":
+            return True
+        if d and d[0] == "marquee":
+            prev, self.obj_preview = self.obj_preview, None
+            if prev is not None:
+                from .objects_ui import objects_in
+                self.sel_objects = objects_in(self.win, prev)
+            self.refresh()
+            self.win.on_object_selection()
             return True
         if d and d[0] == "obj":
             prev, self.obj_preview = self.obj_preview, None

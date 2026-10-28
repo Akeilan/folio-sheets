@@ -267,7 +267,7 @@ def open_find(win, replace=False):
 
 
 # ------------------------------------------------------------------ Go To Special
-SPECIAL = [("Blanks", "blanks"), ("Constants", "constants"), ("Formulas", "formulas"), ("Current region", "region"),
+SPECIAL = [("Notes", "notes"), ("Blanks", "blanks"), ("Constants", "constants"), ("Formulas", "formulas"), ("Current region", "region"),
            ("Current array", "array"), ("Last cell", "lastcell"), ("Visible cells only", "visible"),
            ("Conditional formats", "cf"), ("Data validation", "validation")]
 

@@ -77,6 +77,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.add(self.overlay)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.overlay.add(self.outer)
+        self.menu_keys = {}         # command -> the ribbon menu button it opens
+        self.last_menu = None
         self.ribbon = Ribbon(self.run, self.focus_document)
         self.ribbon.connect("file-clicked", lambda *_: self.show_backstage())
         self.outer.pack_start(self.ribbon, False, False, 0)
@@ -97,6 +99,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.formula_bar = FormulaBar(self)
         self.outer.pack_start(self.formula_bar, False, False, 0)
         mid = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.mid = mid
         mid.pack_start(self.grid, True, True, 0)
         from .notes_ui import make_pane
         self.comments_pane = make_pane(self)
@@ -313,6 +316,10 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def _import_legacy(self, path):
         """Legacy formats go through LibreOffice as a converter only."""
+        import shutil
+        if shutil.which("soffice") is None:
+            raise RuntimeError("opening %s files needs the optional converter. Install it with: "
+                               "sudo apt install libreoffice-calc-nogui" % os.path.splitext(path)[1].lower())
         out = tempfile.mkdtemp(prefix="folio-sheets-")
         cmd = ["soffice", "--headless", "--norestore", "--convert-to", "xlsx:Calc MS Excel 2007 XML",
                "--outdir", out, path]
@@ -367,8 +374,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.status.show_zoom(st.zoom * 100)
         self.sync_checks()
         self.ribbon.update("split", "true" if getattr(st, "split", False) else "false")
-        from . import protect_ui
+        from . import protect_ui, views_ui
         protect_ui.after(self)
+        views_ui.sync_background(self)
         self.grid.refresh()
 
     def sync_checks(self):
@@ -564,6 +572,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         name = commands.method_name(cmd)
         arg = cmd.split(":", 1)[1] if ":" in cmd else None
         fn = getattr(self, name, None)
+        if fn is None and cmd in self.menu_keys:
+            self.open_ribbon_menu(self.menu_keys[cmd])
+            return
         if fn is None:
             self.not_yet(cmd)
             return
@@ -920,6 +931,20 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.dialogs.info("Visual Basic isn't available in %s. The macros in a workbook are kept when it is saved "
                           "as an Excel Macro-Enabled Workbook (*.xlsm)." % APP_NAME, "Visual Basic")
 
+    def open_ribbon_menu(self, btn):
+        """Show the tab a menu button is on and open its menu."""
+        for t in self.ribbon.tabs:
+            if btn.is_ancestor(t.body):
+                if self.ribbon.current is not t:
+                    self.ribbon.select(t)
+                break
+        if self.last_menu is not None:
+            self.last_menu.popdown()
+        self.last_menu = btn.open_menu()
+
+    def act_borders(self):
+        self.open_ribbon_menu(self.borders_button)
+
     def not_yet(self, cmd):
         label = commands.label(cmd)
         self.missing_log.append(cmd)
@@ -1222,9 +1247,20 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         clip_ui.paste_picture(self)
 
     def act_copy_picture(self):
-        from . import clip_ui
-        if not clip_ui._copy_picture_object(self):
-            raise NotImplementedError
+        from . import views_ui
+        return views_ui.copy_as_picture(self)
+
+    def act_clipboard_pane(self):
+        from . import views_ui
+        return views_ui.clipboard_pane(self)
+
+    def act_custom_views(self):
+        from . import views_ui
+        return views_ui.custom_views(self)
+
+    def act_background(self):
+        from . import views_ui
+        return views_ui.background(self)
 
     def act_pictures(self):
         from . import clip_ui
@@ -2068,6 +2104,42 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import print_ui
         print_ui.export_pdf(self)
 
+    def act_send_attachment(self, pdf=""):
+        """File > Share > Email: a new message in the mail app with this workbook (or a PDF of it) attached."""
+        import shutil
+        from . import print_ui
+        if self.grid.editing():
+            self.grid.commit_edit()
+        name = os.path.splitext(self.doc_name())[0]
+        ext = os.path.splitext(self.path)[1].lower() if self.path else ".xlsx"
+        if ext not in (".xlsx", ".xlsm", ".xltx", ".xltm"):
+            ext = ".xlsx"
+        d = tempfile.mkdtemp(prefix="folio-share-")
+        path = os.path.join(d, name + (".pdf" if pdf else ext))
+        try:
+            if pdf:
+                if not print_ui.write_pdf(self, path):
+                    raise RuntimeError("there is nothing to print")
+            else:
+                self.store_view_state()
+                self.book.save(path)
+        except Exception as e:
+            self.dialogs.message("%s couldn't make the attachment.\n\n%s" % (APP_NAME, e))
+            return None
+        post = shutil.which("folio-post")
+        if post:
+            subprocess.Popen([post, "--attach", path])
+        elif shutil.which("xdg-email"):
+            subprocess.Popen(["xdg-email", "--subject", name, "--attach", path])
+        else:
+            self.dialogs.info("Sending needs a mail app: install Folio Post.")
+            return None
+        self.status.extra.set_text("Attached %s to a new message." % os.path.basename(path))
+        return path
+
+    def act_send_pdf(self):
+        return self.act_send_attachment("pdf")
+
     def act_margins(self, name=None):
         from . import print_ui
         if name in print_ui.MARGINS:
@@ -2333,7 +2405,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             items = [("Clear Filter", "slicer-clear"), None, ("Report Connections...", "filter-connections"),
                      ("%s Settings..." % noun, "slicer-settings"), None, ("Delete", "chart-delete")]
         elif kind != "chart":
-            items = [("Delete", "chart-delete")]
+            items = [("Delete", "chart-delete"), None, ("Group", "group-objects:group"), ("Ungroup", "group-objects:ungroup"),
+                     None, ("Bring to Front", "bring-to-front"), ("Send to Back", "send-to-back"), None,
+                     ("Edit Alt Text...", "alt-text")]
+        else:
+            items += [None, ("Edit Alt Text...", "alt-text")]
         items = [it for it in items if it is None or getattr(self, commands.method_name(it[1]), None)]
         self._popup_menu(items, ev)
 
@@ -2453,6 +2529,90 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import find_ui
         find_ui.goto_special(self, "formulas")
 
+    # ------------------------------------------------------------ objects (Backlog 2)
+    def act_selection_pane(self):
+        from . import objects_ui
+        return objects_ui.selection_pane(self)
+
+    def act_select_objects(self):
+        from . import objects_ui
+        return objects_ui.select_objects_mode(self)
+
+    def act_align_objects(self, how=None):
+        from . import objects_ui
+        if how is None:
+            return self.open_ribbon_menu(self.menu_keys["align-objects"])
+        return objects_ui.align(self, how)
+
+    def act_snap_grid(self):
+        self.snap_grid = not getattr(self, "snap_grid", False)
+        self.ribbon.update("snap-grid", "true" if self.snap_grid else "false")
+
+    def act_snap_shape(self):
+        self.snap_shape = not getattr(self, "snap_shape", False)
+        self.ribbon.update("snap-shape", "true" if self.snap_shape else "false")
+
+    def act_group_objects(self, how=None):
+        from . import objects_ui
+        if how is None:
+            return self.open_ribbon_menu(self.menu_keys["group-objects"])
+        return objects_ui.group(self, how)
+
+    def act_rotate_objects(self, how=None):
+        from . import objects_ui
+        if how is None:
+            return self.open_ribbon_menu(self.menu_keys["rotate-objects"])
+        return objects_ui.rotate(self, how)
+
+    def act_alt_text(self):
+        from . import objects_ui
+        return objects_ui.alt_text(self)
+
+    def act_hide_ink(self, how=None):
+        """Review > Hide Ink: ink on every sheet is hidden (or shown again); or deleted."""
+        b, g = self.book, self.grid
+        if how in ("delete-sheet", "delete-all"):
+            sheets = [g.sheet] if how == "delete-sheet" else range(b.sheet_count)
+            b.begin_group("Delete Ink")
+            try:
+                for s in sheets:
+                    ink = [i for i, o in enumerate(b.objects(s)) if o["kind"] == "ink"]
+                    if ink:
+                        b.delete_objects(s, ink)
+            finally:
+                b.end_group()
+            g.sel_objects = []
+            g.refresh()
+            self.update_title()
+            return
+        self.hide_ink = not getattr(self, "hide_ink", False)
+        if self.hide_ink:
+            objs = b.objects(g.sheet)
+            g.sel_objects = [i for i in g.sel_objects if i < len(objs) and objs[i]["kind"] != "ink"]
+        self.ribbon.update("hide-ink", "true" if self.hide_ink else "false")
+        g.refresh()
+
+    # ------------------------------------------------------------ review tools (Backlog 2)
+    def act_workbook_statistics(self):
+        from . import review_ui
+        return review_ui.workbook_statistics(self)
+
+    def act_check_accessibility(self):
+        from . import review_ui
+        return review_ui.check_accessibility(self)
+
+    def act_allow_edit_ranges(self):
+        from . import review_ui
+        return review_ui.allow_edit_ranges(self)
+
+    def act_workbook_links(self):
+        from . import review_ui
+        return review_ui.workbook_links(self)
+
+    def act_select_comments(self):
+        from . import find_ui
+        find_ui.goto_special(self, "notes")
+
     def act_select_cf(self):
         from . import find_ui
         find_ui.goto_special(self, "cf")
@@ -2479,8 +2639,18 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         data_ui.toggle_filter(self)
 
     def act_filter_clear(self):
-        from . import data_ui
+        from . import data_ui, data2_ui
+        if not self.book.autofilter(self.grid.sheet) and data2_ui.show_all(self):
+            return
         data_ui.clear_filter(self)
+
+    def act_advanced_filter(self):
+        from . import data2_ui
+        return data2_ui.advanced_filter(self)
+
+    def act_consolidate(self):
+        from . import data2_ui
+        return data2_ui.consolidate(self)
 
     def act_filter_reapply(self):
         from . import data_ui
@@ -3014,18 +3184,24 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         sw.add(tv)
         box.pack_start(sw, True, True, 0)
         copy = Gtk.CheckButton(label="Create a copy")
-        copy.set_sensitive(False)
-        copy.set_tooltip_text("Copying sheets is not available yet.")
+        copy.set_use_underline(True)
         box.pack_start(copy, False, False, 0)
         tv.connect("row-activated", lambda *_: d.response(Gtk.ResponseType.OK))
         d.show_all()
         r = d.run()
         m, it = tv.get_selection().get_selected()
         before = m[it][0] if it is not None else None
+        want_copy = copy.get_active()
         d.destroy()
         if r != Gtk.ResponseType.OK or before is None:
             return
-        frm = g.sheet
+        if want_copy:
+            self.copy_sheet_to(g.sheet, before)
+            return
+        self.move_sheet_to(g.sheet, before)
+
+    def move_sheet_to(self, frm, before):
+        n = self.book.sheet_count
         to = before if before < frm else before - 1
         if to == frm:
             return
@@ -3038,6 +3214,21 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return j + 1 if j >= to else j
         self._remap_states({k: mp(k) for k in range(n)})
         self._after_structure(to)
+
+    def copy_sheet_to(self, frm, before):
+        """A copy of sheet frm goes before position `before` (sheet_count: at the end)."""
+        n = self.book.sheet_count
+        try:
+            at = self.book.copy_sheet(frm, before)
+        except ValueError as e:
+            self.dialogs.info(str(e), "Move or Copy")
+            return
+        self._remap_states({k: (k + 1 if k >= at else k) for k in range(n)})
+        st = self.grid.states.get(frm + (1 if frm >= at else 0))
+        if st is not None:
+            import copy as _copy
+            self.grid.states[at] = _copy.copy(st)
+        self._after_structure(at)
 
     def act_context_menu(self):
         g = self.grid
@@ -3119,6 +3310,10 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g = self.grid
         focus = self.get_focus()
         in_grid = focus is g.area
+        if kv == Gdk.KEY_Escape and getattr(self, "selecting_objects", False) and not g.sel_objects:
+            from . import objects_ui
+            objects_ui.select_objects_mode(self, False)
+            return True
         if in_grid and g.sel_objects and not g.editing():
             if kv in (Gdk.KEY_Delete, Gdk.KEY_BackSpace):
                 self.run("chart-delete")

@@ -125,6 +125,8 @@ def copy(win, cut=False):
     if not _Owner.offer(text, _html_of(win, g.sheet, rg)):
         _clipboard().set_text(text, -1)
     win._copied = (g.sheet, rg, cut)
+    from .views_ui import ClipItem, remember
+    remember(ClipItem(text, Clip.data))
     g.copy_range = rg
     win._start_ants()
     g.refresh()

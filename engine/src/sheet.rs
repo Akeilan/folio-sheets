@@ -183,6 +183,9 @@ pub struct Sheet {
     pub raw_part: Option<Vec<u8>>,
     /// raw sheetView / sheetFormatPr / sheetPr elements, rewritten only when changed
     pub raw_views: Option<String>,
+    /// Page Layout > Background: the picture tiled behind the cells, and the media part it came from
+    pub background: Option<std::rc::Rc<crate::picture::Picture>>,
+    pub bg_part: Option<String>,
     pub raw_sheetpr: Option<crate::xml::Element>,
     pub raw_format_pr: Option<crate::xml::Element>,
     pub error: Option<String>,
@@ -227,6 +230,8 @@ impl Sheet {
             pieces: Vec::new(),
             raw_part: None,
             raw_views: None,
+            background: None,
+            bg_part: None,
             raw_sheetpr: None,
             raw_format_pr: None,
             error: None,

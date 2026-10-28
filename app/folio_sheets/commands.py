@@ -18,7 +18,7 @@ LABELS = {
     "paste-formulas": "Paste Formulas", "paste-formatting": "Paste Formatting",
     "paste-transpose": "Paste Transpose", "paste-link": "Paste Link", "paste-picture": "Paste as Picture",
     "paste-keep-widths": "Keep Source Column Widths", "paste-no-borders": "No Borders",
-    "cut": "Cut", "copy": "Copy", "copy-picture": "Copy as Picture",
+    "send-attachment": "Send as Attachment", "send-pdf": "Send as PDF", "snap-grid": "Snap to Grid", "snap-shape": "Snap to Shape", "alt-text": "Alt Text", "cut": "Cut", "copy": "Copy", "copy-picture": "Copy as Picture",
     "format-painter": "Format Painter", "clipboard-pane": "Clipboard",
     # font
     "font-name": "Font", "font-size": "Font Size", "font-grow": "Increase Font Size",

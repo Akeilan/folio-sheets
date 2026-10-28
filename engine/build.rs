@@ -3,6 +3,14 @@
 use std::path::Path;
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // the Windows build links to the GTK runtime it ships with
+        if let Ok(d) = std::env::var("FOLIO_WIN_LIBDIR") {
+            println!("cargo:rustc-link-search=native={}", d);
+        }
+        println!("cargo:rerun-if-changed=build.rs");
+        return;
+    }
     let out = std::env::var("OUT_DIR").unwrap();
     let dir = Path::new(&out).join("links");
     std::fs::create_dir_all(&dir).unwrap();
@@ -18,6 +26,7 @@ fn main() {
             if p.exists() {
                 let l = dir.join(format!("lib{}.so", name));
                 let _ = std::fs::remove_file(&l);
+                #[cfg(unix)]
                 std::os::unix::fs::symlink(&p, &l).unwrap();
                 break;
             }

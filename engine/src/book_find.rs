@@ -204,6 +204,14 @@ impl Book {
     /// (1 numbers, 2 text, 4 logicals, 16 errors). Returned as ranges (runs along rows).
     pub fn special_cells(&self, s: usize, area: Rect, kind: &str, mask: u32) -> Vec<Rect> {
         let sh = &self.sheets[s];
+        if kind == "notes" {
+            // notes and threaded comments (Select Comments, Go To Special > Notes)
+            let mut cells: Vec<(u32, u32)> = sh.notes.keys().chain(sh.threads.keys()).copied()
+                .filter(|(r, c)| area.contains(*r, *c)).collect();
+            cells.sort();
+            cells.dedup();
+            return runs(cells);
+        }
         let (er, ec) = sh.used_extent().unwrap_or((0, 0));
         let area = Rect::new(area.r1, area.c1, area.r2.min(er.max(area.r1)), area.c2.min(ec.max(area.c1)));
         let mut cells: Vec<(u32, u32)> = Vec::new();

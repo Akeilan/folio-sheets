@@ -46,7 +46,7 @@ pub struct CommentsFile {
 pub const NOTE_W: f64 = 144.0;
 pub const NOTE_H: f64 = 79.0;
 
-fn guid(rng: &mut u64) -> String {
+pub(crate) fn guid(rng: &mut u64) -> String {
     let mut next = || {
         *rng ^= *rng << 13;
         *rng ^= *rng >> 7;
