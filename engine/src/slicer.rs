@@ -215,7 +215,7 @@ impl Book {
         let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: Some("oneCell".into()) };
         let anchor = self.anchor_at(s, &like, x, y, w, h);
         let obj = Obj { anchor, body: Vec::new(), chart: None, name: name.clone(), part: None, picture: None, pic_part: None,
-                        ink: None, ink_part: None, raw: None, slicer: Some(Rc::new(sl)) };
+                        ink: None, ink_part: None, raw: None, slicer: Some(Rc::new(sl)), members: Vec::new() };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
         let i = objs.len() - 1;

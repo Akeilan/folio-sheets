@@ -58,6 +58,11 @@ pub mod pivot_xml;
 pub mod slicer;
 pub mod slicer_xml;
 pub mod pivot_chart;
+pub mod sheet_copy;
+pub mod sheet_extra;
+pub mod extlinks;
+pub mod objects_ext;
+pub mod advfilter;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

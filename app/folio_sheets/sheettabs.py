@@ -63,6 +63,9 @@ class SheetTabs(Gtk.Paned):
             box.pack_start(bar, False, False, 0)
             b.add(box)
             b.connect("button-press-event", self.on_tab_press, i)
+            b.connect("motion-notify-event", self.on_tab_motion, i)
+            b.connect("button-release-event", self.on_tab_release, i)
+            b.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK)
             self.tabs.pack_start(b, False, False, 0)
             self.buttons.append(b)
         self.buttons += []
@@ -95,8 +98,44 @@ class SheetTabs(Gtk.Paned):
         if ev.button in (1, 3):
             self.win.grid.set_sheet(i)
             self.win.sheet_changed()
+        if ev.button == 1:
+            self._drag = [i, ev.x_root, False]
         if ev.button == 3:
             self.win.sheet_tab_menu(b, ev)
+        return True
+
+    def drop_index(self, x_root):
+        """The position a tab dragged to x_root goes before (sheet_count: the end)."""
+        n = self.win.book.sheet_count
+        for k, b in enumerate(self.buttons):
+            if b is None or not b.get_realized():
+                continue
+            ox, _oy = b.get_window().get_origin()[1:]
+            a = b.get_allocation()
+            if x_root < ox + a.width / 2:
+                return k
+        return n
+
+    def on_tab_motion(self, b, ev, i):
+        d = getattr(self, "_drag", None)
+        if d and not d[2] and abs(ev.x_root - d[1]) > 8:
+            d[2] = True
+            cur = Gdk.Cursor.new_from_name(b.get_display(), "copy" if ev.get_state() & Gdk.ModifierType.CONTROL_MASK else "move")
+            b.get_window().set_cursor(cur)
+        return False
+
+    def on_tab_release(self, b, ev, i):
+        """Dragging a tab moves the sheet; Ctrl+drag copies it."""
+        d = getattr(self, "_drag", None)
+        self._drag = None
+        if not d or not d[2]:
+            return False
+        b.get_window().set_cursor(None)
+        before = self.drop_index(ev.x_root)
+        if ev.get_state() & Gdk.ModifierType.CONTROL_MASK:
+            self.win.copy_sheet_to(d[0], before)
+        else:
+            self.win.move_sheet_to(d[0], before)
         return True
 
     def on_nav(self, b, ev, d):

@@ -88,6 +88,7 @@ fn view_params(d: &Bound<'_, PyDict>) -> ViewParams {
     p.sel_objects = get(d, "sel_objects").unwrap_or_default();
     p.obj_preview = get(d, "obj_preview");
     p.hover_note = get(d, "hover_note");
+    p.hide_ink = get(d, "hide_ink").unwrap_or(false);
     p.edit_note = get(d, "edit_note");
     p.print = get(d, "print").unwrap_or(false);
     p.page_breaks = get(d, "page_breaks").unwrap_or(false);
@@ -660,6 +661,82 @@ impl PyBook {
     }
     fn move_sheet(&mut self, from: usize, to: usize) -> PyResult<()> {
         self.b.move_sheet(from, to).map_err(verr)
+    }
+    fn copy_sheet(&mut self, from: usize, at: usize) -> PyResult<usize> {
+        self.b.copy_sheet(from, at).map_err(verr)
+    }
+    fn sheet_element(&self, s: usize, tag: &str) -> PyResult<Option<String>> {
+        self.sheet(s)?;
+        Ok(self.b.sheet_element(s, tag))
+    }
+    #[pyo3(signature = (s, tag, xml=None, label=None))]
+    fn set_sheet_element(&mut self, s: usize, tag: &str, xml: Option<&str>, label: Option<&str>) -> PyResult<()> {
+        self.b.set_sheet_element(s, tag, xml, label).map_err(verr)
+    }
+    fn workbook_element(&self, tag: &str) -> Option<String> {
+        self.b.workbook_element(tag)
+    }
+    #[pyo3(signature = (tag, xml=None))]
+    fn set_workbook_element(&mut self, tag: &str, xml: Option<&str>) -> PyResult<()> {
+        self.b.set_workbook_element(tag, xml).map_err(verr)
+    }
+    fn ext_links<'py>(&self, py: Python<'py>) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        let mut out = Vec::new();
+        for e in self.b.ext_cache().iter() {
+            let d = PyDict::new_bound(py);
+            d.set_item("index", e.index)?;
+            d.set_item("target", &e.target)?;
+            d.set_item("part", &e.part)?;
+            d.set_item("sheets", e.sheets.clone())?;
+            d.set_item("cells", e.cells.len())?;
+            out.push(d);
+        }
+        Ok(out)
+    }
+    fn ext_set_source(&mut self, n: usize, target: &str) -> PyResult<()> {
+        self.b.ext_set_source(n, target).map_err(verr)
+    }
+    /// Update Values from the workbook at `path` (its values as saved).
+    fn ext_update(&mut self, n: usize, path: &str) -> PyResult<usize> {
+        let src = Book::open(path).map_err(verr)?;
+        let k = self.b.ext_update_from(n, &src).map_err(verr)?;
+        self.b.recalc(false);
+        Ok(k)
+    }
+    fn ext_break(&mut self, n: usize) -> PyResult<usize> {
+        let k = self.b.ext_break(n).map_err(verr)?;
+        self.b.recalc(false);
+        Ok(k)
+    }
+    /// Advanced Filter: in place (dest None) or copied to dest on sheet ds. Returns the rows matched.
+    #[pyo3(signature = (s, list, crit=None, unique=false, dest=None))]
+    fn advanced_filter(&mut self, s: usize, list: R4, crit: Option<(usize, R4)>, unique: bool, dest: Option<(usize, R4)>) -> PyResult<usize> {
+        self.sheet(s)?;
+        let crit = crit.map(|(cs, r)| (cs, rect(r)));
+        match dest {
+            None => self.b.advanced_filter(s, rect(list), crit, unique).map_err(verr),
+            Some((ds, d)) => self.b.advanced_copy(s, rect(list), crit, unique, ds, rect(d)).map_err(verr),
+        }
+    }
+    fn advanced_show_all(&mut self, s: usize) -> PyResult<bool> {
+        self.sheet(s)?;
+        self.b.advanced_show_all(s).map_err(verr)
+    }
+    fn hidden_spans(&self, s: usize) -> PyResult<(Vec<(u32, u32)>, Vec<(u32, u32)>)> {
+        self.sheet(s)?;
+        Ok(self.b.hidden_spans(s))
+    }
+    #[pyo3(signature = (s, data=None))]
+    fn set_background(&mut self, s: usize, data: Option<Vec<u8>>) -> PyResult<()> {
+        self.b.set_background(s, data).map_err(verr)
+    }
+    fn has_background(&self, s: usize) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.sheets[s].background.is_some())
+    }
+    fn sheet_counts(&self, s: usize) -> PyResult<(usize, usize)> {
+        self.sheet(s)?;
+        Ok(self.b.sheet_counts(s))
     }
     fn set_sheet_state(&mut self, i: usize, state: &str) -> PyResult<()> {
         self.b.set_sheet_state(i, state).map_err(verr)
@@ -1776,9 +1853,44 @@ impl PyBook {
             d.set_item("kind", o.kind())?;
             d.set_item("name", &o.name)?;
             d.set_item("rect", self.b.obj_rect(s, o))?;
+            d.set_item("hidden", crate::objects_ext::is_hidden(o))?;
+            d.set_item("members", o.members.len())?;
             out.push(d);
         }
         Ok(out)
+    }
+    fn object_props<'py>(&self, py: Python<'py>, s: usize, i: usize) -> PyResult<Bound<'py, PyDict>> {
+        self.sheet(s)?;
+        let p = self.b.object_props(s, i).ok_or_else(|| PyIndexError::new_err("no such object"))?;
+        let d = PyDict::new_bound(py);
+        d.set_item("name", p.name)?;
+        d.set_item("descr", p.descr)?;
+        d.set_item("decorative", p.decorative)?;
+        d.set_item("hidden", p.hidden)?;
+        d.set_item("rot", p.rot)?;
+        d.set_item("flip_h", p.flip_h)?;
+        d.set_item("flip_v", p.flip_v)?;
+        d.set_item("group", p.group)?;
+        d.set_item("members", p.members)?;
+        Ok(d)
+    }
+    /// keys: name, descr, decorative, hidden, rot, rot_by, flip_h, flip_v (flips toggle)
+    #[pyo3(signature = (s, which, props, label="Format Object"))]
+    fn set_object_props(&mut self, s: usize, which: Vec<usize>, props: &Bound<'_, PyDict>, label: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let name: Option<String> = get(props, "name");
+        let descr: Option<String> = get(props, "descr");
+        self.b.set_object_props(s, &which, name.as_deref(), descr.as_deref(), get(props, "decorative"), get(props, "hidden"),
+                                get(props, "rot"), get(props, "rot_by"), get(props, "flip_h").unwrap_or(false),
+                                get(props, "flip_v").unwrap_or(false), label).map_err(verr)
+    }
+    fn group_objects(&mut self, s: usize, which: Vec<usize>) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.group_objects(s, &which).map_err(verr)
+    }
+    fn ungroup_object(&mut self, s: usize, i: usize) -> PyResult<Vec<usize>> {
+        self.sheet(s)?;
+        self.b.ungroup_object(s, i).map_err(verr)
     }
     fn object_hit(&self, s: usize, x: f64, y: f64, p: &Bound<'_, PyDict>) -> PyResult<Option<(usize, String)>> {
         self.sheet(s)?;

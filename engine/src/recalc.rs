@@ -873,6 +873,9 @@ fn cell_format_code(code: &str) -> String {
 }
 
 impl Ctx for Book {
+    fn external(&self, text: &str) -> Option<Value> {
+        self.ext_value(text)
+    }
     fn table_ref(&self, text: &str, sheet: usize, r: u32, c: u32) -> Option<(usize, Rect)> {
         crate::tables::resolve(&self.sheets, text, sheet, Some((r, c)))
     }

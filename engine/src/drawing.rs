@@ -45,6 +45,9 @@ pub struct Obj {
     pub raw: Option<Element>,
     /// a slicer or timeline
     pub slicer: Option<Rc<crate::slicer::Slicer>>,
+    /// a group's objects (its body is the grpSp without them); their anchors are Abs, in the
+    /// group's child coordinates (EMU)
+    pub members: Vec<Obj>,
 }
 
 /// A sheet's drawing part as read.
@@ -226,7 +229,7 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
             None => continue,
         };
         let body: Vec<Node> = a.children.iter().filter(|n| !matches!(n, Node::Elem(e) if matches!(e.local(), "from" | "to" | "ext" | "pos"))).cloned().collect();
-        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None };
+        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new() };
         o.name = find_name(&o.body).unwrap_or_default();
         // an equation's text box is read as a shape (and wrapped again when written)
         let is_math = wrapper.is_some() && o.body.iter().any(|n| matches!(n, Node::Elem(e) if (e.local() == "sp") && crate::math::find_math(e).is_some()));
@@ -249,6 +252,35 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
             objs.push(o);
             continue;
         }
+        load_parts(&mut o, &rels, get, get_bytes, theme);
+        objs.push(o);
+    }
+    Ok((DrawingFile { part: part.to_string(), prolog, root, rels }, objs))
+}
+
+/// A picture's image and a chart's part, for an object and a group's members.
+fn load_parts(o: &mut Obj, rels: &[(String, String, String, bool)], get: &dyn Fn(&str) -> Option<String>,
+              get_bytes: &dyn Fn(&str) -> Option<Vec<u8>>, theme: &[u32; 12]) {
+    // a group: its members, each from its own element
+    let grp = o.body.iter().position(|n| matches!(n, Node::Elem(e) if e.local() == "grpSp"));
+    if let Some(gi) = grp {
+        let mut head = match &o.body[gi] {
+            Node::Elem(e) => e.clone(),
+            _ => unreachable!(),
+        };
+        let kids: Vec<Element> = head.elems().filter(|e| matches!(e.local(), "sp" | "pic" | "cxnSp" | "graphicFrame" | "grpSp")).cloned().collect();
+        head.children.retain(|n| !matches!(n, Node::Elem(e) if matches!(e.local(), "sp" | "pic" | "cxnSp" | "graphicFrame" | "grpSp")));
+        for k in kids {
+            let (x, y, cx, cy) = elem_xfrm(&k).unwrap_or((0, 0, 0, 0));
+            let mut m = Obj { anchor: Anchor::Abs { x, y, cx, cy }, body: vec![Node::Elem(k)], chart: None, name: String::new(), part: None,
+                              picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new() };
+            m.name = find_name(&m.body).unwrap_or_default();
+            load_parts(&mut m, rels, get, get_bytes, theme);
+            o.members.push(m);
+        }
+        o.body[gi] = Node::Elem(head);
+        return;
+    }
         // a picture: its image from the media part
         let is_pic = o.body.iter().any(|n| matches!(n, Node::Elem(e) if e.local() == "pic"));
         if is_pic {
@@ -275,9 +307,101 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
                 }
             }
         }
-        objs.push(o);
+}
+
+/// The xfrm of a drawing element (off and ext, EMU): sp/pic/cxnSp in spPr, a group in
+/// grpSpPr, a graphic frame its own.
+pub fn elem_xfrm(e: &Element) -> Option<(i64, i64, i64, i64)> {
+    let x = xfrm_of(e)?;
+    let n = |c: &str, a: &str| x.child(c).and_then(|v| v.attr(a)).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    Some((n("off", "x"), n("off", "y"), n("ext", "cx"), n("ext", "cy")))
+}
+
+pub fn xfrm_of(e: &Element) -> Option<&Element> {
+    match e.local() {
+        "graphicFrame" => e.child("xfrm"),
+        "grpSp" => e.child("grpSpPr").and_then(|p| p.child("xfrm")),
+        _ => e.child("spPr").and_then(|p| p.child("xfrm")),
     }
-    Ok((DrawingFile { part: part.to_string(), prolog, root, rels }, objs))
+}
+
+/// Set (or make) an element's xfrm off/ext.
+pub fn set_elem_xfrm(e: &mut Element, x: i64, y: i64, cx: i64, cy: i64) {
+    let holder: Option<&mut Element> = match e.local() {
+        "graphicFrame" => Some(e),
+        "grpSp" => e.child_mut("grpSpPr"),
+        _ => e.child_mut("spPr"),
+    };
+    let h = match holder {
+        Some(h) => h,
+        None => return,
+    };
+    if h.child("xfrm").is_none() {
+        let pfx = if h.local() == "graphicFrame" { "xdr:" } else { "a:" };
+        let x = Element::new(&format!("{}xfrm", pfx));
+        h.children.insert(0, Node::Elem(x));
+    }
+    let xf = h.child_mut("xfrm").unwrap();
+    for (tag, a, b, va, vb) in [("off", "x", "y", x, y), ("ext", "cx", "cy", cx, cy)] {
+        if xf.child(tag).is_none() {
+            let pos = if tag == "off" { 0 } else { xf.children.iter().position(|n| matches!(n, Node::Elem(e) if e.local() == "off")).map(|i| i + 1).unwrap_or(0) };
+            xf.children.insert(pos, Node::Elem(Element::new(&format!("a:{}", tag))));
+        }
+        let c = xf.child_mut(tag).unwrap();
+        c.set_attr(a, &va.to_string());
+        c.set_attr(b, &vb.to_string());
+    }
+}
+
+/// The element a group member is (its body's drawing element).
+pub fn main_elem(body: &[Node]) -> Option<&Element> {
+    body.iter().find_map(|n| match n {
+        Node::Elem(e) if matches!(e.local(), "sp" | "pic" | "cxnSp" | "graphicFrame" | "grpSp" | "contentPart") => Some(e),
+        _ => None,
+    })
+}
+
+pub fn main_elem_mut(body: &mut [Node]) -> Option<&mut Element> {
+    body.iter_mut().find_map(|n| match n {
+        Node::Elem(e) if matches!(e.local(), "sp" | "pic" | "cxnSp" | "graphicFrame" | "grpSp" | "contentPart") => Some(e),
+        _ => None,
+    })
+}
+
+/// A group's element written with its members inside (their xfrm from their anchors).
+pub fn group_xml(o: &Obj) -> String {
+    let mut head = match main_elem(&o.body) {
+        Some(e) => e.clone(),
+        None => return String::new(),
+    };
+    let mut inner = String::new();
+    for m in &o.members {
+        if let Some(e) = member_elem(m) {
+            e.write(&mut inner);
+        }
+    }
+    head.children.push(Node::Raw(inner));
+    let mut s = String::new();
+    head.write(&mut s);
+    s
+}
+
+/// A member's element with its position written in (and its own members, for a nested group).
+pub fn member_elem(m: &Obj) -> Option<Element> {
+    let mut e = main_elem(&m.body)?.clone();
+    if let Anchor::Abs { x, y, cx, cy } = m.anchor {
+        set_elem_xfrm(&mut e, x, y, cx, cy);
+    }
+    if !m.members.is_empty() {
+        let mut inner = String::new();
+        for k in &m.members {
+            if let Some(ke) = member_elem(k) {
+                ke.write(&mut inner);
+            }
+        }
+        e.children.push(Node::Raw(inner));
+    }
+    Some(e)
 }
 
 fn read_anchor(a: &Element) -> Option<Anchor> {
@@ -461,6 +585,7 @@ pub fn write_drawing(file: Option<&DrawingFile>, objs: &[Obj]) -> String {
         }
         for n in &o.body {
             match n {
+                Node::Elem(e) if e.local() == "grpSp" && !o.members.is_empty() => s.push_str(&group_xml(o)),
                 Node::Elem(e) => e.write(&mut s),
                 Node::Text(t) => xml::escape_text_into(t, &mut s),
                 Node::Raw(r) => s.push_str(r),

@@ -256,7 +256,14 @@ class Builder:
                 out.append((label, self.run(cmd), icon) if icon else (label, self.run(cmd)))
         return out
 
-    def big(self, label, icon, cmd, keytip, menu=None, tip=None):
+    def keyed(self, key, btn):
+        """A menu button the command `key` opens (KeyTips, search, the command walk)."""
+        self.win.menu_keys[key] = btn
+        return btn
+
+    def big(self, label, icon, cmd, keytip, menu=None, tip=None, key=None):
+        if key is not None:
+            return self.keyed(key, self.big(label, icon, cmd, keytip, menu=menu, tip=tip))
         if menu is not None:
             if cmd is None:
                 return MenuButton(self.r, label, icon, self.menu(menu) if isinstance(menu, list) else menu,
@@ -265,7 +272,9 @@ class Builder:
                                size="large", keytip=keytip, tooltip=tip or label)
         return RibbonButton(self.r, label, icon, cmd, size="large", keytip=keytip, tooltip=tip or label)
 
-    def small(self, label, icon, cmd, keytip, menu=None, tip=None, state=None):
+    def small(self, label, icon, cmd, keytip, menu=None, tip=None, state=None, key=None):
+        if key is not None:
+            return self.keyed(key, self.small(label, icon, cmd, keytip, menu=menu, tip=tip, state=state))
         if menu is not None:
             if cmd is None:
                 return MenuButton(self.r, label, icon, self.menu(menu) if isinstance(menu, list) else menu,
@@ -292,6 +301,11 @@ def _menu_pen(tool):
     items = [("#", "Thickness")] + [("%g mm" % mm, "ink-width:%s:%g" % (tool, mm)) for mm in WIDTHS[tool]]
     items += [None, ("#", "Colors")] + [(name, "ink-color:%s:%06X" % (tool, c)) for name, c in COLORS]
     return items
+
+
+def _objects_ui():
+    from . import objects_ui
+    return objects_ui
 
 
 def _themes_ui():
@@ -563,10 +577,10 @@ def build_ribbon(win):
     # ================================================================ Page Layout
     t = r.building(Tab("Page Layout", "P"))
     B.group(t, "Themes", [
-        B.big("Themes", "r-themes", None, "TH", menu=lambda: _themes_ui().themes_menu(win)),
-        [B.small("Colors", "r-colors-sm", None, "TC", menu=lambda: _themes_ui().colors_menu(win)),
-         B.small("Fonts", "r-fonts-sm", None, "TF", menu=lambda: _themes_ui().fonts_menu(win)),
-         B.small("Effects", "r-effects-sm", None, "TE", menu=lambda: _themes_ui().effects_menu(win))],
+        B.big("Themes", "r-themes", None, "TH", menu=lambda: _themes_ui().themes_menu(win), key="themes"),
+        [B.small("Colors", "r-colors-sm", None, "TC", menu=lambda: _themes_ui().colors_menu(win), key="theme-colors"),
+         B.small("Fonts", "r-fonts-sm", None, "TF", menu=lambda: _themes_ui().fonts_menu(win), key="theme-fonts"),
+         B.small("Effects", "r-effects-sm", None, "TE", menu=lambda: _themes_ui().effects_menu(win), key="theme-effects")],
     ])
     B.group(t, "Page Setup", [
         B.big("Margins", "r-margins", None, "M", menu=[("Normal", "margins:normal"), ("Wide", "margins:wide"),
@@ -609,9 +623,9 @@ def build_ribbon(win):
         B.big("Bring\nForward", "r-bring-forward", "bring-forward", "AF"),
         B.big("Send\nBackward", "r-send-backward", "send-backward", "AE"),
         B.big("Selection\nPane", "r-selection-pane", "selection-pane", "AP"),
-        [B.small("Align", "r-align-sm", "align-objects", "AA"),
-         B.small("Group", "r-group-sm", "group-objects", "AG"),
-         B.small("Rotate", "r-rotate-sm", "rotate-objects", "AY")],
+        [B.small("Align", "r-align-sm", None, "AA", menu=_objects_ui().ALIGN_MENU, key="align-objects"),
+         B.small("Group", "r-group-sm", None, "AG", menu=_objects_ui().GROUP_MENU, key="group-objects"),
+         B.small("Rotate", "r-rotate-sm", None, "AY", menu=_objects_ui().ROTATE_MENU, key="rotate-objects")],
     ])
     r.add_tab(t)
 
@@ -627,14 +641,14 @@ def build_ribbon(win):
               menu=[("Sum", "autosum"), ("Average", "autosum-average"), ("Count Numbers", "autosum-count"),
                     ("Max", "autosum-max"), ("Min", "autosum-min"), None, ("More Functions...", "insert-function")],
               tip="AutoSum (Alt+=)\nAutomatically add it up. Your total will appear after the selected cells."),
-        B.big("Recently\nUsed", "fx-recent", None, "E", menu=lib("recent")),
-        B.big("Financial", "fx-financial", None, "I", menu=lib("Financial")),
-        B.big("Logical", "fx-logical", None, "L", menu=lib("Logical")),
-        B.big("Text", "fx-text", None, "T", menu=lib("Text")),
-        B.big("Date &\nTime", "fx-datetime", None, "E2", menu=lib("Date & Time")),
-        B.big("Lookup &\nReference", "fx-lookup", None, "O", menu=lib("Lookup & Reference")),
-        B.big("Math &\nTrig", "fx-math", None, "G", menu=lib("Math & Trig")),
-        B.big("More\nFunctions", "fx-more", None, "Q", menu=more_functions_menu(win)),
+        B.big("Recently\nUsed", "fx-recent", None, "E", menu=lib("recent"), key="fn-recent"),
+        B.big("Financial", "fx-financial", None, "I", menu=lib("Financial"), key="fn-financial"),
+        B.big("Logical", "fx-logical", None, "L", menu=lib("Logical"), key="fn-logical"),
+        B.big("Text", "fx-text", None, "T", menu=lib("Text"), key="fn-text"),
+        B.big("Date &\nTime", "fx-datetime", None, "E2", menu=lib("Date & Time"), key="fn-datetime"),
+        B.big("Lookup &\nReference", "fx-lookup", None, "O", menu=lib("Lookup & Reference"), key="fn-lookup"),
+        B.big("Math &\nTrig", "fx-math", None, "G", menu=lib("Math & Trig"), key="fn-math"),
+        B.big("More\nFunctions", "fx-more", None, "Q", menu=more_functions_menu(win), key="fn-more"),
     ])
     B.group(t, "Defined Names", [
         B.big("Name\nManager", "fx-name-manager", "name-manager", "N",
@@ -670,7 +684,7 @@ def build_ribbon(win):
     # ================================================================ Data
     t = r.building(Tab("Data", "A"))
     B.group(t, "Get & Transform Data", [
-        B.big("Get\nData", "r-get-data", None, "PN", menu=[
+        B.big("Get\nData", "r-get-data", None, "PN", key="get-data", menu=[
             ("From File", [("From Workbook", "from-workbook"), ("From Text/CSV", "from-text-csv"),
                            ("From Folder", "from-folder")]),
             ("From Database", "get-data-unavailable:Getting data from a database"),
@@ -710,7 +724,7 @@ def build_ribbon(win):
         [B.icon("r-consolidate-sm", "consolidate", "N", "Consolidate")],
     ])
     B.group(t, "Forecast", [
-        B.big("What-If\nAnalysis", "r-what-if", None, "W",
+        B.big("What-If\nAnalysis", "r-what-if", None, "W", key="what-if",
               menu=[("Scenario Manager...", "scenario-manager"), ("Goal Seek...", "goal-seek"),
                     ("Data Table...", "data-table")]),
         B.big("Forecast\nSheet", "r-forecast-sheet", "forecast-sheet", "G"),
@@ -751,7 +765,9 @@ def build_ribbon(win):
         B.big("Protect\nWorkbook", "r-protect-workbook", "protect-workbook", "PW"),
         B.big("Allow Edit\nRanges", "r-allow-edit-ranges", "allow-edit-ranges", "U"),
     ])
-    B.group(t, "Ink", [B.big("Hide\nInk", "r-hide-ink", "hide-ink", "I")])
+    B.group(t, "Ink", [B.big("Hide\nInk", "r-hide-ink", "hide-ink", "I",
+                             menu=[("Hide Ink", "hide-ink"), None, ("Delete All Ink on Sheet", "hide-ink:delete-sheet"),
+                                   ("Delete All Ink in Workbook", "hide-ink:delete-all")])])
     r.add_tab(t)
 
     # ================================================================ View

@@ -328,6 +328,7 @@ def build_tab(win, B):
     """The Shape Format tab."""
     from .ribbon import Tab
     from .ribbon_defs import color_palette
+    from . import objects_ui
     r = win.ribbon
     t = r.building(Tab("Shape Format", "JD", contextual=True))
     refs = {"fill": [None], "line": [None], "text": [None]}
@@ -380,8 +381,13 @@ def build_tab(win, B):
         [B.small("Bring Forward", "r-bring-forward-sm", "bring-forward", "AF", menu=[("Bring Forward", "bring-forward"),
                                                                                   ("Bring to Front", "bring-to-front")]),
          B.small("Send Backward", "r-send-backward-sm", "send-backward", "AE", menu=[("Send Backward", "send-backward"),
-                                                                                  ("Send to Back", "send-to-back")])],
+                                                                                  ("Send to Back", "send-to-back")]),
+         B.small("Selection Pane", "r-selection-pane-sm", "selection-pane", "AP")],
+        [B.small("Align", "r-align-sm", None, "AA", menu=objects_ui.ALIGN_MENU),
+         B.small("Group", "r-group-sm", None, "AG", menu=objects_ui.GROUP_MENU),
+         B.small("Rotate", "r-rotate-sm", None, "AY", menu=objects_ui.ROTATE_MENU)],
     ])
+    B.group(t, "Accessibility", [B.big("Alt\nText", "r-alt-text", "alt-text", "AT")])
     win.shape_h = Gtk.SpinButton.new_with_range(0.01, 100, 0.01)
     win.shape_w = Gtk.SpinButton.new_with_range(0.01, 100, 0.01)
     size = Gtk.Grid(column_spacing=4, row_spacing=2)

@@ -29,6 +29,10 @@ pub trait Ctx {
     fn table_ref(&self, _text: &str, _sheet: usize, _r: u32, _c: u32) -> Option<(usize, Rect)> {
         None
     }
+    /// an external reference ([1]Sheet1!A1) from the values kept for it
+    fn external(&self, _text: &str) -> Option<Value> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -334,7 +338,10 @@ impl<'a> Eval<'a> {
                 Some((s, rc)) => Res::R(vec![Area { sheet: s, rect: rc }]),
                 None => Res::err(XlErr::Ref),
             },
-            Expr::Ext(_) => Res::err(XlErr::Ref),
+            Expr::Ext(t) => match self.ctx.external(t) {
+                Some(v) => Res::V(v),
+                None => Res::err(XlErr::Ref),
+            },
         }
     }
 

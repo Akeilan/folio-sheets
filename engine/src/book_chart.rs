@@ -270,6 +270,7 @@ impl Book {
             ink_part: None,
             raw: None,
             slicer: None,
+            members: Vec::new(),
         };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
@@ -303,6 +304,7 @@ impl Book {
             ink_part: None,
             raw: None,
             slicer: None,
+            members: Vec::new(),
         };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
@@ -353,7 +355,7 @@ impl Book {
         let (id, name) = self.next_object_name(s, "Chart");
         let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: None };
         let anchor = self.anchor_at(s, &like, x, y, w, h);
-        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None };
+        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new() };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
         let i = objs.len() - 1;
@@ -634,6 +636,9 @@ impl Book {
             }
         }
         for i in (0..sh.objects.len()).rev() {
+            if crate::objects_ext::is_hidden(&sh.objects[i]) || (p.hide_ink && sh.objects[i].ink.is_some()) {
+                continue;
+            }
             let (ox, oy, w, h) = self.obj_screen_rect(s, p, &g, &sh.objects[i]);
             if x >= ox && x <= ox + w && y >= oy && y <= oy + h {
                 return Some((i, "body"));

@@ -48,6 +48,8 @@ pub struct ViewParams {
     pub page_breaks: bool,
     /// Circle Invalid Data: the cells to ring in red
     pub dv_circles: Vec<(u32, u32)>,
+    /// Review > Hide Ink
+    pub hide_ink: bool,
 }
 
 impl Default for ViewParams {
@@ -78,6 +80,7 @@ impl Default for ViewParams {
             sel_objects: vec![],
             obj_preview: None,
             hover_note: None,
+            hide_ink: false,
             edit_note: None,
             print: false,
             page_breaks: false,

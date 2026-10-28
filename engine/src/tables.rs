@@ -765,11 +765,11 @@ impl Book {
         table_at(&self.sheets, s, r, c)
     }
 
-    fn table_names(&self) -> Vec<String> {
+    pub(crate) fn table_names(&self) -> Vec<String> {
         self.sheets.iter().flat_map(|s| s.tables.iter().map(|t| t.name.to_lowercase())).collect()
     }
 
-    fn new_table_name(&self) -> String {
+    pub(crate) fn new_table_name(&self) -> String {
         let used = self.table_names();
         let mut k = 1;
         loop {
@@ -781,7 +781,7 @@ impl Book {
         }
     }
 
-    fn next_table_id(&self) -> u32 {
+    pub(crate) fn next_table_id(&self) -> u32 {
         self.sheets.iter().flat_map(|s| s.tables.iter().map(|t| t.id)).max().unwrap_or(0) + 1
     }
 

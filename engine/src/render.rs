@@ -146,6 +146,9 @@ impl Book {
                 cairo_save(cr);
                 cairo_rectangle(cr, *x0, *y0, x1 - x0, y1 - y0);
                 cairo_clip(cr);
+                if !p.print {
+                    self.paint_background(s, cr, p, &g, (*x0, *y0, *x1, *y1));
+                }
                 self.paint_cells(s, cr, p, &g, &bands, &rows, &cols, &mut pen);
                 if !p.print {
                     self.paint_filter_buttons(s, cr, p, &rows, &cols);
@@ -365,83 +368,154 @@ impl Book {
         }
     }
 
+    /// The sheet's background picture, tiled from the sheet's top left (not printed).
+    unsafe fn paint_background(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, band: (f64, f64, f64, f64)) {
+        let pic = match &self.sheets[s].background {
+            Some(x) => x.clone(),
+            None => return,
+        };
+        let (px, pw, ph) = match pic.argb() {
+            Some(x) => x,
+            None => return,
+        };
+        let z = p.zoom;
+        let (tw, th) = (pw as f64 * z, ph as f64 * z);
+        if tw < 1.0 || th < 1.0 {
+            return;
+        }
+        let ox = self.screen_x(s, p, g, 0);
+        let oy = self.screen_y(s, p, g, 0);
+        let surf = cairo_image_surface_create_for_data(px.as_ptr() as *mut u8, 0, pw as i32, ph as i32, (pw * 4) as i32);
+        let (bx0, by0, bx1, by1) = band;
+        let mut ty = oy + ((by0 - oy) / th).floor() * th;
+        let mut n = 0;
+        while ty < by1 && n < 4000 {
+            let mut tx = ox + ((bx0 - ox) / tw).floor() * tw;
+            while tx < bx1 && n < 4000 {
+                cairo_save(cr);
+                cairo_translate(cr, tx, ty);
+                cairo_scale(cr, z, z);
+                cairo_set_source_surface(cr, surf, 0.0, 0.0);
+                cairo_rectangle(cr, 0.0, 0.0, pw as f64, ph as f64);
+                cairo_fill(cr);
+                cairo_restore(cr);
+                tx += tw;
+                n += 1;
+            }
+            ty += th;
+        }
+        cairo_surface_destroy(surf);
+    }
+
     unsafe fn paint_objects(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, pen: &mut Pen) {
         for (oi, o) in self.sheets[s].objects.iter().enumerate() {
             let (x, y, w, h) = self.obj_screen_rect(s, p, g, o);
             if x > p.width || y > p.height || x + w < 0.0 || y + h < 0.0 || w < 1.0 || h < 1.0 {
                 continue;
             }
-            if o.slicer.is_some() {
-                self.paint_slicer(s, oi, cr, x, y, w, h, p.zoom, pen);
+            if crate::objects_ext::is_hidden(o) || (p.hide_ink && o.ink.is_some()) {
                 continue;
             }
-            if let Some(pic) = &o.picture {
-                if let Some((px, pw, ph)) = pic.argb() {
-                    cairo_save(cr);
-                    let surf = cairo_image_surface_create_for_data(px.as_ptr() as *mut u8, 0, pw as i32, ph as i32, (pw * 4) as i32);
-                    cairo_rectangle(cr, x, y, w, h);
-                    cairo_clip(cr);
-                    cairo_translate(cr, x, y);
-                    cairo_scale(cr, w / pw as f64, h / ph as f64);
-                    cairo_set_source_surface(cr, surf, 0.0, 0.0);
-                    cairo_paint(cr);
-                    cairo_restore(cr);
-                    cairo_surface_destroy(surf);
+            self.paint_obj(s, oi, o, cr, x, y, w, h, p, pen);
+        }
+    }
+
+    /// One object in its frame (a group: its members inside it).
+    pub(crate) unsafe fn paint_obj(&self, s: usize, oi: usize, o: &crate::drawing::Obj, cr: *mut cairo_t, x: f64, y: f64, w: f64, h: f64,
+                                   p: &ViewParams, pen: &mut Pen) {
+        if !o.members.is_empty() {
+            let (cx0, cy0, ccx, ccy, rot, fh, fv) = crate::objects_ext::group_frame(o);
+            cairo_save(cr);
+            cairo_translate(cr, x + w / 2.0, y + h / 2.0);
+            if rot != 0.0 {
+                cairo_rotate(cr, rot.to_radians());
+            }
+            cairo_scale(cr, if fh { -1.0 } else { 1.0 }, if fv { -1.0 } else { 1.0 });
+            cairo_translate(cr, -w / 2.0, -h / 2.0);
+            let sx = w / (ccx.max(1) as f64);
+            let sy = h / (ccy.max(1) as f64);
+            for m in &o.members {
+                if crate::objects_ext::is_hidden(m) {
                     continue;
                 }
+                if let crate::drawing::Anchor::Abs { x: mx, y: my, cx, cy } = m.anchor {
+                    let (qx, qy) = ((mx - cx0) as f64 * sx, (my - cy0) as f64 * sy);
+                    self.paint_obj(s, oi, m, cr, qx, qy, cx as f64 * sx, cy as f64 * sy, p, pen);
+                }
             }
-            if let Some(ink) = &o.ink {
-                let (sx, sy) = (w / ink.w.max(1e-9), h / ink.h.max(1e-9));
+            cairo_restore(cr);
+            return;
+        }
+        if o.slicer.is_some() {
+            self.paint_slicer(s, oi, cr, x, y, w, h, p.zoom, pen);
+            return;
+        }
+        if let Some(pic) = &o.picture {
+            if let Some((px, pw, ph)) = pic.argb() {
                 cairo_save(cr);
-                for st in &ink.strokes {
-                    let lw = (st.width * p.zoom).max(0.5);
-                    let c = st.color;
-                    let (r, g2, b) = (((c >> 16) & 0xFF) as f64 / 255.0, ((c >> 8) & 0xFF) as f64 / 255.0, (c & 0xFF) as f64 / 255.0);
-                    // the highlighter darkens what is under it, so text stays readable
-                    cairo_set_operator(cr, if st.kind == crate::ink::HIGHLIGHTER { 14 } else { 2 });
-                    let alpha = match st.kind {
-                        crate::ink::HIGHLIGHTER => 1.0,
-                        crate::ink::PENCIL => 0.85,
-                        _ => 1.0,
-                    };
-                    cairo_set_source_rgba(cr, r, g2, b, alpha);
-                    cairo_set_line_width(cr, lw);
-                    cairo_set_line_cap(cr, if st.kind == crate::ink::HIGHLIGHTER { 2 } else { 1 });
-                    cairo_set_line_join(cr, 1);
-                    for (k, &(px, py)) in st.pts.iter().enumerate() {
-                        let (qx, qy) = (x + px * sx, y + py * sy);
-                        if k == 0 {
-                            cairo_move_to(cr, qx, qy);
-                        } else {
-                            cairo_line_to(cr, qx, qy);
-                        }
-                    }
-                    if st.pts.len() == 1 {
-                        cairo_rel_line_to(cr, 0.01, 0.0);
-                    }
-                    cairo_stroke(cr);
-                }
-                cairo_set_operator(cr, 2);
+                let surf = cairo_image_surface_create_for_data(px.as_ptr() as *mut u8, 0, pw as i32, ph as i32, (pw * 4) as i32);
+                cairo_rectangle(cr, x, y, w, h);
+                cairo_clip(cr);
+                cairo_translate(cr, x, y);
+                cairo_scale(cr, w / pw as f64, h / ph as f64);
+                cairo_set_source_surface(cr, surf, 0.0, 0.0);
+                cairo_paint(cr);
                 cairo_restore(cr);
-                continue;
+                cairo_surface_destroy(surf);
+                return;
             }
-            if o.chart.is_none() && o.raw.is_none() {
-                if let Some(v) = crate::shape::ShapeView::parse(&o.body, &self.styles.theme) {
-                    self.paint_shape(cr, &v, x, y, w, h, p.zoom, pen);
-                    continue;
+        }
+        if let Some(ink) = &o.ink {
+            let (sx, sy) = (w / ink.w.max(1e-9), h / ink.h.max(1e-9));
+            cairo_save(cr);
+            for st in &ink.strokes {
+                let lw = (st.width * p.zoom).max(0.5);
+                let c = st.color;
+                let (r, g2, b) = (((c >> 16) & 0xFF) as f64 / 255.0, ((c >> 8) & 0xFF) as f64 / 255.0, (c & 0xFF) as f64 / 255.0);
+                // the highlighter darkens what is under it, so text stays readable
+                cairo_set_operator(cr, if st.kind == crate::ink::HIGHLIGHTER { 14 } else { 2 });
+                let alpha = match st.kind {
+                    crate::ink::HIGHLIGHTER => 1.0,
+                    crate::ink::PENCIL => 0.85,
+                    _ => 1.0,
+                };
+                cairo_set_source_rgba(cr, r, g2, b, alpha);
+                cairo_set_line_width(cr, lw);
+                cairo_set_line_cap(cr, if st.kind == crate::ink::HIGHLIGHTER { 2 } else { 1 });
+                cairo_set_line_join(cr, 1);
+                for (k, &(px, py)) in st.pts.iter().enumerate() {
+                    let (qx, qy) = (x + px * sx, y + py * sy);
+                    if k == 0 {
+                        cairo_move_to(cr, qx, qy);
+                    } else {
+                        cairo_line_to(cr, qx, qy);
+                    }
                 }
+                if st.pts.len() == 1 {
+                    cairo_rel_line_to(cr, 0.01, 0.0);
+                }
+                cairo_stroke(cr);
             }
-            match &o.chart {
-                Some(ch) => self.paint_chart(ch, cr, x, y, w, h, p.zoom, pen),
-                None => {
-                    // pictures and shapes aren't drawn yet: a placeholder frame
-                    rgba(cr, 0x808080, 0.08);
-                    rect(cr, x, y, w, h);
-                    rgb(cr, 0xA0A0A0);
-                    cairo_set_line_width(cr, 1.0);
-                    cairo_rectangle(cr, x + 0.5, y + 0.5, w - 1.0, h - 1.0);
-                    cairo_stroke(cr);
-                }
+            cairo_set_operator(cr, 2);
+            cairo_restore(cr);
+            return;
+        }
+        if o.chart.is_none() && o.raw.is_none() {
+            if let Some(v) = crate::shape::ShapeView::parse(&o.body, &self.styles.theme) {
+                self.paint_shape(cr, &v, x, y, w, h, p.zoom, pen);
+                return;
+            }
+        }
+        match &o.chart {
+            Some(ch) => self.paint_chart(ch, cr, x, y, w, h, p.zoom, pen),
+            None => {
+                // pictures and shapes aren't drawn yet: a placeholder frame
+                rgba(cr, 0x808080, 0.08);
+                rect(cr, x, y, w, h);
+                rgb(cr, 0xA0A0A0);
+                cairo_set_line_width(cr, 1.0);
+                cairo_rectangle(cr, x + 0.5, y + 0.5, w - 1.0, h - 1.0);
+                cairo_stroke(cr);
             }
         }
     }

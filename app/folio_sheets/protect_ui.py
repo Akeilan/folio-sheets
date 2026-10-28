@@ -34,7 +34,7 @@ NEEDS = {
     "row-height": "formatRows", "autofit-rows": "formatRows", "hide-rows": "formatRows", "unhide-rows": "formatRows",
     "autofit-row-at": "formatRows",
     "sort-asc": "sort", "sort-desc": "sort", "sort-custom": "sort", "filter": "never", "filter-clear": "autoFilter",
-    "filter-reapply": "autoFilter", "remove-duplicates": "never", "format-as-table": "never", "table": "never",
+    "filter-reapply": "autoFilter", "remove-duplicates": "never", "advanced-filter": "never", "consolidate": "cells", "format-as-table": "never", "table": "never",
     "merge-center": "never", "merge-across": "never", "merge-cells": "never", "unmerge-cells": "never",
     "link": "insertHyperlinks", "chart": "objects", "new-note": "objects", "edit-note": "objects",
     "delete-note": "objects", "new-comment": "objects", "delete-comment": "objects",
@@ -149,7 +149,8 @@ def may_change_cells(win, ranges=None, tell=True):
     if not protected(win):
         return True
     ranges = ranges or [tuple(r) for r in win.grid.sel.ranges]
-    if not win.book.locked_in(win.grid.sheet, [tuple(r) for r in ranges]):
+    from .review_ui import locked_cells
+    if not locked_cells(win, [tuple(r) for r in ranges], ask=tell):
         return True
     return refuse(win) if tell else False
 
@@ -368,7 +369,8 @@ def after_command(win, base, h0):
         # unlocked before it ran: look at it as it was, then step forward again
         rs = [tuple(r) for r in win.grid.sel.ranges]
         win.book.undo()
-        bad = win.book.locked_in(win.grid.sheet, rs)
+        from .review_ui import locked_cells
+        bad = locked_cells(win, rs, ask=False)
         win.book.redo()
     if bad:
         win.book.undo()
