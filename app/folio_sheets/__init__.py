@@ -1,7 +1,7 @@
 """Folio Sheets."""
 import os
 
-VERSION = "0.17.1"
+VERSION = "0.17.2"
 APP_NAME = "Folio Sheets"
 APP_ID = "org.folio.Sheets"
 SHARE = os.environ.get("FOLIO_SHEETS_SHARE", "/usr/share/folio-sheets")
