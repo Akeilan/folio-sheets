@@ -103,6 +103,19 @@ class SheetsApp(Gtk.Application):
             css2.load_from_path(extra)
             Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css2,
                                                      Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        # X2-01: every other window the app opens (dialogs, Find, Format Cells...) gets the app's own
+        # dialog colours, so a dark or coloured desktop theme never shows through
+        from gi.repository import GObject
+
+        def _own(w, *a):
+            try:
+                if (w.get_window_type() == Gtk.WindowType.TOPLEVEL and not hasattr(w, "ribbon")
+                        and not isinstance(w, Gtk.FileChooserDialog)):
+                    w.get_style_context().add_class("folio-dialog")
+            except Exception:
+                pass
+            return True
+        GObject.add_emission_hook(Gtk.Window, "realize", _own)
         # dark mode follows the desktop (S-08), switching while running
         from . import appearance
         self._dark_css = Gtk.CssProvider()

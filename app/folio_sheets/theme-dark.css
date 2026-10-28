@@ -69,3 +69,65 @@ popover, popover.background { background-color: #2b2b2b; color: #f0f0f0; }
 popover label { color: #f0f0f0; }
 menu, .menu, .context-menu { background-color: #2b2b2b; color: #f0f0f0; }
 menu menuitem:hover { background: #4f4220; }
+
+/* ---------- X2-01: dark-mode colours of the app's own surfaces ---------- */
+.folio-backstage, .folio-bs-body, .folio-backstage button, .folio-backstage checkbutton,
+.folio-backstage radiobutton, .folio-backstage entry, .folio-backstage combobox button,
+.folio-backstage label, .folio-backstage list row label { color: #f0f0f0; }
+.folio-bs-body, .folio-bs-body viewport, .folio-bs-body scrolledwindow, .folio-bs-body list,
+.folio-bs-body flowbox, .folio-bs-body flowboxchild { background-color: @backstage_bg; }
+.folio-backstage button:not(.flat):not(.suggested-action):not(.link):not(.folio-bs-navbtn) { background: #2b2b2b; border-color: #555555; color: #f0f0f0; }
+.folio-backstage button:not(.flat):not(.suggested-action):not(.link):not(.folio-bs-navbtn):hover { background: #3a3a3a; }
+.folio-backstage entry { background: #2b2b2b; border-color: #555555; color: #f0f0f0; caret-color: #f0f0f0; }
+.folio-backstage list row:hover { background-color: #3a3424; }
+.folio-backstage .dim-label { color: #a0a0a0; }
+.folio-dialog, .folio-dialog.background, .folio-dialog notebook, .folio-dialog notebook header, .folio-dialog notebook stack,
+.folio-dialog box, .folio-dialog grid, .folio-dialog scrolledwindow, .folio-dialog viewport,
+.folio-dialog notebook tab, .folio-dialog notebook tab label, .folio-dialog button.flat, .folio-dialog button label,
+.folio-dialog checkbutton, .folio-dialog radiobutton, .folio-dialog checkbutton label, .folio-dialog radiobutton label,
+.folio-dialog treeview, .folio-dialog list, .folio-dialog list row, .folio-dialog flowbox, .folio-dialog label,
+.folio-dialog flowboxchild { color: #f0f0f0; }
+.folio-dialog, .folio-dialog.background, .folio-dialog notebook stack, .folio-dialog notebook header { background-color: #2b2b2b; }
+.folio-dialog notebook tab:checked { background-color: #333333; }
+.folio-dialog button:not(.folio-default):not(.suggested-action):not(.flat),
+.folio-dialog combobox button, .folio-dialog spinbutton button { background-color: #333333; color: #f0f0f0; border-color: #555555; }
+.folio-dialog button:not(.folio-default):not(.suggested-action):not(.flat):hover { background-color: #3d3d3d; }
+.folio-dialog button.suggested-action, .folio-dialog button.suggested-action label { color: #1a1a1a; }
+.folio-dialog button.suggested-action { background-color: #e0b84a; border-color: #a67c00; }
+.folio-dialog entry, .folio-dialog spinbutton, .folio-dialog spinbutton entry, .folio-dialog textview,
+.folio-dialog textview text { background-color: #1f1f1f; color: #f0f0f0; border-color: #555555; caret-color: #f0f0f0; }
+.folio-dialog check, .folio-dialog radio { background-color: #1f1f1f; border-color: #8a8a8a; color: #f0f0f0; }
+.folio-dialog check:checked, .folio-dialog radio:checked { background-color: #e0b84a; border-color: #a67c00; color: #1a1a1a; }
+.folio-dialog list, .folio-dialog treeview, .folio-dialog treeview.view { background-color: #222222; }
+.folio-dialog treeview header button { background-color: #333333; color: #f0f0f0; border-color: #555555; }
+.folio-dialog treeview header button label { color: #f0f0f0; }
+.folio-dialog treeview:selected, .folio-dialog list row:selected, .folio-dialog flowboxchild:selected { background-color: #5c4b1f; color: #ffffff; }
+.folio-dialog .dim-label { color: #a0a0a0; }
+.folio-dialog label:disabled, .folio-dialog button:disabled, .folio-dialog button:disabled label,
+.folio-dialog checkbutton:disabled label, .folio-dialog radiobutton:disabled label { color: #8a8a8a; }
+.folio-dialog scale trough { background-color: #555555; }
+.folio-dialog list row:not(:selected):hover { background-color: #3a3a3a; }
+.folio-pane, .folio-pane label, .folio-pane button, .folio-pane checkbutton, .folio-pane checkbutton label, .folio-pane treeview,
+.folio-pane entry { color: #f0f0f0; }
+.folio-pane, .folio-pane viewport, .folio-pane list, .folio-pane treeview.view { background-color: #262626; }
+.folio-pane button:not(.flat) { background-color: #333333; border-color: #555555; }
+.folio-pane entry { background-color: #1f1f1f; border-color: #555555; caret-color: #f0f0f0; }
+.folio-pane check, .folio-pane radio { background-color: #1f1f1f; border-color: #8a8a8a; }
+.folio-pane check:checked { background-color: #e0b84a; border-color: #a67c00; color: #1a1a1a; }
+.folio-pane treeview:selected, .folio-pane list row:selected { background-color: #5c4b1f; color: #ffffff; }
+.folio-pane .dim-label { color: #a0a0a0; }
+popover, popover.background, menu, .menu, .context-menu { background-color: #2b2b2b; color: #f0f0f0; }
+popover label, popover button, popover checkbutton label, menu menuitem, menu menuitem label { color: #f0f0f0; }
+popover entry { background-color: #1f1f1f; color: #f0f0f0; border-color: #555555; }
+menu menuitem:hover { background-color: #5c4b1f; }
+menu menuitem:disabled label, popover label:disabled { color: #8a8a8a; }
+tooltip, tooltip.background { background-color: #2b2b2b; color: #f0f0f0; border-color: #555555; }
+tooltip label { color: #f0f0f0; }
+.folio-combo entry { color: #f0f0f0; border-color: #555555; caret-color: #f0f0f0; }
+.folio-combo button { background-color: #333333; color: #f0f0f0; border-color: #555555; }
+.folio-namebox, .folio-namebox entry { background-color: #1f1f1f; color: #f0f0f0; border-color: #555555; caret-color: #f0f0f0; }
+.folio-namebox button { background-color: #333333; color: #f0f0f0; border-color: #555555; }
+.folio-main scrollbar { background-color: #2b2b2b; border-color: #404040; }
+.folio-main scrollbar slider { background-color: #5a5a5a; }
+.folio-main scrollbar slider:hover { background-color: #707070; }
+.folio-main scrollbar button { color: #c0c0c0; }

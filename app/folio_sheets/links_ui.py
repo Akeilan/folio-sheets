@@ -196,10 +196,9 @@ class HyperlinkDialog(Gtk.Dialog):
             self.tooltip = t
 
     def browse(self):
-        d = Gtk.FileChooserDialog(title="Link to File", transient_for=self, action=Gtk.FileChooserAction.OPEN)
-        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        d.add_button("OK", Gtk.ResponseType.OK)
-        if d.run() == Gtk.ResponseType.OK and d.get_filename():
+        d = Gtk.FileChooserNative(title="Link to File", transient_for=self, action=Gtk.FileChooserAction.OPEN,
+                                  accept_label="OK", cancel_label="Cancel")
+        if d.run() == Gtk.ResponseType.ACCEPT and d.get_filename():
             self.address.set_text(self.win.links.file_address(d.get_filename()))
         d.destroy()
 

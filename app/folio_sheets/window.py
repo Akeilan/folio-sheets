@@ -77,6 +77,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.add(self.overlay)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.overlay.add(self.outer)
+        self.get_style_context().add_class("folio-main")
         self.menu_keys = {}         # command -> the ribbon menu button it opens
         self.last_menu = None
         self.ribbon = Ribbon(self.run, self.focus_document)

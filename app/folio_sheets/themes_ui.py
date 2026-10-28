@@ -229,10 +229,8 @@ def themes_menu(win):
 def browse(win, path=None):
     """Browse for Themes: a theme file (.thmx), or the theme of another workbook."""
     if path is None:
-        d = Gtk.FileChooserDialog(title="Choose Theme or Themed Document", transient_for=win,
-                                  action=Gtk.FileChooserAction.OPEN)
-        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        d.add_button("Open", Gtk.ResponseType.OK)
+        d = Gtk.FileChooserNative(title="Choose Theme or Themed Document", transient_for=win,
+                                  action=Gtk.FileChooserAction.OPEN, accept_label="Open", cancel_label="Cancel")
         f = Gtk.FileFilter()
         f.set_name("Office Themes and Themed Documents")
         for pat in ("*.thmx", "*.xlsx", "*.xlsm", "*.xltx", "*.xltm", "*.docx", "*.pptx", "*.potx", "*.dotx"):
@@ -243,7 +241,7 @@ def browse(win, path=None):
         r = d.run()
         path = d.get_filename()
         d.destroy()
-        if r != Gtk.ResponseType.OK or not path:
+        if r != Gtk.ResponseType.ACCEPT or not path:
             return False
     try:
         x = Book.read_theme_file(path)
@@ -258,9 +256,8 @@ def save_current(win, path=None):
     d_themes = os.path.join(theme_dir(win), "Document Themes")
     if path is None:
         os.makedirs(d_themes, exist_ok=True)
-        d = Gtk.FileChooserDialog(title="Save Current Theme", transient_for=win, action=Gtk.FileChooserAction.SAVE)
-        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        d.add_button("Save", Gtk.ResponseType.OK)
+        d = Gtk.FileChooserNative(title="Save Current Theme", transient_for=win, action=Gtk.FileChooserAction.SAVE,
+                                  accept_label="Save", cancel_label="Cancel")
         d.set_do_overwrite_confirmation(True)
         d.set_current_folder(d_themes)
         d.set_current_name("Theme1.thmx")
@@ -271,7 +268,7 @@ def save_current(win, path=None):
         r = d.run()
         path = d.get_filename()
         d.destroy()
-        if r != Gtk.ResponseType.OK or not path:
+        if r != Gtk.ResponseType.ACCEPT or not path:
             return False
     if not path.lower().endswith(".thmx"):
         path += ".thmx"
