@@ -116,7 +116,15 @@ pdf = "/tmp/print_audit.pdf"
 from folio_sheets import print_ui
 n = print_ui.write_pdf(win, pdf)
 data = open(pdf, "rb").read()
-check("Export to PDF writes every page", n == len(b.pages(S)) and data.startswith(b"%PDF") and data.count(b"/Type /Page\n") + data.count(b"/Type /Page ") + data.count(b"/Type/Page") >= 1, (n, len(data)))
+def pdf_pages(path):
+    # cairo 1.18 (Ubuntu 24.04) packs objects into compressed streams, so count with Poppler
+    import gi
+    gi.require_version("Poppler", "0.18")
+    from gi.repository import Poppler
+    return Poppler.Document.new_from_file("file://" + path, None).get_n_pages()
+
+
+check("Export to PDF writes every page", n == len(b.pages(S)) and data.startswith(b"%PDF") and pdf_pages(pdf) == n, (n, len(data)))
 
 # printing, through the print system (exported to a file)
 out = "/tmp/print_audit_print.pdf"

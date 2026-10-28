@@ -103,6 +103,9 @@ class SheetsApp(Gtk.Application):
             css2.load_from_path(extra)
             Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css2,
                                                      Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        # X2-04: same text height on 22.04 and 24.04 (24.04's Carlito has taller line metrics)
+        from . import fontfix
+        fontfix.install()
         # X2-01: every other window the app opens (dialogs, Find, Format Cells...) gets the app's own
         # dialog colours, so a dark or coloured desktop theme never shows through
         from gi.repository import GObject
