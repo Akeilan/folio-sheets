@@ -484,6 +484,27 @@ pub fn plots_for(kind: &str, mut series: Vec<Series>) -> Vec<Plot> {
         "pie" => Plot::new(Kind::Pie),
         "doughnut" => Plot::new(Kind::Doughnut),
         "area" => Plot::new(Kind::Area),
+        "radar" => {
+            let mut p = Plot::new(Kind::Line);
+            p.file_tag = Some("radarChart".into());
+            p.markers = kind.contains("-markers");
+            p.hole = if kind.contains("-filled") { 1 } else { 0 };
+            p.series = series;
+            return vec![p];
+        }
+        "stock" => {
+            let mut p = Plot::new(Kind::Line);
+            p.file_tag = Some("stockChart".into());
+            p.markers = true;
+            p.series = series;
+            return vec![p];
+        }
+        "contour" => {
+            let mut p = Plot::new(Kind::Line);
+            p.file_tag = Some("surfaceChart".into());
+            p.series = series;
+            return vec![p];
+        }
         "scatter" => {
             let mut p = Plot::new(Kind::Scatter);
             p.markers = true;
@@ -713,6 +734,9 @@ impl Chart {
             if !native {
                 pl.file_tag = Some(tag.clone());
             }
+            if tag == "radarChart" && val_attr(p, "radarStyle").as_deref() == Some("filled") {
+                pl.hole = 1;
+            }
             pl.horizontal = val_attr(p, "barDir").as_deref() == Some("bar");
             pl.group = match val_attr(p, "grouping").as_deref() {
                 Some("stacked") => Group::Stacked,
@@ -726,7 +750,7 @@ impl Chart {
                 pl.gap = 150;
             }
             pl.overlap = val_attr(p, "overlap").and_then(|v| v.trim_end_matches('%').parse().ok()).unwrap_or(if pl.group != Group::Clustered { 100 } else { 0 });
-            pl.hole = val_attr(p, "holeSize").and_then(|v| v.trim_end_matches('%').parse().ok()).unwrap_or(50);
+            pl.hole = if pl.hole == 1 && tag == "radarChart" { 1 } else { val_attr(p, "holeSize").and_then(|v| v.trim_end_matches('%').parse().ok()).unwrap_or(50) };
             pl.first_angle = val_attr(p, "firstSliceAng").and_then(|v| v.parse().ok()).unwrap_or(0);
             let scatter_style = val_attr(p, "scatterStyle").unwrap_or_default();
             pl.markers = match kind {
@@ -847,7 +871,16 @@ impl Chart {
 
     /// Kinds a file used that this program draws only approximately.
     pub fn exotic(&self) -> bool {
-        self.plots.iter().any(|p| p.file_tag.is_some())
+        self.plots.iter().any(|p| p.file_tag.is_some() && !self.native_special())
+    }
+
+    /// Radar, stock (high-low-close) and contour charts: drawn and written here.
+    pub fn native_special(&self) -> bool {
+        self.plots.len() == 1 && matches!(self.plots[0].file_tag.as_deref(), Some("radarChart") | Some("stockChart") | Some("surfaceChart"))
+    }
+
+    pub fn special(&self) -> Option<&str> {
+        if self.native_special() { self.plots[0].file_tag.as_deref() } else { None }
     }
 }
 
@@ -1049,6 +1082,9 @@ impl Chart {
                 o.push_str(&format!("<c:overlay val=\"0\"/>{}</c:title><c:autoTitleDeleted val=\"0\"/>", txpr(14, false)));
             }
         }
+        if self.special() == Some("surfaceChart") {
+            o.push_str("<c:view3D><c:rotX val=\"90\"/><c:rotY val=\"0\"/><c:rAngAx val=\"0\"/><c:perspective val=\"0\"/></c:view3D>");
+        }
         o.push_str("<c:plotArea><c:layout/>");
         let pie_only = self.plots.iter().all(|p| matches!(p.kind, Kind::Pie | Kind::Doughnut));
         let scatter = self.plots.first().map(|p| p.kind == Kind::Scatter).unwrap_or(false);
@@ -1063,14 +1099,21 @@ impl Chart {
                 (Kind::Bar, _) => "clustered",
                 _ => "standard",
             };
-            match p.kind {
+            let tag = p.file_tag.as_deref().filter(|t| matches!(*t, "radarChart" | "stockChart" | "surfaceChart"));
+            match tag {
+                Some("radarChart") => o.push_str(&format!("<c:radarChart><c:radarStyle val=\"{}\"/><c:varyColors val=\"0\"/>", if p.hole == 1 { "filled" } else { "marker" })),
+                Some("stockChart") => o.push_str("<c:stockChart>"),
+                Some(_) => o.push_str("<c:surfaceChart><c:wireframe val=\"0\"/>"),
+                None => {}
+            }
+            if tag.is_none() { match p.kind {
                 Kind::Bar => o.push_str(&format!("<c:barChart><c:barDir val=\"{}\"/><c:grouping val=\"{}\"/><c:varyColors val=\"{}\"/>", if p.horizontal { "bar" } else { "col" }, grouping, p.vary as u8)),
                 Kind::Line => o.push_str(&format!("<c:lineChart><c:grouping val=\"{}\"/><c:varyColors val=\"0\"/>", grouping)),
                 Kind::Area => o.push_str(&format!("<c:areaChart><c:grouping val=\"{}\"/><c:varyColors val=\"0\"/>", grouping)),
                 Kind::Pie => o.push_str("<c:pieChart><c:varyColors val=\"1\"/>"),
                 Kind::Doughnut => o.push_str("<c:doughnutChart><c:varyColors val=\"1\"/>"),
                 Kind::Scatter => o.push_str(&format!("<c:scatterChart><c:scatterStyle val=\"{}\"/><c:varyColors val=\"0\"/>", if p.lines { if p.smooth_any() { "smoothMarker" } else { "lineMarker" } } else { "lineMarker" })),
-            }
+            } }
             for s in &p.series {
                 let color = s.color.unwrap_or_else(|| auto_ref(self.palette, idx));
                 let _ = theme;
@@ -1079,6 +1122,12 @@ impl Chart {
                     write_src(book, "tx", n, false, &mut o);
                 }
                 match p.kind {
+                    _ if tag == Some("surfaceChart") || (tag == Some("radarChart") && p.hole == 1) => {
+                        o.push_str(&format!("<c:spPr>{}<a:ln><a:noFill/></a:ln></c:spPr>", solid(color)));
+                    }
+                    _ if tag == Some("stockChart") => {
+                        o.push_str("<c:spPr><a:ln w=\"19050\"><a:noFill/></a:ln></c:spPr><c:marker><c:symbol val=\"none\"/></c:marker>");
+                    }
                     Kind::Line | Kind::Scatter => {
                         let draw_line = p.kind == Kind::Line || p.lines;
                         if draw_line {
@@ -1118,20 +1167,26 @@ impl Chart {
                 if let Some(v) = &s.val {
                     write_src(book, vt, v, true, &mut o);
                 }
-                if matches!(p.kind, Kind::Line | Kind::Scatter) {
+                if matches!(p.kind, Kind::Line | Kind::Scatter) && tag.is_none() || tag == Some("stockChart") {
                     o.push_str(&format!("<c:smooth val=\"{}\"/>", s.smooth as u8));
                 }
                 o.push_str("</c:ser>");
                 idx += 1;
             }
-            match p.kind {
+            match tag {
+                Some("radarChart") => o.push_str(&format!("<c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:radarChart>", a1, a2)),
+                Some("stockChart") => o.push_str(&format!("<c:hiLowLines><c:spPr><a:ln w=\"9525\">{}</a:ln></c:spPr></c:hiLowLines><c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:stockChart>", solid(0x404040), a1, a2)),
+                Some(_) => o.push_str(&format!("<c:bandFmts/><c:axId val=\"{}\"/><c:axId val=\"{}\"/><c:axId val=\"5\"/></c:surfaceChart>", a1, a2)),
+                None => {}
+            }
+            if tag.is_none() { match p.kind {
                 Kind::Bar => o.push_str(&format!("<c:gapWidth val=\"{}\"/><c:overlap val=\"{}\"/><c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:barChart>", p.gap, p.overlap, a1, a2)),
                 Kind::Line => o.push_str(&format!("<c:marker val=\"1\"/><c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:lineChart>", a1, a2)),
                 Kind::Area => o.push_str(&format!("<c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:areaChart>", a1, a2)),
                 Kind::Pie => o.push_str(&format!("<c:firstSliceAng val=\"{}\"/></c:pieChart>", p.first_angle)),
                 Kind::Doughnut => o.push_str(&format!("<c:firstSliceAng val=\"{}\"/><c:holeSize val=\"{}\"/></c:doughnutChart>", p.first_angle, p.hole)),
                 Kind::Scatter => o.push_str(&format!("<c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:scatterChart>", a1, a2)),
-            }
+            } }
         }
         if !pie_only {
             let line = format!("<c:spPr><a:noFill/><a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\">{}<a:round/></a:ln></c:spPr>", solid(0xD9D9D9));
@@ -1156,6 +1211,9 @@ impl Chart {
                 if scatter { "l" } else { val_pos }, if self.gridlines { grid.as_str() } else { "" },
                 title(&if horizontal && !scatter { self.x_title.clone() } else { self.y_title.clone() }, !(horizontal && !scatter)),
                 if percent { "0%".to_string() } else { esc(&fmt) }, (!percent) as u8, txpr(9, false), if scatter { "midCat" } else { "between" }));
+            if self.special() == Some("surfaceChart") {
+                o.push_str("<c:serAx><c:axId val=\"5\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"1\"/><c:axPos val=\"b\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"2\"/><c:crosses val=\"autoZero\"/></c:serAx>");
+            }
             if has_secondary {
                 o.push_str("<c:catAx><c:axId val=\"3\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"1\"/><c:axPos val=\"b\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"4\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>");
                 o.push_str(&format!("<c:valAx><c:axId val=\"4\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"r\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:majorTickMark val=\"none\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>{}<c:crossAx val=\"3\"/><c:crosses val=\"max\"/><c:crossBetween val=\"between\"/></c:valAx>", txpr(9, false)));

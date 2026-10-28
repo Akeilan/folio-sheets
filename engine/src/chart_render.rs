@@ -115,6 +115,11 @@ impl Book {
             }
         }
         pen.set_align(PANGO_ALIGN_LEFT);
+        if let Some(tag) = ch.special() {
+            self.paint_special(ch, tag, cr, l, t, r, b, z, pen);
+            cairo_restore(cr);
+            return;
+        }
         // ---- data
         let pie = ch.plots.iter().all(|p| matches!(p.kind, Kind::Pie | Kind::Doughnut));
         let mut idx = 0usize;

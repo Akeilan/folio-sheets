@@ -576,6 +576,33 @@ pb = _G.Pixbuf.new_from_file(shot).get_pixels()
 blue = sum(1 for k in range(0, len(pb) - 3, 3) if pb[k] < 90 and pb[k + 2] > 150)
 check("charts drawn", blue > 2000, blue)
 
+# radar, stock, contour (classic chart parts)
+win.run("insert-sheet")
+pump()
+S = g.sheet
+rows = [("Day", "High", "Low", "Close"), ("Mon", "12", "8", "10"), ("Tue", "14", "9", "13"), ("Wed", "13", "10", "11"),
+        ("Thu", "15", "11", "14"), ("Fri", "16", "12", "15")]
+for r, row in enumerate(rows):
+    for c, v in enumerate(row):
+        b.set_input(S, r, c, v)
+made = []
+for kind in ("radar", "radar-markers", "radar-filled", "stock", "contour"):
+    g.sel.ranges = [(0, 0, 5, 3)]
+    g.sel.active = (0, 0)
+    n = len(b.objects(S))
+    win.run("chart-column:" + kind)
+    ok = len(b.objects(S)) == n + 1 and b.chart_spec(S, n)["kind"] == kind and not b.chart_exotic(S, n)
+    check("chart %s inserted" % kind, ok, b.chart_spec(S, n)["kind"] if len(b.objects(S)) > n else None)
+    made.append((n, kind))
+p9 = os.path.join(TMP, "radar.xlsx")
+win.save_to(p9)
+rb = Book.open(p9)
+check("radar, stock, contour saved and read back", [rb.chart_spec(S, i)["kind"] for i, _ in made] == [k for _, k in made],
+      [rb.chart_spec(S, i)["kind"] for i, _ in made])
+xs = "".join(zipfile.ZipFile(p9).read(n).decode() for n in zipfile.ZipFile(p9).namelist() if n.startswith("xl/charts/chart"))
+check("chart parts: radarChart, stockChart with hiLowLines, surfaceChart", "<c:radarChart>" in xs and "radarStyle val=\"filled\"" in xs
+      and "<c:hiLowLines>" in xs and "<c:surfaceChart>" in xs and "<c:serAx>" in xs)
+
 # ---------------------------------------------------------------- M-12 File > Share > Email
 fake = os.path.join(TMP, "bin")
 os.makedirs(fake, exist_ok=True)

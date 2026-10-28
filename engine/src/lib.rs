@@ -65,6 +65,7 @@ pub mod objects_ext;
 pub mod advfilter;
 pub mod page_view;
 pub mod chartex;
+pub mod chart_extra;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

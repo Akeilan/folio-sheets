@@ -14,6 +14,9 @@ PAGES = [
     ("Area", [("Area", "area"), ("Stacked Area", "area-stacked"), ("100% Stacked Area", "area-percent")]),
     ("X Y (Scatter)", [("Scatter", "scatter"), ("Scatter with Smooth Lines", "scatter-smooth"),
                        ("Scatter with Straight Lines", "scatter-lines")]),
+    ("Stock", [("High-Low-Close", "stock")]),
+    ("Surface", [("Contour", "contour")]),
+    ("Radar", [("Radar", "radar"), ("Radar with Markers", "radar-markers"), ("Filled Radar", "radar-filled")]),
     ("Combo", [("Clustered Column - Line", "combo"), ("Clustered Column - Line on Secondary Axis", "combo-secondary")]),
 ]
 
