@@ -46,6 +46,12 @@ pub fn kind_name(ch: &Chart) -> String {
         Some(p) => p,
         None => return "col".into(),
     };
+    match ch.special() {
+        Some("radarChart") => return if p.hole == 1 { "radar-filled".into() } else if p.markers { "radar-markers".into() } else { "radar".into() },
+        Some("stockChart") => return "stock".into(),
+        Some("surfaceChart") => return "contour".into(),
+        _ => {}
+    }
     let base = match p.kind {
         Kind::Bar => if p.horizontal { "bar" } else { "col" },
         Kind::Line => "line",

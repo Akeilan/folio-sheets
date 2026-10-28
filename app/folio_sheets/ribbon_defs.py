@@ -520,7 +520,10 @@ def build_ribbon(win):
             ("#", "Scatter"), ("Scatter", "chart-scatter:scatter"), ("Scatter with Smooth Lines", "chart-scatter:scatter-smooth"),
             ("Scatter with Straight Lines", "chart-scatter:scatter-lines"), None, ("More Scatter Charts...", "chart-scatter")])],
          [B.icon("r-chart-waterfall-sm", None, "S2", "Insert Waterfall, Funnel, Stock, Surface or Radar Chart",
-                 menu=[("#", "Waterfall"), ("Waterfall", "chartex:waterfall"), ("#", "Funnel"), ("Funnel", "chartex:funnel"), None,
+                 menu=[("#", "Waterfall"), ("Waterfall", "chartex:waterfall"), ("#", "Funnel"), ("Funnel", "chartex:funnel"),
+                       ("#", "Stock"), ("High-Low-Close", "chart-column:stock"), ("#", "Surface"), ("Contour", "chart-column:contour"),
+                       ("#", "Radar"), ("Radar", "chart-column:radar"), ("Radar with Markers", "chart-column:radar-markers"),
+                       ("Filled Radar", "chart-column:radar-filled"), None,
                        ("More Waterfall and Funnel Charts...", "chart-waterfall")]),
           B.icon("r-chart-combo-sm", None, "O", "Insert Combo Chart", menu=[
             ("Clustered Column - Line", "chart-combo:combo"),

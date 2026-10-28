@@ -859,7 +859,7 @@ impl Book {
 
     /// The value axis and gridlines; returns the plot rectangle (l, t, r, b).
     #[allow(clippy::too_many_arguments)]
-    unsafe fn cx_value_axis(&self, cr: *mut cairo_t, pen: &mut Pen, l: f64, t: f64, r: f64, b: f64, amin: f64, amax: f64, step: f64, z: f64,
+    pub(crate) unsafe fn cx_value_axis(&self, cr: *mut cairo_t, pen: &mut Pen, l: f64, t: f64, r: f64, b: f64, amin: f64, amax: f64, step: f64, z: f64,
                             small: &crate::layout::FontSpec) -> (f64, f64, f64, f64) {
         let mut labels = Vec::new();
         let mut v = amin;
