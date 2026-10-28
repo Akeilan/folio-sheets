@@ -307,6 +307,7 @@ def make_pane(win):
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
     outer.set_size_request(320, -1)
     outer.set_name("comments-pane")
+    outer.get_style_context().add_class("folio-pane")
     head = Gtk.Box(spacing=6)
     head.set_border_width(6)
     lab = Gtk.Label(xalign=0)

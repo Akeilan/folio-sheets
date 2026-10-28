@@ -318,9 +318,8 @@ def write_pdf(win, path, sheets=None):
 
 def export_pdf(win, path=None):
     if path is None:
-        d = Gtk.FileChooserDialog(title="Export to PDF", transient_for=win, action=Gtk.FileChooserAction.SAVE)
-        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        d.add_button("Export", Gtk.ResponseType.OK)
+        d = Gtk.FileChooserNative(title="Export to PDF", transient_for=win, action=Gtk.FileChooserAction.SAVE,
+                                  accept_label="Export", cancel_label="Cancel")
         d.set_do_overwrite_confirmation(True)
         base = os.path.splitext(os.path.basename(getattr(win, "path", None) or "Book1"))[0]
         d.set_current_name(base + ".pdf")
@@ -329,7 +328,7 @@ def export_pdf(win, path=None):
         f.add_pattern("*.pdf")
         d.add_filter(f)
         r = d.run()
-        path = d.get_filename() if r == Gtk.ResponseType.OK else None
+        path = d.get_filename() if r == Gtk.ResponseType.ACCEPT else None
         d.destroy()
         if not path:
             return False
