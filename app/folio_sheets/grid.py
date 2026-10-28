@@ -647,6 +647,9 @@ class GridView(Gtk.Box):
                 return False
             if ev.type == Gdk.EventType._2BUTTON_PRESS:
                 self.select_object(i)
+                from . import insert_extras
+                if insert_extras.activate(self.win, i):
+                    return True
                 if self.book.shape_info(self.sheet, i) is not None:
                     self.win.shapes.edit(i)
                 else:

@@ -455,6 +455,73 @@ check("page layout: scrolls to a cell on a later page", r2 and 0 <= r2[1] < g.ar
 win.run("view-normal")
 check("page layout: back to normal", g.state(S).view_mode == "normal")
 
+# ---------------------------------------------------------------- S2-08 SmartArt, Signature Line, Object
+from folio_sheets import insert_extras  # noqa: E402
+S = g.sheet
+n0 = len(b.objects(S))
+for lay in ("list", "process", "cycle", "hierarchy", "relationship", "matrix", "pyramid"):
+    gi = insert_extras.build_smartart(win, lay, "Plan\n\tDo\n\tCheck\nAct\nMore", 50, 50)
+    ok = b.objects(S)[gi]["kind"] == "group" and insert_extras.smartart_of(win, gi)[0] == lay
+    check("smartart: %s laid out as a group" % lay, ok, b.objects(S)[gi])
+    b.delete_objects(S, [gi])
+
+
+def sa_pick(d):
+    d.radios["process"].set_active(True)
+    d.text.get_buffer().set_text("One\nTwo\nThree")
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(sa_pick)
+win.run("smartart")
+gi = g.sel_objects[0]
+check("smartart: inserted from the dialog", insert_extras.smartart_of(win, gi) == ("process", "One\nTwo\nThree"))
+p7 = os.path.join(TMP, "smartart.xlsx")
+win.save_to(p7)
+rb = Book.open(p7)
+k7 = [i for i, o in enumerate(rb.objects(S)) if o["kind"] == "group"]
+check("smartart: saved with its layout and text", k7 and "Three" in (rb.object_ext(S, k7[0], insert_extras.SMARTART_URI) or ""))
+
+
+def sa_edit(d):
+    d.text.get_buffer().set_text("One\nTwo")
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(sa_edit)
+insert_extras.activate(win, gi)
+gi = g.sel_objects[0]
+check("smartart: edited (laid out again)", insert_extras.smartart_of(win, gi)[1] == "One\nTwo" and b.objects(S)[gi]["members"] == 3)
+
+
+def sig(d):
+    d.entries[0].set_text("Ann Lee")
+    d.entries[1].set_text("Director")
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(sig)
+win.run("signature-line")
+si = g.sel_objects[0]
+check("signature line: a picture", b.objects(S)[si]["kind"] == "picture" and "Ann Lee" in b.object_props(S, si)["descr"])
+insert_extras.sign(win, si, "Ann Lee")
+si = g.sel_objects[0]
+meta = insert_extras.png_chunk(insert_extras._pic(win, si), b"flSg").decode()
+check("signature line: signed", meta.split("\n")[3] == "Ann Lee", meta)
+fp = os.path.join(TMP, "notes.txt")
+with open(fp, "w") as fh:
+    fh.write("hello object")
+oi = insert_extras.insert_object(win, fp)
+f = insert_extras.object_file(win, oi)
+check("object: the file is embedded", f and f[0] == "notes.txt" and f[1] == b"hello object", f)
+win.save_to(p7)
+rb_win_pic = Book.open(p7).picture_bytes(S, oi)
+check("object: kept in the saved file", rb_win_pic and insert_extras.png_chunk(bytes(rb_win_pic[0]), b"flEm").endswith(b"hello object"))
+out = insert_extras.open_object(win, oi, run=False)
+check("object: opens as a file", out and open(out).read() == "hello object")
+li = insert_extras.insert_object(win, fp, link=True)
+check("object: linked", insert_extras.object_file(win, li)[2] == os.path.abspath(fp))
+
 # ---------------------------------------------------------------- M-12 File > Share > Email
 fake = os.path.join(TMP, "bin")
 os.makedirs(fake, exist_ok=True)

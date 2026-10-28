@@ -342,4 +342,37 @@ impl Book {
         self.commit();
         Ok((i..i + n).collect())
     }
+
+    /// An extension kept on an object's cNvPr (its a:ext with this uri, as XML).
+    pub fn object_ext(&self, s: usize, i: usize, uri: &str) -> Option<String> {
+        let o = self.sheets.get(s)?.objects.get(i)?;
+        let c = cnvpr(o)?;
+        let l = c.child("extLst")?;
+        l.elems().find(|e| e.attr("uri") == Some(uri)).map(|e| e.to_string())
+    }
+
+    /// Put (Some: the inner XML) or take away an extension on an object's cNvPr (an undo step).
+    pub fn set_object_ext(&mut self, s: usize, i: usize, uri: &str, inner: Option<&str>, label: &str) -> Result<(), String> {
+        let mut objs = self.sheets.get(s).ok_or("no such sheet")?.objects.clone();
+        let o = objs.get_mut(i).ok_or("no such object")?;
+        let c = find_mut(&mut o.body, "cNvPr").ok_or("This object has no properties to keep it in.")?;
+        if let Some(l) = c.child_mut("extLst") {
+            l.children.retain(|n| !matches!(n, Node::Elem(e) if e.attr("uri") == Some(uri)));
+        }
+        if let Some(x) = inner {
+            let (_, el) = crate::xml::parse(&format!("<a:ext xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" uri=\"{}\">{}</a:ext>", crate::xml::escape_attr(uri), x))?;
+            let mut el = el;
+            el.attrs.retain(|(k, _)| k != "xmlns:a");
+            if c.child("extLst").is_none() {
+                c.push(Element::new("a:extLst"));
+            }
+            c.child_mut("extLst").unwrap().push(el);
+        } else if c.child("extLst").map(|l| l.elems().next().is_none()).unwrap_or(false) {
+            c.remove_children("extLst");
+        }
+        self.begin(label, s);
+        self.record(Delta::Objects(s, objs));
+        self.commit();
+        Ok(())
+    }
 }
