@@ -48,6 +48,8 @@ pub struct Obj {
     /// a group's objects (its body is the grpSp without them); their anchors are Abs, in the
     /// group's child coordinates (EMU)
     pub members: Vec<Obj>,
+    /// a chart of the newer kinds (waterfall, treemap...), from its chartEx part (in `part`)
+    pub chartex: Option<Rc<crate::chartex::ChartEx>>,
 }
 
 /// A sheet's drawing part as read.
@@ -80,6 +82,9 @@ impl Obj {
         }
         if self.chart.is_some() {
             return "chart";
+        }
+        if self.chartex.is_some() {
+            return "chartex";
         }
         if self.picture.is_some() {
             return "picture";
@@ -229,10 +234,25 @@ pub fn read_drawing(part: &str, text: &str, rels: Vec<(String, String, String, b
             None => continue,
         };
         let body: Vec<Node> = a.children.iter().filter(|n| !matches!(n, Node::Elem(e) if matches!(e.local(), "from" | "to" | "ext" | "pos"))).cloned().collect();
-        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new() };
+        let mut o = Obj { anchor, body, chart: None, name: String::new(), part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new(), chartex: None };
         o.name = find_name(&o.body).unwrap_or_default();
         // an equation's text box is read as a shape (and wrapped again when written)
         let is_math = wrapper.is_some() && o.body.iter().any(|n| matches!(n, Node::Elem(e) if (e.local() == "sp") && crate::math::find_math(e).is_some()));
+        if wrapper.is_some() && !is_math {
+            // a chart of the newer kinds: its part read, the frame kept as the body
+            if let Some(rid) = o.chart_rid() {
+                if let Some((_, _, target, _)) = rels.iter().find(|r| r.0 == rid && r.1.ends_with("/chartEx")) {
+                    if let Some(t) = get(target) {
+                        if let Ok(cx) = crate::chartex::ChartEx::parse(&t) {
+                            o.chartex = Some(Rc::new(cx));
+                            o.part = Some(target.clone());
+                            objs.push(o);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
         if let (Some(w), false) = (wrapper, is_math) {
             // ink: its strokes from the ink part; anything else is kept as it is
             let rid = find_attr(&o.body, "contentPart", "id");
@@ -273,7 +293,7 @@ fn load_parts(o: &mut Obj, rels: &[(String, String, String, bool)], get: &dyn Fn
         for k in kids {
             let (x, y, cx, cy) = elem_xfrm(&k).unwrap_or((0, 0, 0, 0));
             let mut m = Obj { anchor: Anchor::Abs { x, y, cx, cy }, body: vec![Node::Elem(k)], chart: None, name: String::new(), part: None,
-                              picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new() };
+                              picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new(), chartex: None };
             m.name = find_name(&m.body).unwrap_or_default();
             load_parts(&mut m, rels, get, get_bytes, theme);
             o.members.push(m);
@@ -402,6 +422,21 @@ pub fn member_elem(m: &Obj) -> Option<Element> {
         e.children.push(Node::Raw(inner));
     }
     Some(e)
+}
+
+/// Where the anchor's own elements (from/to/ext/pos) end in its written XML.
+fn anchor_head_len(a: &Anchor, s: &str) -> usize {
+    let key = match a {
+        Anchor::Two { .. } => "</xdr:to>",
+        Anchor::One { .. } | Anchor::Abs { .. } => "<xdr:ext ",
+    };
+    match s.find(key) {
+        Some(i) => match a {
+            Anchor::Two { .. } => i + key.len(),
+            _ => i + s[i..].find("/>").map(|k| k + 2).unwrap_or(0),
+        },
+        None => 0,
+    }
 }
 
 fn read_anchor(a: &Element) -> Option<Anchor> {
@@ -599,6 +634,16 @@ pub fn write_drawing(file: Option<&DrawingFile>, objs: &[Obj]) -> String {
         if pfx != "xdr" {
             let p = if pfx.is_empty() { String::new() } else { format!("{}:", pfx) };
             s = s.replace("<xdr:", &format!("<{}", p)).replace("</xdr:", &format!("</{}", p));
+        }
+        if let Some(cx) = &o.chartex {
+            // as Office writes them: the chartEx frame for programs that know it, a note for the rest
+            let tail_at = s.rfind("</xdr:").unwrap_or(s.len());
+            let (head_len, tail) = (anchor_head_len(&o.anchor, &s), s[tail_at..].to_string());
+            let head = s[..head_len].to_string();
+            let (req, ns) = crate::chartex::requires(&cx.kind);
+            let fb = crate::chartex::fallback_body(1);
+            s = format!("<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:{req}=\"{ns}\" Requires=\"{req}\">{s}</mc:Choice><mc:Fallback>{head}{fb}{tail}</mc:Fallback></mc:AlternateContent>",
+                        req = req, ns = ns, s = s, head = head, fb = fb, tail = tail);
         }
         if o.ink.is_none() && s.contains("oMath") {
             // as Office writes equations: Office Math for applications that know it, plain text for the rest

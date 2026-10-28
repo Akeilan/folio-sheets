@@ -271,6 +271,7 @@ impl Book {
             raw: None,
             slicer: None,
             members: Vec::new(),
+            chartex: None,
         };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
@@ -305,6 +306,7 @@ impl Book {
             raw: None,
             slicer: None,
             members: Vec::new(),
+            chartex: None,
         };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
@@ -355,7 +357,7 @@ impl Book {
         let (id, name) = self.next_object_name(s, "Chart");
         let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: None };
         let anchor = self.anchor_at(s, &like, x, y, w, h);
-        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new() };
+        let obj = Obj { anchor, body: chart_frame(id, &name), chart: Some(Rc::new(ch)), name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new(), chartex: None };
         let mut objs = self.sheets[s].objects.clone();
         objs.push(obj);
         let i = objs.len() - 1;
@@ -580,7 +582,7 @@ impl Book {
     /// Rewrite every chart reference (recorded), as formulas are.
     pub fn adjust_charts(&mut self, how: &Adjust) {
         for s in 0..self.sheets.len() {
-            if !self.sheets[s].objects.iter().any(|o| o.chart.is_some()) {
+            if !self.sheets[s].objects.iter().any(|o| o.chart.is_some() || o.chartex.is_some()) {
                 continue;
             }
             let here = self.sheets[s].name.clone();
@@ -592,6 +594,13 @@ impl Book {
                     let mut c = (**ch).clone();
                     if c.adjust(&how2) {
                         o.chart = Some(Rc::new(c));
+                        changed = true;
+                    }
+                }
+                if let Some(cx) = &o.chartex {
+                    let mut c = (**cx).clone();
+                    if c.adjust(&how2) {
+                        o.chartex = Some(Rc::new(c));
                         changed = true;
                     }
                 }
@@ -695,5 +704,60 @@ impl Book {
         let ox = self.screen_x(s, p, &g, p.left_col.max(p.freeze_cols)) - self.col_x(s, p.left_col.max(p.freeze_cols)) * z;
         let oy = self.screen_y(s, p, &g, p.top_row.max(p.freeze_rows)) - self.row_y(s, p.top_row.max(p.freeze_rows)) * z;
         self.set_object_rect(s, i, (x - ox) / z, (y - oy) / z, w / z, h / z, label)
+    }
+}
+
+impl Book {
+    /// Insert a chart of the newer kinds (waterfall, funnel, histogram, pareto, boxwhisker,
+    /// treemap, sunburst) from the cells rc, placed at (x, y).
+    pub fn insert_chartex(&mut self, s: usize, rc: crate::cellref::Rect, kind: &str, x: f64, y: f64) -> Result<usize, String> {
+        if s >= self.sheets.len() || self.sheets[s].kind != "work" {
+            return Err("Charts can be inserted on worksheets only.".into());
+        }
+        let cx = self.chartex_from_range(s, rc, kind)?;
+        let (id, name) = self.next_object_name(s, "Chart");
+        let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: None };
+        let anchor = self.anchor_at(s, &like, x, y, 480.0, 288.0);
+        let obj = Obj { anchor, body: crate::chartex::frame(id, &name), chart: None, name, part: None, picture: None, pic_part: None, ink: None,
+                        ink_part: None, raw: None, slicer: None, members: Vec::new(), chartex: Some(Rc::new(cx)) };
+        let mut objs = self.sheets[s].objects.clone();
+        objs.push(obj);
+        let i = objs.len() - 1;
+        self.begin("Insert Chart", s);
+        self.record(Delta::Objects(s, objs));
+        self.commit();
+        Ok(i)
+    }
+
+    pub fn chartex(&self, s: usize, i: usize) -> Option<&crate::chartex::ChartEx> {
+        self.sheets.get(s)?.objects.get(i)?.chartex.as_deref()
+    }
+
+    /// Change a chartEx chart's kind, title or source cells (one undo step).
+    pub fn set_chartex(&mut self, s: usize, i: usize, kind: Option<&str>, title: Option<Option<String>>, rc: Option<crate::cellref::Rect>) -> Result<(), String> {
+        let mut objs = self.sheets.get(s).ok_or("no such sheet")?.objects.clone();
+        let cur = objs.get(i).and_then(|o| o.chartex.clone()).ok_or("That object isn't one of the newer charts.")?;
+        let mut cx = (*cur).clone();
+        let k = kind.unwrap_or(&cur.kind).to_string();
+        if !crate::chartex::KINDS.contains(&k.as_str()) {
+            return Err("an unknown kind of chart".into());
+        }
+        if let Some(rc) = rc {
+            let mut n = self.chartex_from_range(s, rc, &k)?;
+            n.title = cx.title.clone();
+            n.orig = cx.orig.clone();
+            n.orig_model = cx.orig_model.clone();
+            cx = n;
+        } else {
+            cx.kind = k;
+        }
+        if let Some(t) = title {
+            cx.title = t;
+        }
+        objs[i].chartex = Some(Rc::new(cx));
+        self.begin("Chart", s);
+        self.record(Delta::Objects(s, objs));
+        self.commit();
+        Ok(())
     }
 }

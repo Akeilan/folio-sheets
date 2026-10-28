@@ -512,13 +512,16 @@ def build_ribbon(win):
           B.icon("r-chart-pie-sm", None, "Q", "Insert Pie or Doughnut Chart", menu=[
             ("#", "2-D Pie"), ("Pie", "chart-pie:pie"), ("#", "Doughnut"), ("Doughnut", "chart-pie:doughnut"), None,
             ("More Pie Charts...", "chart-pie")])],
-         [B.icon("r-chart-hierarchy-sm", None, "I", "Insert Hierarchy Chart", menu=[("Treemap and sunburst...", "chart-hierarchy")]),
-          B.icon("r-chart-statistic-sm", None, "S1", "Insert Statistic Chart", menu=[("Histogram and box & whisker...", "chart-statistic")]),
+         [B.icon("r-chart-hierarchy-sm", None, "I", "Insert Hierarchy Chart", menu=[("#", "Treemap"), ("Treemap", "chartex:treemap"), ("#", "Sunburst"), ("Sunburst", "chartex:sunburst"), None,
+                                                                                          ("More Hierarchy Charts...", "chart-hierarchy")]),
+          B.icon("r-chart-statistic-sm", None, "S1", "Insert Statistic Chart", menu=[("#", "Histogram"), ("Histogram", "chartex:histogram"), ("Pareto", "chartex:pareto"), ("#", "Box and Whisker"),
+                                                                                           ("Box and Whisker", "chartex:boxwhisker"), None, ("More Statistical Charts...", "chart-statistic")]),
           B.icon("r-chart-scatter-sm", None, "D", "Insert Scatter (X, Y) Chart", menu=[
             ("#", "Scatter"), ("Scatter", "chart-scatter:scatter"), ("Scatter with Smooth Lines", "chart-scatter:scatter-smooth"),
             ("Scatter with Straight Lines", "chart-scatter:scatter-lines"), None, ("More Scatter Charts...", "chart-scatter")])],
          [B.icon("r-chart-waterfall-sm", None, "S2", "Insert Waterfall, Funnel, Stock, Surface or Radar Chart",
-                 menu=[("Waterfall, funnel, stock, surface, radar...", "chart-waterfall")]),
+                 menu=[("#", "Waterfall"), ("Waterfall", "chartex:waterfall"), ("#", "Funnel"), ("Funnel", "chartex:funnel"), None,
+                       ("More Waterfall and Funnel Charts...", "chart-waterfall")]),
           B.icon("r-chart-combo-sm", None, "O", "Insert Combo Chart", menu=[
             ("Clustered Column - Line", "chart-combo:combo"),
             ("Clustered Column - Line on Secondary Axis", "chart-combo:combo-secondary"), None,

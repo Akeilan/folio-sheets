@@ -285,7 +285,7 @@ impl Book {
         let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: None };
         let anchor = self.anchor_at(s, &like, x1, y1, x2 - x1, y2 - y1);
         let g = Obj { anchor, body, chart: None, name, part: None, picture: None, pic_part: None, ink: None, ink_part: None, raw: None,
-                      slicer: None, members };
+                      slicer: None, members, chartex: None };
         let mut objs: Vec<Obj> = Vec::new();
         let at = *idx.last().unwrap() + 1 - idx.len();
         for (k, o) in sh.objects.iter().enumerate() {
