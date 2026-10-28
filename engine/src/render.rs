@@ -510,6 +510,10 @@ impl Book {
                 return;
             }
         }
+        if let Some(cx) = &o.chartex {
+            self.paint_chartex(cx, cr, x, y, w, h, p.zoom, pen);
+            return;
+        }
         match &o.chart {
             Some(ch) => self.paint_chart(ch, cr, x, y, w, h, p.zoom, pen),
             None => {

@@ -481,6 +481,9 @@ def open_object(win, i, run=True):
 def activate(win, i):
     """A double-click on an object made here: edit the SmartArt, sign the line, open the file."""
     o = win.book.objects(win.grid.sheet)[i]
+    if o["kind"] == "chartex":
+        from . import chartex_ui
+        return chartex_ui.change_type(win, i)
     if o["kind"] == "group" and smartart_of(win, i) is not None:
         return edit_smartart(win, i)
     if o["kind"] == "picture":

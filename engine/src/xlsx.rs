@@ -1755,7 +1755,7 @@ impl Book {
         };
         used.insert(dpart.clone());
         let is_ink_rel = |r: &(String, String, String, bool)| r.1.ends_with("/customXml") && r.2.contains("/ink/");
-        let mut drels: Vec<(String, String, String, bool)> = old.map(|d| d.rels.iter().filter(|r| !r.1.ends_with("/chart") && !is_ink_rel(r)).cloned().collect()).unwrap_or_default();
+        let mut drels: Vec<(String, String, String, bool)> = old.map(|d| d.rels.iter().filter(|r| !r.1.ends_with("/chart") && !r.1.ends_with("/chartEx") && !is_ink_rel(r)).cloned().collect()).unwrap_or_default();
         // ink parts are written again from the strokes (or dropped with their ink)
         if let Some(d) = old {
             for r in d.rels.iter().filter(|r| is_ink_rel(r)) {
@@ -1767,7 +1767,7 @@ impl Book {
         }
         if let Some(d) = old {
             for r in &d.rels {
-                if r.1.ends_with("/chart") {
+                if r.1.ends_with("/chart") || r.1.ends_with("/chartEx") {
                     drop_chart(&r.2, dropped, ct, used);
                 }
             }
@@ -1796,6 +1796,32 @@ impl Book {
                 };
                 drels.push((rid.clone(), T_CUSTOMXML.into(), ipart, false));
                 o.set_ink_rid(&rid);
+                return;
+            }
+            if let Some(cx) = o.chartex.clone() {
+                let cpart = match &o.part {
+                    Some(p) if !used.contains(p) => p.clone(),
+                    _ => fresh("charts/chartEx", taken),
+                };
+                used.insert(cpart.clone());
+                let mut cxx = (*cx).clone();
+                if o.part.as_deref() != Some(cpart.as_str()) {
+                    // a copy gets its own part, written from the model
+                    cxx.orig = None;
+                }
+                out.push((cpart.clone(), cxx.to_xml(self).into_bytes()));
+                set_override(ct, &cpart, crate::chartex::CT_CHARTEX);
+                let mut k = 1;
+                let rid = loop {
+                    let id = format!("rId{}", k);
+                    if !ids.contains(&id) {
+                        ids.push(id.clone());
+                        break id;
+                    }
+                    k += 1;
+                };
+                drels.push((rid.clone(), crate::chartex::T_CHARTEX.into(), cpart.clone(), false));
+                o.set_chart_rid(&rid);
                 return;
             }
             // a new picture: its image becomes a media part

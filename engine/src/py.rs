@@ -1886,6 +1886,41 @@ impl PyBook {
                                 get(props, "rot"), get(props, "rot_by"), get(props, "flip_h").unwrap_or(false),
                                 get(props, "flip_v").unwrap_or(false), label).map_err(verr)
     }
+    fn insert_chartex(&mut self, s: usize, rg: R4, kind: &str, x: f64, y: f64) -> PyResult<usize> {
+        self.sheet(s)?;
+        self.b.insert_chartex(s, rect(rg), kind, x, y).map_err(verr)
+    }
+    fn chartex_info<'py>(&self, py: Python<'py>, s: usize, i: usize) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let cx = match self.b.chartex(s, i) {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+        let d = PyDict::new_bound(py);
+        d.set_item("kind", &cx.kind)?;
+        d.set_item("title", self.b.chartex_title(cx))?;
+        d.set_item("own_title", cx.title.clone())?;
+        d.set_item("cats", cx.cats.iter().filter_map(|c| c.f.clone()).collect::<Vec<_>>())?;
+        d.set_item("values", cx.series.iter().filter_map(|c| c.val.f.clone()).collect::<Vec<_>>())?;
+        Ok(Some(d))
+    }
+    #[pyo3(signature = (s, i, kind=None, title=None, clear_title=false, rg=None))]
+    fn set_chartex(&mut self, s: usize, i: usize, kind: Option<&str>, title: Option<String>, clear_title: bool, rg: Option<R4>) -> PyResult<()> {
+        self.sheet(s)?;
+        let t = if clear_title { Some(None) } else { title.map(Some) };
+        self.b.set_chartex(s, i, kind, t, rg.map(rect)).map_err(verr)
+    }
+    /// Draw a chartEx preview of a range into a cairo context.
+    fn render_chartex_preview(&self, s: usize, cr: &Bound<'_, PyAny>, w: f64, h: f64, rg: R4, kind: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let ctx = cairo_ptr(cr)?;
+        let cx = self.b.chartex_from_range(s, rect(rg), kind).map_err(verr)?;
+        unsafe {
+            let mut pen = crate::render::Pen { layout: crate::ffi::pango_cairo_create_layout(ctx), fonts: std::collections::HashMap::new() };
+            self.b.paint_chartex(&cx, ctx, 0.0, 0.0, w, h, 1.0, &mut pen);
+        }
+        Ok(())
+    }
     fn object_ext(&self, s: usize, i: usize, uri: &str) -> PyResult<Option<String>> {
         self.sheet(s)?;
         Ok(self.b.object_ext(s, i, uri))

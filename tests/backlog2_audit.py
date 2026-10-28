@@ -522,6 +522,60 @@ check("object: opens as a file", out and open(out).read() == "hello object")
 li = insert_extras.insert_object(win, fp, link=True)
 check("object: linked", insert_extras.object_file(win, li)[2] == os.path.abspath(fp))
 
+# ---------------------------------------------------------------- S2-03 chart types
+from folio_sheets import chartex_ui  # noqa: E402
+win.run("insert-sheet")
+pump()
+S = g.sheet
+data = [("Region", "Item", "Amount"), ("East", "Pens", "120"), ("East", "Ink", "-40"), ("West", "Pens", "75"),
+        ("West", "Paper", "60"), ("North", "Ink", "-25"), ("North", "Paper", "90"), ("South", "Pens", "33")]
+for r, row in enumerate(data):
+    for c, v in enumerate(row):
+        b.set_input(S, r, c, v)
+made = {}
+for kind in ("waterfall", "funnel", "histogram", "pareto", "boxwhisker", "treemap", "sunburst"):
+    rg = (0, 0, 7, 2) if kind in ("treemap", "sunburst") else (0, 1, 7, 2)
+    i = chartex_ui.insert(win, kind, rg)
+    made[kind] = i
+    info = b.chartex_info(S, i)
+    check("chart %s inserted" % kind, info and info["kind"] == kind and b.objects(S)[i]["kind"] == "chartex", info)
+check("treemap: two category levels", len(b.chartex_info(S, made["treemap"])["cats"]) == 2, b.chartex_info(S, made["treemap"]))
+for kind, i in made.items():
+    shot = os.path.join(TMP, "cx_%s.png" % kind)
+    rr = b.objects(S)[i]["rect"]
+    b.render_png(S, shot, {"width": 1400.0, "height": 1400.0, "sel": [], "active": (9000, 9000), "show_headers": False})
+p8 = os.path.join(TMP, "chartex.xlsx")
+win.save_to(p8)
+rb = Book.open(p8)
+kinds = sorted((rb.chartex_info(S, k) or {}).get("kind", "") for k in range(len(rb.objects(S))) if rb.objects(S)[k]["kind"] == "chartex")
+check("charts saved and read back", kinds == sorted(made), kinds)
+z = zipfile.ZipFile(p8)
+names = z.namelist()
+ct = z.read("[Content_Types].xml").decode()
+dr = [n for n in names if n.startswith("xl/drawings/drawing") and n.endswith(".xml")]
+dtext = "".join(z.read(n).decode() for n in dr)
+check("chartEx parts in the package", sum(1 for n in names if "chartEx" in n and n.endswith(".xml") and "_rels" not in n) == 7
+      and "chartex+xml" in ct, [n for n in names if "chartEx" in n])
+check("drawing wraps them as the original does", dtext.count("Requires=\"cx1\"") == 6 and dtext.count("Requires=\"cx2\"") == 1
+      and dtext.count("mc:Fallback") >= 7)
+wf = [n for n in names if "chartEx" in n and n.endswith(".xml") and "_rels" not in n]
+wtext = "".join(z.read(n).decode() for n in wf)
+check("chartEx XML: layouts", all(("layoutId=\"%s\"" % l) in wtext for l in ("waterfall", "funnel", "clusteredColumn", "paretoLine", "boxWhisker", "treemap", "sunburst")))
+i = made["waterfall"]
+b.set_chartex(S, i, title="Cash flow")
+check("chart title", b.chartex_info(S, i)["title"] == "Cash flow")
+b.set_chartex(S, i, kind="funnel")
+check("change chart type", b.chartex_info(S, i)["kind"] == "funnel")
+b.insert_rows(S, 0, 1) if hasattr(b, "insert_rows") else None
+check("references move with inserted rows", "$A$3" in "".join(b.chartex_info(S, made["treemap"])["cats"]) or "$B$3" in "".join(b.chartex_info(S, made["treemap"])["cats"]),
+      b.chartex_info(S, made["treemap"])["cats"])
+from gi.repository import GdkPixbuf as _G  # noqa: E402
+shot = os.path.join(TMP, "cx_all.png")
+b.render_png(S, shot, {"width": 1600.0, "height": 1200.0, "sel": [], "active": (9000, 9000)})
+pb = _G.Pixbuf.new_from_file(shot).get_pixels()
+blue = sum(1 for k in range(0, len(pb) - 3, 3) if pb[k] < 90 and pb[k + 2] > 150)
+check("charts drawn", blue > 2000, blue)
+
 # ---------------------------------------------------------------- M-12 File > Share > Email
 fake = os.path.join(TMP, "bin")
 os.makedirs(fake, exist_ok=True)

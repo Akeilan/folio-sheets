@@ -125,6 +125,12 @@ impl Book {
                     o.chart = Some(Rc::new(c));
                 }
             }
+            if let Some(cx) = &o.chartex {
+                let mut c = (**cx).clone();
+                if c.adjust(&how2) {
+                    o.chartex = Some(Rc::new(c));
+                }
+            }
         }
         let at = at.min(self.sheets.len());
         self.begin("Copy Sheet", at);

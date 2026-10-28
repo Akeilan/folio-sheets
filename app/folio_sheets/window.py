@@ -2427,6 +2427,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             noun = "Slicer" if kind == "slicer" else "Timeline"
             items = [("Clear Filter", "slicer-clear"), None, ("Report Connections...", "filter-connections"),
                      ("%s Settings..." % noun, "slicer-settings"), None, ("Delete", "chart-delete")]
+        elif kind == "chartex":
+            items = [("Delete", "chart-delete"), None, ("Change Chart Type...", "chartex-type"), ("Select Data...", "chartex-data"),
+                     ("Chart Title...", "chartex-title"), None, ("Edit Alt Text...", "alt-text")]
         elif kind != "chart":
             items = [("Delete", "chart-delete"), None, ("Group", "group-objects:group"), ("Ungroup", "group-objects:ungroup"),
                      None, ("Bring to Front", "bring-to-front"), ("Send to Back", "send-to-back"), None,
@@ -2614,6 +2617,40 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             g.sel_objects = [i for i in g.sel_objects if i < len(objs) and objs[i]["kind"] != "ink"]
         self.ribbon.update("hide-ink", "true" if self.hide_ink else "false")
         g.refresh()
+
+    def act_chartex(self, kind):
+        from . import chartex_ui
+        return chartex_ui.insert(self, kind)
+
+    def act_chart_hierarchy(self):
+        from . import chartex_ui
+        return chartex_ui.more(self, "hierarchy")
+
+    def act_chart_statistic(self):
+        from . import chartex_ui
+        return chartex_ui.more(self, "statistic")
+
+    def act_chart_waterfall(self):
+        from . import chartex_ui
+        return chartex_ui.more(self, "waterfall")
+
+    def act_chartex_type(self):
+        from . import chartex_ui
+        g = self.grid
+        if len(g.sel_objects) == 1 and self.book.chartex_info(g.sheet, g.sel_objects[0]):
+            return chartex_ui.change_type(self, g.sel_objects[0])
+
+    def act_chartex_data(self):
+        from . import chartex_ui
+        g = self.grid
+        if len(g.sel_objects) == 1 and self.book.chartex_info(g.sheet, g.sel_objects[0]):
+            return chartex_ui.select_data(self, g.sel_objects[0])
+
+    def act_chartex_title(self):
+        from . import chartex_ui
+        g = self.grid
+        if len(g.sel_objects) == 1 and self.book.chartex_info(g.sheet, g.sel_objects[0]):
+            return chartex_ui.edit_title(self, g.sel_objects[0])
 
     def act_smartart(self):
         from . import insert_extras
