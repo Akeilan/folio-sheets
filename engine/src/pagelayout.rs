@@ -502,7 +502,7 @@ impl Book {
     }
 
     #[allow(clippy::too_many_arguments)]
-    unsafe fn paint_header_footer(&self, cr: *mut crate::ffi::cairo_t, code: &str, y: f64, bottom: bool, paper_w: f64, m: [f64; 6],
+    pub(crate) unsafe fn paint_header_footer(&self, cr: *mut crate::ffi::cairo_t, code: &str, y: f64, bottom: bool, paper_w: f64, m: [f64; 6],
                                   page: u32, pages: u32, sheet: &str, file: &str) {
         use crate::ffi::*;
         if code.is_empty() {

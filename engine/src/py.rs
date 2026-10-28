@@ -89,6 +89,8 @@ fn view_params(d: &Bound<'_, PyDict>) -> ViewParams {
     p.obj_preview = get(d, "obj_preview");
     p.hover_note = get(d, "hover_note");
     p.hide_ink = get(d, "hide_ink").unwrap_or(false);
+    p.page_layout = get(d, "page_layout").unwrap_or(false);
+    p.ruler = get(d, "ruler").unwrap_or(true);
     p.edit_note = get(d, "edit_note");
     p.print = get(d, "print").unwrap_or(false);
     p.page_breaks = get(d, "page_breaks").unwrap_or(false);

@@ -63,6 +63,7 @@ pub mod sheet_extra;
 pub mod extlinks;
 pub mod objects_ext;
 pub mod advfilter;
+pub mod page_view;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

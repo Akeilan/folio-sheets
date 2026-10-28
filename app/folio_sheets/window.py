@@ -386,6 +386,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             self.chk_gridlines.set_active(st.show_grid)
             self.chk_headings.set_active(st.show_headers)
             self.chk_formula_bar.set_active(self.formula_bar.get_visible())
+            self.chk_ruler.set_active(getattr(self, "ruler", True))
+            self.chk_ruler.set_sensitive(st.view_mode == "pageLayout")
         finally:
             self.syncing_checks = False
 
@@ -1615,7 +1617,27 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def act_view_normal(self):
         self.grid.state().view_mode = "normal"
+        self._view_buttons()
         self.grid.refresh()
+
+    def act_view_page_layout(self):
+        """View > Page Layout: the sheet as the pages it prints on, edited there."""
+        st = self.grid.state()
+        st.view_mode = "pageLayout"
+        self._view_buttons()
+        self.grid.refresh()
+        self.grid.update_scrollbars()
+
+    def act_view_ruler(self):
+        self.ruler = not getattr(self, "ruler", True)
+        self.sync_checks()
+        self.grid.refresh()
+
+    def _view_buttons(self):
+        mode = self.grid.state().view_mode
+        for key, m in (("view-normal", "normal"), ("view-page-layout", "pageLayout"), ("view-page-break", "pageBreakPreview")):
+            self.ribbon.update(key, "true" if mode == m else "false")
+        self.sync_checks()
 
     def _freeze(self, rows, cols):
         g = self.grid
@@ -2201,6 +2223,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def act_view_page_break(self):
         st = self.grid.state()
         st.view_mode = "normal" if st.view_mode == "pageBreakPreview" else "pageBreakPreview"
+        self._view_buttons()
         self.grid.refresh()
 
     # ------------------------------------------------------------ notes and comments

@@ -50,6 +50,9 @@ pub struct ViewParams {
     pub dv_circles: Vec<(u32, u32)>,
     /// Review > Hide Ink
     pub hide_ink: bool,
+    /// View > Page Layout, and its rulers
+    pub page_layout: bool,
+    pub ruler: bool,
 }
 
 impl Default for ViewParams {
@@ -81,6 +84,8 @@ impl Default for ViewParams {
             obj_preview: None,
             hover_note: None,
             hide_ink: false,
+            page_layout: false,
+            ruler: true,
             edit_note: None,
             print: false,
             page_breaks: false,
@@ -226,6 +231,9 @@ impl Book {
     }
 
     pub fn geometry(&self, s: usize, p: &ViewParams) -> Geometry {
+        if p.page_layout {
+            return self.pl_geometry(s, p);
+        }
         let z = p.zoom;
         let hh = if p.show_headers { (HEADER_H * z).round() } else { 0.0 };
         let mut g = Geometry { hh, ..Default::default() };
@@ -304,6 +312,9 @@ impl Book {
 
     /// Screen rectangle of a cell (a merged area in whole), or None when off screen.
     pub fn cell_rect(&self, s: usize, r: u32, c: u32, p: &ViewParams) -> Option<(f64, f64, f64, f64)> {
+        if p.page_layout {
+            return self.pl_cell_rect(s, r, c, p);
+        }
         let g = self.geometry(s, p);
         let rc = self.sheets[s].merge_at(r, c).unwrap_or(Rect::cell(r, c));
         let x1 = self.screen_x(s, p, &g, rc.c1);
@@ -331,6 +342,9 @@ impl Book {
 
     /// What is under a point.
     pub fn hit(&self, s: usize, x: f64, y: f64, p: &ViewParams) -> Vec<HitPart> {
+        if p.page_layout {
+            return self.pl_hit(s, x, y, p);
+        }
         let g = self.geometry(s, p);
         if p.show_headers && x < g.hw && y < g.hh {
             return vec![HitPart::S("corner")];
