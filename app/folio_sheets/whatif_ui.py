@@ -540,15 +540,18 @@ class ScenarioManager:
             d.destroy()
             if not ok:
                 return False
-            if pivot:
-                w.dialogs.info("The Scenario PivotTable report isn't available in %s. Use Scenario summary." % APP_NAME,
-                               "Scenario Summary")
-                return False
+        else:
+            pivot = False
         refs = parse_refs(result_cells) if result_cells.strip() else []
         if refs is None:
             w.dialogs.message("Result cells reference is not valid.", "Scenario Summary")
             return False
         results = [(r, c) for r1, c1, r2, c2 in refs for r in range(r1, r2 + 1) for c in range(c1, c2 + 1)]
+        if pivot:
+            if not results:
+                w.dialogs.message("A Scenario PivotTable report needs result cells.", "Scenario Summary")
+                return False
+            return make_pivot_report(w, self.s, results)
         return make_summary(w, self.s, results)
 
 
@@ -600,6 +603,54 @@ def make_summary(win, s, results):
     win.sheet_changed()
     win.update_title()
     return ns
+
+
+def make_pivot_report(win, s, results):
+    """Scenario PivotTable report: the scenarios down the rows, a result cell's value in each
+    column, in a PivotTable on a new sheet (its data kept on a hidden sheet of its own)."""
+    b = win.book
+    lst = b.scenarios(s)
+    if not lst:
+        win.dialogs.message("No scenarios defined.", "Scenario Summary")
+        return False
+    changing = []
+    for sc in lst:
+        for r, c, _ in sc["cells"]:
+            if (r, c) not in changing:
+                changing.append((r, c))
+    rows = [r for r, _c in changing]
+    cols = [c for _r, c in changing]
+    span = (min(rows), min(cols), max(rows), max(cols))
+    by = "%s by" % abs_ref(span) if len(changing) > 1 else "%s by" % abs_ref((rows[0], cols[0], rows[0], cols[0]))
+    vals = b.scenario_results(s, results)
+    heads = [by] + [abs_ref((r, c, r, c)) for r, c in results]
+    with b.group("Scenario PivotTable Report"):
+        name, k = "Scenario Data", 1
+        while b.check_sheet_name(name, None):
+            k += 1
+            name = "Scenario Data (%d)" % k
+        n = b.sheet_count
+        ds = b.insert_sheet(n, name)
+        b.set_sheet_state(ds, "veryHidden")
+        for j, h in enumerate(heads):
+            b.set_input(ds, 0, j, h)
+        for i, sc in enumerate(lst):
+            b.set_input(ds, i + 1, 0, sc["name"] if not re.match(r"^[-+=\d]", sc["name"]) else "'" + sc["name"])
+            for j, v in enumerate(vals[i]):
+                b.set_input(ds, i + 1, j + 1, v if isinstance(v, str) and v.startswith("#") else ("'" + v if isinstance(v, str) else _num_text(v)))
+        rname, k = "Scenario PivotTable", 1
+        while b.check_sheet_name(rname, None):
+            k += 1
+            rname = "Scenario PivotTable (%d)" % k
+        dest = b.insert_sheet(s, rname)
+        ds = ds + 1 if ds >= s else ds
+        pi = b.create_pivot(ds, (0, 0, len(lst), len(heads) - 1), dest, (2, 0))
+        b.set_pivot(pi, {"rows": [0], "values": [{"field": j, "agg": "sum", "name": heads[j]} for j in range(1, len(heads))]},
+                    "Scenario PivotTable Report")
+    win._after_structure(dest)
+    win.grid.set_sheet(dest)
+    win.update_title()
+    return dest
 
 
 def scenario_manager(win):
