@@ -1,16 +1,16 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: folio-sheets
+Upstream-Name: folio-sheet
 
 Files: *
 Copyright: 2026 Ron Shillings
 License: All rights reserved
 
-Files: usr/lib/folio-sheets/folio_sheets/icons/*
+Files: usr/lib/folio-sheet/folio_sheets/icons/*
 Comment: The ribbon, Backstage and toolbar icons are original artwork drawn
- for Folio Sheets (tools/make_ribbon_icons.py, tools/make_formula_icons.py).
+ for Folio Sheet (tools/make_ribbon_icons.py, tools/make_formula_icons.py).
  If LibreOffice's Colibre icon theme (MPL 2.0 / CC BY-SA 4.0) is installed it
  is used only as a fallback for any icon Folio doesn't draw itself.
 
-Comment: Folio Sheets contains no code, fonts, icons or text from any other
+Comment: Folio Sheet contains no code, fonts, icons or text from any other
  spreadsheet vendor. Fonts are the metric-compatible free families
  (Carlito, Caladea, Liberation) provided by their Debian packages.

@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-20 What-If Analysis — Goal Seek, Data Table,
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-20 What-If Analysis — Goal Seek, Data Table,
 # Scenario Manager (summary, merge), Solver (Simplex LP, GRG, integers, Answer Report), Forecast Sheet.
 import os
 import sys

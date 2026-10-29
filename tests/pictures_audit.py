@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): pictures on the sheet and the clipboard between
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): pictures on the sheet and the clipboard between
 # programs — paste a picture another program copied, Insert > Pictures, copy and cut a picture,
 # drawing it, saving it; and a copied range offered to other programs as an HTML table.
 import os

@@ -3,7 +3,7 @@
 # theme_run.sh [--installed]   (from the Sheets tree, or against the installed package)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PP="$HERE/../app"
-[ "$1" = "--installed" ] && PP=/usr/lib/folio-sheets
+[ "$1" = "--installed" ] && PP=/usr/lib/folio-sheet
 LOG=$(mktemp)
 rc=0
 for combo in dark: dark:light colour:; do

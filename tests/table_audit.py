@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Format as Table, the Table Design tab,
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Format as Table, the Table Design tab,
 # structured references, the total row, filters in a table, and the file.
 import os
 import sys

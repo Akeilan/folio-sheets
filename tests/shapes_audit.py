@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-21 shapes, text boxes and WordArt — the Shapes
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-21 shapes, text boxes and WordArt — the Shapes
 # gallery, drawing on the sheet, typing in a shape, the Shape Format tab, saving.
 import os
 import sys

@@ -22,7 +22,8 @@ SLOT_LABELS = ["Text/Background - Dark 1", "Text/Background - Light 1", "Text/Ba
 def theme_dir(win=None):
     d = getattr(win, "_theme_dir", None) if win is not None else None
     if not d:
-        d = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "folio-sheets", "themes")
+        from . import config_dir
+        d = os.path.join(config_dir(), "themes")
     return d
 
 

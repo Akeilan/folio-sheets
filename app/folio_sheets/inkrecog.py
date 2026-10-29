@@ -1,4 +1,4 @@
-"""Handwritten equation recognition, vendored from Folio Writer (app/folio/inkmath.py, the
+"""Handwritten equation recognition, vendored from Folio Page (formerly Folio Writer) (app/folio/inkmath.py, the
 recogniser part; its templates in inkmath/). Recognition runs locally: each symbol is matched
 against shapes from the Hershey vector fonts and learnt handwriting (inkfeatures), then fraction
 bars, radicals, superscripts and subscripts are worked out from where the symbols sit."""

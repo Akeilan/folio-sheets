@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-21 sparklines — Insert › Sparklines, drawing in
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-21 sparklines — Insert › Sparklines, drawing in
 # cells, the Sparkline tab (type, show points, colours, group, clear), undo, saving.
 import os
 import sys

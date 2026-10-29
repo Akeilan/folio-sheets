@@ -1,4 +1,4 @@
-/* Folio Sheets — window chrome (shared look with Folio Writer; accent gold). Light theme; dark overrides at the end. */
+/* Folio Sheet — window chrome (shared look with Folio Page; accent gold). Light theme; dark overrides at the end. */
 @define-color theme_selected_bg_color #a67c00;
 @define-color selected_bg_color #a67c00;
 @define-color accent_color #a67c00;

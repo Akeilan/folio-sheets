@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Copy, Cut, Paste and Paste Special, within a
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Copy, Cut, Paste and Paste Special, within a
 # workbook, between windows, and from other programs (text).
 import os
 import sys

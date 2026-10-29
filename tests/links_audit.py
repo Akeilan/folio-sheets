@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): hyperlinks through the window — Insert and
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): hyperlinks through the window — Insert and
 # Edit Hyperlink (Ctrl+K), following with a click, =HYPERLINK(), Clear and Remove
 # Hyperlinks, paste, the pointer, and saving.
 import os

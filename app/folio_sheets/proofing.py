@@ -9,7 +9,7 @@ import locale
 import os
 import re
 
-from gi.repository import GLib, Gtk
+from gi.repository import Gtk
 
 DICT_DIRS = ["/usr/share/hunspell", "/usr/share/myspell", "/usr/share/myspell/dicts"]
 THES_DIRS = ["/usr/share/mythes", "/usr/share/myspell/dicts"]
@@ -19,7 +19,8 @@ NOT_FOUND = ("No dictionary for checking spelling was found. Install a Hunspell 
 
 
 def user_words_path():
-    return os.path.join(GLib.get_user_config_dir(), "folio-sheets", "custom.dic")
+    from . import config_dir
+    return os.path.join(config_dir(), "custom.dic")
 
 
 def dictionaries():

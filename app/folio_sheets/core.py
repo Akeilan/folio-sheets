@@ -4,7 +4,7 @@ import sys
 
 _here = os.path.dirname(os.path.abspath(__file__))
 # the copy next to the package (development tree) wins over the installed one
-for p in (os.path.dirname(_here), "/usr/lib/folio-sheets"):
+for p in (os.path.dirname(_here), "/usr/lib/folio-sheet", "/usr/lib/folio-sheets"):
     if os.path.exists(os.path.join(p, "folio_sheets_core.so")):
         if p not in sys.path:
             sys.path.insert(0, p)

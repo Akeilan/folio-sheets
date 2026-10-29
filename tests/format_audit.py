@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): every formatting command through the real
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): every formatting command through the real
 # window handlers, checked against the engine, the file and undo/redo.
 import os
 import sys

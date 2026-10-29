@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): inserting, moving, sizing, changing,
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): inserting, moving, sizing, changing,
 # deleting and saving charts, through the ribbon commands, the dialogs and the mouse.
 import os
 import sys

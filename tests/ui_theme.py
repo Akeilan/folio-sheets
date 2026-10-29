@@ -1,4 +1,4 @@
-# X2-01: run inside Folio Sheets (FOLIO_TEST_SCRIPT) started under GTK_THEME=Adwaita:dark or
+# X2-01: run inside Folio Sheet (FOLIO_TEST_SCRIPT) started under GTK_THEME=Adwaita:dark or
 # FolioTestColour (theme_run.sh); every ribbon tab, the File view, the task panes and every dialog
 # a command opens keep their own colours, and all text stays readable.
 import os

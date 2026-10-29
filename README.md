@@ -1,4 +1,4 @@
-# Folio Sheets — source
+# Folio Sheet — source (called Folio Sheets before 0.19)
 
 | Part | What it is |
 |---|---|

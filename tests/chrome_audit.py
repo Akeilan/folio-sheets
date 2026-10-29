@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): the window chrome against the Folio Suite
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): the window chrome against the Folio Studio
 # Ribbon Spec — title bar, tab row and ribbon heights, the Quick Access menu, KeyTips.
 import os
 import sys

@@ -1,6 +1,7 @@
 """Find and Replace (Ctrl+F / Ctrl+H) and Go To Special."""
 from gi.repository import Gtk
 
+from . import APP_NAME
 from .core import MAX_COLS, MAX_ROWS, a1
 
 
@@ -159,7 +160,7 @@ class FindReplace(Gtk.Dialog):
 
     def _not_found(self):
         self.status.set_text("")
-        self.win.dialogs.message("Folio Sheets cannot find the data you're searching for.", "Find and Replace")
+        self.win.dialogs.message("%s cannot find the data you're searching for." % APP_NAME, "Find and Replace")
 
     # ---- actions
     def find_next(self, back=False):

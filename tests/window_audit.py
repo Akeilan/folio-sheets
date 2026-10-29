@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): View > Window — New Window on the same
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): View > Window — New Window on the same
 # workbook, Arrange All, View Side by Side with Synchronous Scrolling, Hide and Unhide.
 import os
 import sys

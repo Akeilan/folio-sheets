@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): the Backlog 3 commands (S3-01 to S3-13).
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): the Backlog 3 commands (S3-01 to S3-13).
 # Formulas tab's function menus, Advanced Filter, Consolidate, the Review tools, Custom Views,
 import os
 import sys

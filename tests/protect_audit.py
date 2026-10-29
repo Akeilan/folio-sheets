@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Protect Sheet and Protect Workbook — the
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Protect Sheet and Protect Workbook — the
 # dialogs and passwords, typing and formatting on locked and unlocked cells, hidden
 # formulas, the permissions, saving, and a walk over every command that must leave a
 # protected sheet's locked cells as they were.

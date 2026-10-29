@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Insert/Delete rows, columns and cells through
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Insert/Delete rows, columns and cells through
 # the window commands, checked against the engine, undo/redo and a saved file.
 import os
 import sys

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Folio Sheet launcher (folio-sheets, the name before 0.19, points here)
+export FOLIO_SHEET_SHARE=/usr/share/folio-sheet
+PYTHONPATH=/usr/lib/folio-sheet${PYTHONPATH:+:$PYTHONPATH}
+export PYTHONPATH
+exec "${FOLIO_PYTHON:-/usr/bin/python3}" -m folio_sheets "$@"

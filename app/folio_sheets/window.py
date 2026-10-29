@@ -47,7 +47,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.set_default_size(geo.get("w", 1280), geo.get("h", 820))
         if geo.get("max", True):
             self.maximize()
-        self.set_icon_name("folio-sheets")
+        self.set_icon_name("folio-sheet")
         self.dialogs = Dialogs(self)
         self.assist = FormulaAssist(self)
         self.show_formulas = set()      # sheets showing formulas
@@ -323,7 +323,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if shutil.which("soffice") is None:
             raise RuntimeError("opening %s files needs the optional converter. Install it with: "
                                "sudo apt install libreoffice-calc-nogui" % os.path.splitext(path)[1].lower())
-        out = tempfile.mkdtemp(prefix="folio-sheets-")
+        out = tempfile.mkdtemp(prefix="folio-sheet-")
         cmd = ["soffice", "--headless", "--norestore", "--convert-to", "xlsx:Calc MS Excel 2007 XML",
                "--outdir", out, path]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
@@ -1195,7 +1195,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def act_help(self):
         p = None
-        for d in ("/usr/share/folio-sheets", os.path.join(os.path.dirname(__file__), "..", "..", "share")):
+        for d in ("/usr/share/folio-sheet", "/usr/share/folio-sheets", os.path.join(os.path.dirname(__file__), "..", "..", "share")):
             q = os.path.join(d, "SHORTCUTS.txt")
             if os.path.exists(q):
                 p = q

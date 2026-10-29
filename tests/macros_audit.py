@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-24 macro-enabled workbooks. The macros stay in
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-24 macro-enabled workbooks. The macros stay in
 # the file and are never run: the SECURITY WARNING bar, the Macro dialog (Alt+F8), saving as .xlsm
 # keeps them, saving as .xlsx asks first and leaves them out, Save As offers the macro types.
 import os

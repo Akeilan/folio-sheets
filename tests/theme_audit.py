@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): S-08 — light or dark as the desktop is set.
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): S-08 — light or dark as the desktop is set.
 # Excel-like dark mode: ribbon, headers, formula bar, sheet tabs and panes go dark; cells keep
 # their own colours. Switching happens while running.
 import os
