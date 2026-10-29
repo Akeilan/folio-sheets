@@ -181,7 +181,7 @@ LABELS = {
     "reset-window": "Reset Window Position", "switch-windows": "Switch Windows", "macros": "Macros", "record-macro": "Record Macro", "relative-refs": "Use Relative References",
     "visual-basic": "Visual Basic",
     "cell-checkbox": "Insert Checkbox", "form-control": "Insert Form Control", "activex-controls": "ActiveX Controls",
-    "design-mode": "Design Mode", "data-analysis": "Data Analysis", "control-properties": "Format Control",
+    "design-mode": "Design Mode", "data-analysis": "Data Analysis", "chart-map": "Map Charts", "map-options": "Format Map", "control-properties": "Format Control",
     # help
     "help": "Help",
     # status bar / misc

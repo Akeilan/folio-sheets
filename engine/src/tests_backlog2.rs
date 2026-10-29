@@ -74,13 +74,14 @@ fn chartex_round_trip() {
             b.set_input(0, r as u32, c as u32, v).unwrap();
         }
     }
-    for kind in crate::chartex::KINDS {
+    let kinds7: Vec<&str> = crate::chartex::KINDS.iter().copied().filter(|k| *k != "regionmap").collect();
+    for &kind in &kinds7 {
         let i = b.insert_chartex(0, Rect::new(0, 0, 3, 1), kind, 200.0, 10.0).unwrap();
         assert_eq!(b.chartex(0, i).unwrap().kind, kind);
     }
     let r = round_trip(&b);
     let kinds: Vec<String> = r.sheets[0].objects.iter().filter_map(|o| o.chartex.as_ref().map(|c| c.kind.clone())).collect();
-    assert_eq!(kinds, crate::chartex::KINDS.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    assert_eq!(kinds, kinds7.iter().map(|s| s.to_string()).collect::<Vec<_>>());
     // read back unchanged: written as read
     let r2 = round_trip(&r);
     assert_eq!(r2.sheets[0].objects.len(), 7);
@@ -113,4 +114,51 @@ fn sheet_elements_and_counts() {
     let r = round_trip(&b);
     assert!(r.sheet_element(0, "protectedRanges").unwrap().contains("A1:B2"));
     assert!(matches!(r.value(0, 1, 0), Value::Num(x) if x == 1.0));
+}
+
+
+#[test]
+fn region_map_round_trip() {
+    let mut b = blank();
+    for (r, row) in [["Country", "Sales"], ["France", "10"], ["Germany", "20"], ["Spain", "5"], ["Atlantis", "3"]].iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            b.set_input(0, r as u32, c as u32, v).unwrap();
+        }
+    }
+    let i = b.insert_chartex(0, Rect::new(0, 0, 4, 1), "regionmap", 200.0, 10.0).unwrap();
+    let cx = b.chartex(0, i).unwrap();
+    assert_eq!(cx.kind, "regionmap");
+    let plan = b.map_plan(&cx);
+    assert!(!plan.states);
+    assert_eq!(plan.found.len(), 3);
+    assert_eq!(plan.unknown, vec!["Atlantis".to_string()]);
+    let mut objs = b.sheets[0].objects.clone();
+    let mut m = (*cx).clone();
+    m.map.projection = "robinson".into();
+    m.map.labels = "showAll".into();
+    m.map.colors = Some((0xFFFFFF, Some(0xFFFF00), 0xC00000));
+    objs[i].chartex = Some(std::rc::Rc::new(m));
+    b.sheets[0].objects = objs;
+    let r = round_trip(&b);
+    let back = r.sheets[0].objects.iter().find_map(|o| o.chartex.clone()).unwrap();
+    assert_eq!(back.kind, "regionmap");
+    assert_eq!(back.map.projection, "robinson");
+    assert_eq!(back.map.labels, "showAll");
+    assert_eq!(back.map.colors, Some((0xFFFFFF, Some(0xFFFF00), 0xC00000)));
+    // states, and a map of categories
+    let mut b = blank();
+    for (r, row) in [["State", "Party"], ["California", "A"], ["Texas", "B"], ["New York", "A"]].iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            b.set_input(0, r as u32, c as u32, v).unwrap();
+        }
+    }
+    let i = b.insert_chartex(0, Rect::new(0, 0, 3, 1), "regionmap", 200.0, 10.0).unwrap();
+    let cx = b.chartex(0, i).unwrap();
+    assert!(cx.color_str.is_some());
+    let plan = b.map_plan(&cx);
+    assert!(plan.states && plan.found.len() == 3);
+    assert!(matches!(plan.projection, crate::geo::Projection::Albers(..)));
+    let r = round_trip(&b);
+    let back = r.sheets[0].objects.iter().find_map(|o| o.chartex.clone()).unwrap();
+    assert!(back.color_str.is_some());
 }

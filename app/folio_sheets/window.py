@@ -2541,7 +2541,12 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.update_title()
 
     def act_chart_format(self):
-        from . import chart_ui
+        from . import chart_ui, chartex_ui
+        g = self.grid
+        if len(g.sel_objects) == 1 and self.book is not None:
+            info = self.book.chartex_info(g.sheet, g.sel_objects[0])
+            if info and info["kind"] == "regionmap":
+                return chartex_ui.map_options(self, g.sel_objects[0])
         i = self._chart_index()
         if i is not None:
             chart_ui.format_chart(self, i)
@@ -2675,6 +2680,17 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def act_chart_statistic(self):
         from . import chartex_ui
         return chartex_ui.more(self, "statistic")
+
+    def act_chart_map(self):
+        from . import chartex_ui
+        return chartex_ui.more(self, "map")
+
+    def act_map_options(self):
+        from . import chartex_ui
+        g = self.grid
+        if len(g.sel_objects) == 1 and (self.book.chartex_info(g.sheet, g.sel_objects[0]) or {}).get("kind") == "regionmap":
+            return chartex_ui.map_options(self, g.sel_objects[0])
+        self.status.extra.set_text("Select a map chart first.")
 
     def act_chart_waterfall(self):
         from . import chartex_ui

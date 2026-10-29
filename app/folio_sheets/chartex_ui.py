@@ -1,14 +1,14 @@
-"""Waterfall, Funnel, Histogram, Pareto, Box and Whisker, Treemap and Sunburst charts:
-inserting them, changing their kind, data and title."""
+"""Waterfall, Funnel, Histogram, Pareto, Box and Whisker, Treemap, Sunburst and Filled Map
+charts: inserting them, changing their kind, data and title, and a map's options."""
 from gi.repository import Gtk
 
 from .core import parse_ref, range_a1
 
 KINDS = [("Waterfall", "waterfall"), ("Funnel", "funnel"), ("Histogram", "histogram"), ("Pareto", "pareto"),
-         ("Box and Whisker", "boxwhisker"), ("Treemap", "treemap"), ("Sunburst", "sunburst")]
+         ("Box and Whisker", "boxwhisker"), ("Treemap", "treemap"), ("Sunburst", "sunburst"), ("Filled Map", "regionmap")]
 LABEL = dict((k, lab) for lab, k in KINDS)
 GROUPS = {"hierarchy": ["treemap", "sunburst"], "statistic": ["histogram", "pareto", "boxwhisker"],
-          "waterfall": ["waterfall", "funnel"]}
+          "waterfall": ["waterfall", "funnel"], "map": ["regionmap"]}
 
 
 def _range(win):
@@ -154,3 +154,99 @@ def edit_title(win, i):
     g.refresh()
     win.update_title()
     return True
+
+
+# ---------------------------------------------------------------- Filled Map options (S3-13)
+PROJECTIONS = [("automatic", "Automatic"), ("mercator", "Mercator"), ("miller", "Miller"), ("robinson", "Robinson"), ("albers", "Albers")]
+AREAS = [("automatic", "Automatic"), ("dataOnly", "Only regions with data"), ("world", "World")]
+LABELS = [("none", "None"), ("bestFitOnly", "Best Fit Only"), ("showAll", "Show All")]
+
+
+def _rgba(c):
+    from gi.repository import Gdk
+    v = Gdk.RGBA()
+    v.parse("#%06X" % c)
+    return v
+
+
+def _hex(btn):
+    c = btn.get_rgba()
+    return (int(round(c.red * 255)) << 16) | (int(round(c.green * 255)) << 8) | int(round(c.blue * 255))
+
+
+class MapOptions:
+    """Format Data Series > Series Options for a Filled Map: projection, area, labels, colours."""
+
+    def __init__(self, win, i):
+        self.win, self.i = win, i
+        info = win.book.chartex_info(win.grid.sheet, i)
+        m = info["map"]
+        d = self.d = Gtk.Dialog(title="Format Data Series", transient_for=win, modal=True)
+        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        d.add_button("OK", Gtk.ResponseType.OK)
+        grid = Gtk.Grid(column_spacing=8, row_spacing=6, border_width=12)
+        d.get_content_area().pack_start(grid, True, True, 0)
+
+        def combo(row, label, items, cur):
+            grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
+            cb = Gtk.ComboBoxText()
+            for k, lab in items:
+                cb.append(k, lab)
+            cb.set_active_id(cur)
+            grid.attach(cb, 1, row, 2, 1)
+            return cb
+        self.proj = combo(0, "Map projection:", PROJECTIONS, m["projection"])
+        self.area = combo(1, "Map area:", AREAS, m["area"])
+        self.labels = combo(2, "Map labels:", LABELS, m["labels"])
+        grid.attach(Gtk.Separator(), 0, 3, 3, 1)
+        grid.attach(Gtk.Label(label="Series Color", xalign=0), 0, 4, 3, 1)
+        cols = m["colors"]
+        accent = win.book.theme_colors()[4]
+        light = tuple(int(((accent >> s) & 255) * 0.18 + 255 * 0.82) for s in (16, 8, 0))
+        dark = tuple(int(((accent >> s) & 255) * 0.7) for s in (16, 8, 0))
+        lo = cols[0] if cols else (light[0] << 16 | light[1] << 8 | light[2])
+        hi = cols[2] if cols else (dark[0] << 16 | dark[1] << 8 | dark[2])
+        mid = cols[1] if cols and cols[1] is not None else 0xFFEB84
+        self.kind = combo(5, "Colors:", [("auto", "Automatic"), ("two", "Sequential (2-color)"), ("three", "Diverging (3-color)")],
+                          "auto" if not cols else ("three" if cols[1] is not None else "two"))
+        self.btn = {}
+        for row, (key, label, c) in enumerate((("min", "Minimum:", lo), ("mid", "Midpoint:", mid), ("max", "Maximum:", hi)), start=6):
+            grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
+            b = Gtk.ColorButton.new_with_rgba(_rgba(c))
+            grid.attach(b, 1, row, 1, 1)
+            self.btn[key] = b
+        self.kind.connect("changed", lambda *_: self._sync())
+        if m["unknown"]:
+            note = Gtk.Label(label="Not found on the map: " + ", ".join(m["unknown"][:8]) + (" ..." if len(m["unknown"]) > 8 else ""), xalign=0)
+            note.set_line_wrap(True)
+            note.get_style_context().add_class("dim-label")
+            grid.attach(note, 0, 9, 3, 1)
+        if m["categories"]:
+            self.kind.set_sensitive(False)
+        d.show_all()
+        self._sync()
+
+    def _sync(self):
+        k = self.kind.get_active_id()
+        for key in ("min", "max"):
+            self.btn[key].set_sensitive(k != "auto")
+        self.btn["mid"].set_sensitive(k == "three")
+
+    def apply(self):
+        k = self.kind.get_active_id()
+        colors = "auto" if k == "auto" else (_hex(self.btn["min"]), _hex(self.btn["mid"]) if k == "three" else None, _hex(self.btn["max"]))
+        self.win.book.set_map_options(self.win.grid.sheet, self.i, projection=self.proj.get_active_id(), area=self.area.get_active_id(),
+                                      labels=self.labels.get_active_id(), colors=colors)
+        self.win.grid.refresh()
+        self.win.update_title()
+
+    def run(self):
+        r = self.d.run()
+        if r == Gtk.ResponseType.OK:
+            self.apply()
+        self.d.destroy()
+        return r == Gtk.ResponseType.OK
+
+
+def map_options(win, i):
+    return MapOptions(win, i).run()

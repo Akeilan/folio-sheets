@@ -734,6 +734,69 @@ DIALOG.append(lambda d: Gtk.ResponseType.CANCEL)
 win.run("ink-to-math")
 check("Draw > Ink to Math opens it too (cancel inserts nothing)", len(b.objects(0)) == n_obj)
 
+# ---------------------------------------------------------------- S3-13 Map charts
+from folio_sheets import chartex_ui  # noqa: E402
+win.run("insert-sheet")
+pump()
+SM = g.sheet
+for r, row in enumerate([["Country", "Sales"], ["France", "10"], ["Germany", "25"], ["Spain", "5"], ["Italy", "15"], ["Narnia", "3"]]):
+    for c, v in enumerate(row):
+        b.set_input(SM, r, c, v)
+g.select_range((0, 0, 5, 1))
+pump()
+mi = win.run("chartex:regionmap")
+pump(0.2)
+mi = g.sel_objects[0] if g.sel_objects else None
+info = b.chartex_info(SM, mi) if mi is not None else None
+check("Insert > Maps > Filled Map: a map chart", info and info["kind"] == "regionmap", info)
+check("its places found here (no online service), the unknown one listed", info and info["map"]["found"] == 4 and info["map"]["unknown"] == ["Narnia"], info and info["map"])
+
+
+def _mapfmt(d):
+    return Gtk.ResponseType.OK
+
+
+opt = chartex_ui.MapOptions(win, mi)
+opt.proj.set_active_id("robinson")
+opt.area.set_active_id("world")
+opt.labels.set_active_id("showAll")
+opt.kind.set_active_id("three")
+opt.apply()
+opt.d.destroy()
+m = b.chartex_info(SM, mi)["map"]
+check("Format Data Series: projection, area, labels, 3-colour scale", m["projection"] == "robinson" and m["area"] == "world" and m["labels"] == "showAll"
+      and m["colors"] and m["colors"][1] is not None, m)
+win.run("undo")
+check("undo", b.chartex_info(SM, mi)["map"]["projection"] == "automatic")
+win.run("redo")
+for r, row in enumerate([["State", "Party"], ["California", "Blue"], ["Texas", "Red"], ["Ohio", "Red"], ["Oregon", "Blue"]]):
+    for c, v in enumerate(row):
+        b.set_input(SM, 10 + r, c, v)
+g.sel_objects = []
+g.select_range((10, 0, 14, 1))
+win.run("chartex:regionmap")
+pump(0.2)
+m2 = g.sel_objects[0]
+inf2 = b.chartex_info(SM, m2)["map"]
+check("a map of US states by category", inf2["states"] and inf2["categories"] and inf2["found"] == 4, inf2)
+import cairo as _c2  # noqa: E402
+surf = _c2.ImageSurface(_c2.FORMAT_RGB24, 900, 700)
+crx = _c2.Context(surf)
+b.render(SM, crx, g.params({"width": 900.0, "height": 700.0}))
+surf.write_to_png(os.path.join(TMP, "maps.png"))
+pmap = os.path.join(TMP, "maps.xlsx")
+b.save(pmap)
+bm = Book.open(pmap)
+smi = [i for i in range(bm.sheet_count) if bm.sheet_info(i)["name"] == b.sheet_info(SM)["name"]][0]
+kinds = [bm.chartex_info(smi, k)["kind"] for k in range(len(bm.objects(smi))) if bm.chartex_info(smi, k)]
+check("saved and reopened: both maps, with their options", kinds == ["regionmap", "regionmap"] and bm.chartex_info(smi, 0)["map"]["projection"] == "robinson", kinds)
+z = zipfile.ZipFile(pmap)
+cxp = [z.read(n).decode() for n in z.namelist() if "chartEx" in n and n.endswith(".xml") and "rels" not in n]
+check("saved as the desktop spreadsheet's regionMap", any('layoutId="regionMap"' in x and "geography" in x for x in cxp))
+check("Maps command wired", hasattr(win, "act_chart_map"))
+g.sel_objects = []
+g.set_sheet(0)
+
 # ---------------------------------------------------------------- end
 w2.book.mark_saved()
 for p in tuple(globals().get("EXTRA", ())):

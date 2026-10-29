@@ -16,7 +16,20 @@ pub const URI_CHARTEX: &str = "http://schemas.microsoft.com/office/drawing/2014/
 const TEXT: u32 = 0x595959;
 const LINE: u32 = 0xD9D9D9;
 
-pub const KINDS: [&str; 7] = ["waterfall", "funnel", "histogram", "pareto", "boxwhisker", "treemap", "sunburst"];
+pub const KINDS: [&str; 8] = ["waterfall", "funnel", "histogram", "pareto", "boxwhisker", "treemap", "sunburst", "regionmap"];
+
+/// A map chart's options (Format Data Series > Series Options).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct MapOpts {
+    /// "" (automatic), mercator, miller, robinson, albers
+    pub projection: String,
+    /// "" (automatic), dataOnly, world
+    pub area: String,
+    /// "" (best fit), showAll, none
+    pub labels: String,
+    /// sequential (min, max) or diverging (min, mid, max) colours; None: the theme's
+    pub colors: Option<(u32, Option<u32>, u32)>,
+}
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ExSeries {
@@ -35,6 +48,9 @@ pub struct ChartEx {
     pub series: Vec<ExSeries>,
     /// waterfall points that are totals
     pub subtotals: Vec<usize>,
+    /// a map chart's options, and its text values (a map of categories rather than numbers)
+    pub map: MapOpts,
+    pub color_str: Option<Src>,
     /// the part as read, written back while nothing the model shows changed
     pub orig: Option<String>,
     pub orig_model: Option<Box<ChartEx>>,
@@ -49,6 +65,7 @@ fn layout_id(kind: &str) -> &'static str {
         "boxwhisker" => "boxWhisker",
         "treemap" => "treemap",
         "sunburst" => "sunburst",
+        "regionmap" => "regionMap",
         _ => "clusteredColumn",
     }
 }
@@ -116,6 +133,7 @@ impl ChartEx {
             let mut n = Vec::new();
             for dim in d.elems() {
                 match dim.local() {
+                    "strDim" if dim.attr("type") == Some("colorStr") => cx.color_str = read_dim(dim).into_iter().next(),
                     "strDim" => s = read_dim(dim),
                     "numDim" => n = read_dim(dim),
                     _ => {}
@@ -142,6 +160,7 @@ impl ChartEx {
                     "boxWhisker" => "boxwhisker",
                     "treemap" => "treemap",
                     "sunburst" => "sunburst",
+                    "regionMap" => "regionmap",
                     _ => "histogram",
                 }.to_string();
             }
@@ -157,6 +176,31 @@ impl ChartEx {
                 }
                 if let Some(v) = n.first() {
                     cx.series.push(ExSeries { name, val: v.clone() });
+                }
+            }
+            if let Some(lp) = se.child("layoutPr") {
+                if let Some(g) = lp.child("geography") {
+                    cx.map.projection = g.attr("projectionType").unwrap_or("").to_string();
+                    cx.map.area = g.attr("viewedRegionType").unwrap_or("").to_string();
+                    if cx.map.projection == "automatic" {
+                        cx.map.projection.clear();
+                    }
+                    if cx.map.area == "automatic" {
+                        cx.map.area.clear();
+                    }
+                }
+                if let Some(l) = lp.child("regionLabelLayout") {
+                    cx.map.labels = match l.attr("val").unwrap_or("") {
+                        "bestFitOnly" => String::new(),
+                        x => x.to_string(),
+                    };
+                }
+                if let Some(vc) = lp.child("valueColors") {
+                    let c = |n: &str| vc.child(n).and_then(|e| e.elems().next()).and_then(|e| e.attr("val")).and_then(|v| u32::from_str_radix(v, 16).ok());
+                    if let (Some(lo), Some(hi)) = (c("minColor"), c("maxColor")) {
+                        let three = lp.child("valueColorPositions").and_then(|p| p.attr("count")) == Some("3");
+                        cx.map.colors = Some((lo, if three { c("midColor") } else { None }, hi));
+                    }
                 }
             }
             if let Some(st) = se.child("layoutPr").and_then(|l| l.child("subtotals")) {
@@ -234,8 +278,21 @@ impl ChartEx {
                 }
                 s.push_str("</cx:strDim>");
             }
+            if let (true, Some(cs)) = (self.kind == "regionmap", &self.color_str) {
+                s.push_str("<cx:strDim type=\"colorStr\">");
+                if let Some(f) = &cs.f {
+                    s.push_str(&format!("<cx:f>{}</cx:f>", esc(f)));
+                }
+                let pts = book.chart_values(cs);
+                s.push_str(&format!("<cx:lvl ptCount=\"{}\">", pts.len()));
+                for (i, p) in pts.iter().enumerate() {
+                    s.push_str(&format!("<cx:pt idx=\"{}\">{}</cx:pt>", i, esc(&p.text)));
+                }
+                s.push_str("</cx:lvl></cx:strDim></cx:data>");
+                continue;
+            }
             let pts = book.chart_values(&se.val);
-            s.push_str(&format!("<cx:numDim type=\"{}\">", if hier { "size" } else { "val" }));
+            s.push_str(&format!("<cx:numDim type=\"{}\">", if hier { "size" } else if self.kind == "regionmap" { "colorVal" } else { "val" }));
             if let Some(f) = &se.val.f {
                 s.push_str(&format!("<cx:f>{}</cx:f>", esc(f)));
             }
@@ -279,6 +336,22 @@ impl ChartEx {
                 "histogram" | "pareto" => s.push_str("<cx:layoutPr><cx:binning intervalClosed=\"r\"/></cx:layoutPr>"),
                 "boxwhisker" => s.push_str("<cx:layoutPr><cx:visibility meanLine=\"0\" meanMarker=\"1\" nonoutliers=\"0\" outliers=\"1\"/><cx:statistics quartileMethod=\"exclusive\"/></cx:layoutPr>"),
                 "treemap" => s.push_str("<cx:layoutPr><cx:parentLabelLayout val=\"overlapping\"/></cx:layoutPr>"),
+                "regionmap" => {
+                    s.push_str("<cx:dataLabels><cx:visibility seriesName=\"0\" categoryName=\"0\" value=\"0\"/></cx:dataLabels>");
+                    s.push_str(&format!("<cx:layoutPr><cx:regionLabelLayout val=\"{}\"/>", if self.map.labels.is_empty() { "bestFitOnly" } else { &self.map.labels }));
+                    if let Some((lo, mid, hi)) = self.map.colors {
+                        s.push_str(&format!("<cx:valueColors><cx:minColor><a:srgbClr val=\"{:06X}\"/></cx:minColor>", lo));
+                        if let Some(m) = mid {
+                            s.push_str(&format!("<cx:midColor><a:srgbClr val=\"{:06X}\"/></cx:midColor>", m));
+                        }
+                        s.push_str(&format!("<cx:maxColor><a:srgbClr val=\"{:06X}\"/></cx:maxColor></cx:valueColors>", hi));
+                        s.push_str(&format!("<cx:valueColorPositions count=\"{}\"/>", if mid.is_some() { 3 } else { 2 }));
+                    }
+                    s.push_str(&format!("<cx:geography projectionType=\"{}\" viewedRegionType=\"{}\" cultureLanguage=\"en-US\" cultureRegion=\"US\" attribution=\"\"/>",
+                        if self.map.projection.is_empty() { "automatic" } else { &self.map.projection },
+                        if self.map.area.is_empty() { "automatic" } else { &self.map.area }));
+                    s.push_str("</cx:layoutPr>");
+                }
                 _ => {}
             }
             s.push_str("</cx:series>");
@@ -288,7 +361,7 @@ impl ChartEx {
         }
         s.push_str("</cx:plotAreaRegion>");
         match self.kind.as_str() {
-            "treemap" | "sunburst" => {}
+            "treemap" | "sunburst" | "regionmap" => {}
             "funnel" => s.push_str("<cx:axis id=\"0\"><cx:catScaling gapWidth=\"0.06\"/><cx:tickLabels/></cx:axis>"),
             _ => {
                 s.push_str("<cx:axis id=\"0\"><cx:catScaling gapWidth=\"0.5\"/><cx:tickLabels/></cx:axis>");
@@ -301,6 +374,9 @@ impl ChartEx {
         s.push_str("</cx:plotArea>");
         if matches!(self.kind.as_str(), "waterfall" | "treemap" | "boxwhisker") {
             s.push_str("<cx:legend pos=\"t\" align=\"ctr\" overlay=\"0\"/>");
+        }
+        if self.kind == "regionmap" {
+            s.push_str("<cx:legend pos=\"r\" align=\"min\" overlay=\"0\"/>");
         }
         s.push_str("</cx:chart></cx:chartSpace>");
         s
@@ -320,6 +396,9 @@ impl ChartEx {
         };
         for c in self.cats.iter_mut() {
             fix(c);
+        }
+        if let Some(cs) = self.color_str.as_mut() {
+            fix(cs);
         }
         for se in self.series.iter_mut() {
             fix(&mut se.val);
@@ -514,6 +593,9 @@ impl Book {
             && !(r1..=rc.r2).any(|r| matches!(sh.value(r, c), crate::value::Value::Str(_)));
         let text_cols: Vec<u32> = (rc.c1..=rc.c2).filter(|&c| !numeric(c)).collect();
         let num_cols: Vec<u32> = (rc.c1..=rc.c2).filter(|&c| numeric(c)).collect();
+        if kind == "regionmap" {
+            return self.map_from_range(s, rc, header, r1, &text_cols, &num_cols);
+        }
         if num_cols.is_empty() {
             return Err("Select cells with numbers to chart.".into());
         }
@@ -541,7 +623,7 @@ impl Book {
             return t.clone();
         }
         match cx.kind.as_str() {
-            "treemap" | "sunburst" | "waterfall" | "funnel" | "histogram" | "pareto" | "boxwhisker" => {
+            "treemap" | "sunburst" | "waterfall" | "funnel" | "histogram" | "pareto" | "boxwhisker" | "regionmap" => {
                 cx.series.first().and_then(|s| s.name.as_ref()).map(|n| self.chart_values(n).first().map(|p| p.text.clone()).unwrap_or_default())
                     .filter(|t| !t.is_empty()).unwrap_or_else(|| "Chart Title".into())
             }
@@ -587,6 +669,7 @@ impl Book {
             (tw, th)
         };
         match cx.kind.as_str() {
+            "regionmap" => self.paint_region_map(cx, cr, l, t, r, b, z, pen),
             "treemap" => {
                 // levels root-most first
                 let lv: Vec<Vec<String>> = cx.cats.iter().rev().map(|c| self.chart_values(c).into_iter().map(|p| p.text).collect()).collect();
