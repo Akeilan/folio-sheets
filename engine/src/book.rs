@@ -103,6 +103,7 @@ pub enum Delta {
     Pieces(usize, Vec<crate::sheet::Piece>),
     Tables(usize, Vec<crate::tables::Table>),
     Notes(usize, BTreeMap<(u32, u32), crate::notes::Note>),
+    Controls(usize, Vec<crate::controls::FormControl>),
     Threads(usize, BTreeMap<(u32, u32), crate::notes::Thread>),
     Fit(usize, bool),
     /// the theme part (None: the default theme)
@@ -503,6 +504,10 @@ impl Book {
             Delta::Notes(s, n) => {
                 let old = std::mem::replace(&mut self.sheets[s].notes, n);
                 Delta::Notes(s, old)
+            }
+            Delta::Controls(s, n) => {
+                let old = std::mem::replace(&mut self.sheets[s].controls, n);
+                Delta::Controls(s, old)
             }
             Delta::Threads(s, n) => {
                 let old = std::mem::replace(&mut self.sheets[s].threads, n);

@@ -166,6 +166,8 @@ pub struct Sheet {
     pub threads: BTreeMap<(u32, u32), crate::notes::Thread>,
     /// the comment parts as read, and the notes and threads they held
     pub comments_file: Option<crate::notes::CommentsFile>,
+    /// form controls over the cells (check boxes, option buttons, lists, spinners...)
+    pub controls: Vec<crate::controls::FormControl>,
     /// Fit to pages (sheetPr/pageSetUpPr fitToPage)
     pub fit_to_page: bool,
     /// Protect Sheet: the <sheetProtection> attributes, or None. Kept out of the undo
@@ -220,6 +222,7 @@ impl Sheet {
             notes: BTreeMap::new(),
             threads: BTreeMap::new(),
             comments_file: None,
+            controls: Vec::new(),
             fit_to_page: false,
             protection: None,
             drawing: None,

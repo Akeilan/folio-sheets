@@ -165,6 +165,7 @@ impl Book {
                     self.paint_dv(s, cr, p, &rows, &cols);
                 }
                 self.paint_objects(s, cr, p, &g, &mut pen);
+                self.paint_controls(s, cr, p, &g, &mut pen);
                 cairo_restore(cr);
             }
         }
@@ -353,6 +354,217 @@ impl Book {
         cairo_restore(cr);
     }
 
+    /// A form control's rectangle on screen.
+    pub fn control_screen_rect(&self, s: usize, p: &ViewParams, g: &Geometry, c: &crate::controls::FormControl) -> (f64, f64, f64, f64) {
+        let z = p.zoom;
+        let x1 = self.screen_x(s, p, g, c.from.col) + c.from.col_off as f64 * z;
+        let y1 = self.screen_y(s, p, g, c.from.row) + c.from.row_off as f64 * z;
+        let x2 = self.screen_x(s, p, g, c.to.col) + c.to.col_off as f64 * z;
+        let y2 = self.screen_y(s, p, g, c.to.row) + c.to.row_off as f64 * z;
+        (x1, y1, (x2 - x1).max(1.0), (y2 - y1).max(1.0))
+    }
+
+    /// The form controls, as the desktop spreadsheet draws them.
+    unsafe fn paint_controls(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, pen: &mut Pen) {
+        let list = &self.sheets[s].controls;
+        if list.is_empty() {
+            return;
+        }
+        let z = p.zoom;
+        let f = FontSpec { family: self.styles.theme_fonts.1.clone(), size: 9.0, bold: false, italic: false, underline: 0, strike: false, vert: 0, color: 0 };
+        let stroke_box = |x: f64, y: f64, w: f64, h: f64, col: u32| {
+            rgb(cr, col);
+            cairo_set_line_width(cr, 1.0);
+            cairo_rectangle(cr, x.round() + 0.5, y.round() + 0.5, w.round() - 1.0, h.round() - 1.0);
+            cairo_stroke(cr);
+        };
+        let arrow = |x: f64, y: f64, w: f64, h: f64, dir: u8| {
+            // a small solid triangle in the box: 0 up, 1 down, 2 left, 3 right
+            let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+            let k = (w.min(h) * 0.22).max(2.0);
+            rgb(cr, 0x404040);
+            cairo_new_path(cr);
+            match dir {
+                0 => { cairo_move_to(cr, cx - k, cy + k / 2.0); cairo_line_to(cr, cx + k, cy + k / 2.0); cairo_line_to(cr, cx, cy - k / 2.0); }
+                1 => { cairo_move_to(cr, cx - k, cy - k / 2.0); cairo_line_to(cr, cx + k, cy - k / 2.0); cairo_line_to(cr, cx, cy + k / 2.0); }
+                2 => { cairo_move_to(cr, cx + k / 2.0, cy - k); cairo_line_to(cr, cx + k / 2.0, cy + k); cairo_line_to(cr, cx - k / 2.0, cy); }
+                _ => { cairo_move_to(cr, cx - k / 2.0, cy - k); cairo_line_to(cr, cx - k / 2.0, cy + k); cairo_line_to(cr, cx + k / 2.0, cy); }
+            }
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        };
+        for (i, c) in list.iter().enumerate() {
+            let (x, y, w, h) = self.control_screen_rect(s, p, g, c);
+            if x > p.width || y > p.height || x + w < 0.0 || y + h < 0.0 {
+                continue;
+            }
+            if p.print && (c.kind == "Button" || c.kind == "GBox" || c.kind == "Label") {
+                // Print Object is off for these by default
+            }
+            let v = self.control_value(s, i);
+            cairo_save(cr);
+            cairo_rectangle(cr, x - 1.0, y - 1.0, w + 2.0, h + 2.0);
+            cairo_clip(cr);
+            let text_at = |pen: &mut Pen, t: &str, tx: f64, ty_mid: f64, maxw: f64| {
+                let (_, th) = pen.set(t, &f, z, Some(maxw.max(1.0)));
+                rgb(cr, 0x000000);
+                pen.show(cr, tx, ty_mid - th / 2.0);
+            };
+            match c.kind.as_str() {
+                "Button" => {
+                    rgb(cr, 0xE1E1E1);
+                    rect(cr, x, y, w, h);
+                    stroke_box(x, y, w, h, 0xADADAD);
+                    let tw = pen.width(&c.text, &f, z);
+                    text_at(pen, &c.text, x + ((w - tw) / 2.0).max(2.0 * z), y + h / 2.0, w - 4.0 * z);
+                }
+                "Checkbox" | "Radio" => {
+                    let k = (13.0 * z).min(h - 2.0).max(6.0);
+                    let bx = x + 2.0 * z;
+                    let by = y + (h - k) / 2.0;
+                    rgb(cr, 0xFFFFFF);
+                    if c.kind == "Checkbox" {
+                        rect(cr, bx, by, k, k);
+                        stroke_box(bx, by, k, k, 0x333333);
+                        if v == 1 {
+                            rgb(cr, 0x000000);
+                            cairo_set_line_width(cr, (1.6 * z).max(1.2));
+                            cairo_move_to(cr, bx + k * 0.22, by + k * 0.52);
+                            cairo_line_to(cr, bx + k * 0.42, by + k * 0.72);
+                            cairo_line_to(cr, bx + k * 0.78, by + k * 0.28);
+                            cairo_stroke(cr);
+                        } else if v == 2 {
+                            rgb(cr, 0x808080);
+                            rect(cr, bx + k * 0.25, by + k * 0.25, k * 0.5, k * 0.5);
+                        }
+                    } else {
+                        cairo_new_path(cr);
+                        cairo_arc(cr, bx + k / 2.0, by + k / 2.0, k / 2.0 - 0.5, 0.0, std::f64::consts::TAU);
+                        cairo_fill_preserve(cr);
+                        rgb(cr, 0x333333);
+                        cairo_set_line_width(cr, 1.0);
+                        cairo_stroke(cr);
+                        if v == 1 {
+                            cairo_new_path(cr);
+                            cairo_arc(cr, bx + k / 2.0, by + k / 2.0, k * 0.22, 0.0, std::f64::consts::TAU);
+                            rgb(cr, 0x000000);
+                            cairo_fill(cr);
+                        }
+                    }
+                    text_at(pen, &c.text, bx + k + 4.0 * z, y + h / 2.0, w - k - 8.0 * z);
+                }
+                "Label" => {
+                    let (_, _th) = pen.set(&c.text, &f, z, Some(w.max(1.0)));
+                    rgb(cr, 0x000000);
+                    pen.show(cr, x + 1.0, y + 1.0);
+                }
+                "GBox" => {
+                    let (tw, th) = pen.set(&c.text, &f, z, None);
+                    let top = y + th / 2.0;
+                    rgb(cr, 0xA0A0A0);
+                    cairo_set_line_width(cr, 1.0);
+                    cairo_move_to(cr, x + 6.0 * z + tw + 3.0 * z, top.round() + 0.5);
+                    cairo_line_to(cr, x + w - 0.5, top.round() + 0.5);
+                    cairo_line_to(cr, x + w - 0.5, y + h - 0.5);
+                    cairo_line_to(cr, x + 0.5, y + h - 0.5);
+                    cairo_line_to(cr, x + 0.5, top.round() + 0.5);
+                    cairo_line_to(cr, x + 4.0 * z, top.round() + 0.5);
+                    cairo_stroke(cr);
+                    rgb(cr, 0x000000);
+                    pen.show(cr, x + 6.0 * z, y);
+                }
+                "Drop" => {
+                    rgb(cr, 0xFFFFFF);
+                    rect(cr, x, y, w, h);
+                    stroke_box(x, y, w, h, 0x7A7A7A);
+                    let bw = (16.0 * z).min(w / 2.0);
+                    rgb(cr, 0xF0F0F0);
+                    rect(cr, x + w - bw, y + 1.0, bw - 1.0, h - 2.0);
+                    arrow(x + w - bw, y, bw, h, 1);
+                    if v >= 1 {
+                        let items = self.control_items(s, c);
+                        if let Some(t) = items.get(v as usize - 1) {
+                            text_at(pen, t, x + 3.0 * z, y + h / 2.0, w - bw - 6.0 * z);
+                        }
+                    }
+                }
+                "List" => {
+                    rgb(cr, 0xFFFFFF);
+                    rect(cr, x, y, w, h);
+                    let items = self.control_items(s, c);
+                    let (_, lh) = pen.set("Ag", &f, z, None);
+                    let lh = lh.max(1.0);
+                    let rows = (h / lh).floor().max(1.0) as usize;
+                    let first = if v as usize > rows { v as usize - rows } else { 0 };
+                    let sbw = if items.len() > rows { 16.0 * z } else { 0.0 };
+                    for (k, t) in items.iter().enumerate().skip(first).take(rows + 1) {
+                        let ty = y + (k - first) as f64 * lh;
+                        if k as i64 + 1 == v {
+                            rgb(cr, 0x0078D7);
+                            rect(cr, x + 1.0, ty, w - sbw - 2.0, lh);
+                            let (_, _) = pen.set(t, &f, z, Some((w - sbw - 6.0 * z).max(1.0)));
+                            rgb(cr, 0xFFFFFF);
+                            pen.show(cr, x + 3.0 * z, ty);
+                        } else {
+                            let (_, _) = pen.set(t, &f, z, Some((w - sbw - 6.0 * z).max(1.0)));
+                            rgb(cr, 0x000000);
+                            pen.show(cr, x + 3.0 * z, ty);
+                        }
+                    }
+                    if sbw > 0.0 {
+                        rgb(cr, 0xF0F0F0);
+                        rect(cr, x + w - sbw, y, sbw, h);
+                        arrow(x + w - sbw, y, sbw, sbw, 0);
+                        arrow(x + w - sbw, y + h - sbw, sbw, sbw, 1);
+                    }
+                    stroke_box(x, y, w, h, 0x7A7A7A);
+                }
+                "Spin" => {
+                    rgb(cr, 0xF0F0F0);
+                    rect(cr, x, y, w, h);
+                    if c.horiz || w > h * 1.5 {
+                        stroke_box(x, y, w / 2.0, h, 0xADADAD);
+                        stroke_box(x + w / 2.0, y, w / 2.0, h, 0xADADAD);
+                        arrow(x, y, w / 2.0, h, 2);
+                        arrow(x + w / 2.0, y, w / 2.0, h, 3);
+                    } else {
+                        stroke_box(x, y, w, h / 2.0, 0xADADAD);
+                        stroke_box(x, y + h / 2.0, w, h / 2.0, 0xADADAD);
+                        arrow(x, y, w, h / 2.0, 0);
+                        arrow(x, y + h / 2.0, w, h / 2.0, 1);
+                    }
+                }
+                "Scroll" => {
+                    rgb(cr, 0xF0F0F0);
+                    rect(cr, x, y, w, h);
+                    stroke_box(x, y, w, h, 0xC8C8C8);
+                    let horiz = c.horiz || w > h;
+                    let span = (c.max - c.min).max(1) as f64;
+                    let t = ((v - c.min.min(c.max)) as f64 / span).clamp(0.0, 1.0);
+                    if horiz {
+                        let k = h.min(w / 3.0);
+                        arrow(x, y, k, h, 2);
+                        arrow(x + w - k, y, k, h, 3);
+                        let track = w - 2.0 * k;
+                        let thumb = (track * 0.15).max(8.0 * z).min(track);
+                        rgb(cr, 0xC1C1C1);
+                        rect(cr, x + k + (track - thumb) * t, y + 2.0, thumb, h - 4.0);
+                    } else {
+                        let k = w.min(h / 3.0);
+                        arrow(x, y, w, k, 0);
+                        arrow(x, y + h - k, w, k, 1);
+                        let track = h - 2.0 * k;
+                        let thumb = (track * 0.15).max(8.0 * z).min(track);
+                        rgb(cr, 0xC1C1C1);
+                        rect(cr, x + 2.0, y + k + (track - thumb) * t, w - 4.0, thumb);
+                    }
+                }
+                _ => {}
+            }
+            cairo_restore(cr);
+        }
+    }
+
     /// An object's rectangle on screen.
     pub fn obj_screen_rect(&self, s: usize, p: &ViewParams, g: &Geometry, o: &crate::drawing::Obj) -> (f64, f64, f64, f64) {
         use crate::drawing::{Anchor, EMU};
@@ -506,6 +718,8 @@ impl Book {
         }
         if o.chart.is_none() && o.raw.is_none() {
             if let Some(v) = crate::shape::ShapeView::parse(&o.body, &self.styles.theme) {
+                let tfx = crate::shape::theme_effects_cached(self.styles.theme_xml.as_deref(), &self.styles.theme);
+                let v = v.with_effects(&o.body, &tfx, &self.styles.theme);
                 self.paint_shape(cr, &v, x, y, w, h, p.zoom, pen);
                 return;
             }
@@ -573,6 +787,47 @@ impl Book {
             cairo_new_path(cr);
         }
         let union = matches!(v.geom.as_str(), "cloud" | "cloudCallout" | "ellipseCallout");
+        // effects under the shape: its shadow (softened in a few passes) and glow
+        let pxz = 96.0 / 72.0 * z;
+        if let Some((blur, dist, dir, alpha)) = v.fx.shadow {
+            let (dx, dy) = (dist * pxz * dir.to_radians().cos(), dist * pxz * dir.to_radians().sin());
+            let b = (blur * pxz).max(0.0);
+            let passes = if b > 1.0 { 4 } else { 1 };
+            cairo_save(cr);
+            cairo_translate(cr, dx, dy);
+            for k in 0..passes {
+                let grow = b * (passes - k) as f64 / passes as f64;
+                for sub in subs.iter().filter(|s| s.fill || v.fill.is_none()) {
+                    trace(sub);
+                    rgba(cr, 0x000000, alpha / passes as f64);
+                    if grow > 0.5 {
+                        cairo_set_line_width(cr, grow);
+                        cairo_set_line_join(cr, 1);
+                        cairo_fill_preserve(cr);
+                        cairo_stroke(cr);
+                    } else {
+                        cairo_fill(cr);
+                    }
+                }
+            }
+            cairo_restore(cr);
+        }
+        if let Some((rad, col, alpha)) = v.fx.glow {
+            let col = col.or(v.fill.map(|f| f.0)).or(v.line.map(|l| l.0)).unwrap_or(0x4472C4);
+            let r = rad * pxz;
+            for k in 1..=4 {
+                for sub in &subs {
+                    trace(sub);
+                    rgba(cr, col, alpha / 4.0);
+                    cairo_set_line_width(cr, 2.0 * r * k as f64 / 4.0);
+                    cairo_set_line_join(cr, 1);
+                    cairo_stroke(cr);
+                }
+            }
+        }
+        let fx_inner = v.fx.inner;
+        let fx_edge = v.fx.soft_edge;
+        let fx_bevel = v.fx.bevel;
         for sub in subs.into_iter().filter(|_| !union) {
             cairo_new_path(cr);
             let mut prev = (0.0, 0.0);
@@ -603,6 +858,46 @@ impl Book {
                     cairo_set_fill_rule(cr, 1);
                     rgba(cr, c, a);
                     cairo_fill_preserve(cr);
+                    // inner shadow, bevel light and soft edges, inside the shape
+                    if fx_inner.is_some() || fx_bevel || fx_edge.is_some() {
+                        cairo_save(cr);
+                        cairo_clip_preserve(cr);
+                        if let Some((blur, dist, dir, alpha)) = fx_inner {
+                            let (dx, dy) = (dist * pxz * dir.to_radians().cos(), dist * pxz * dir.to_radians().sin());
+                            let bw = (blur * pxz).max(2.0);
+                            for k in 1..=3 {
+                                cairo_save(cr);
+                                cairo_translate(cr, dx, dy);
+                                rgba(cr, 0x000000, alpha / 3.0);
+                                cairo_set_line_width(cr, bw * k as f64 / 1.5);
+                                cairo_stroke_preserve(cr);
+                                cairo_restore(cr);
+                            }
+                        }
+                        if let Some(r) = fx_edge {
+                            let r = (r * pxz).max(1.0);
+                            for k in 1..=3 {
+                                rgba(cr, 0xFFFFFF, 0.3);
+                                cairo_set_line_width(cr, 2.0 * r * k as f64 / 3.0);
+                                cairo_stroke_preserve(cr);
+                            }
+                        }
+                        if fx_bevel {
+                            // light from the top: a highlight fading down, a shade along the bottom
+                            cairo_new_path(cr);
+                            let bh = (h * 0.18).max(2.0);
+                            for k in 0..4 {
+                                let t = k as f64 / 4.0;
+                                rgba(cr, 0xFFFFFF, 0.12 * (1.0 - t));
+                                rect(cr, 0.0, bh * t, w, bh / 4.0);
+                                rgba(cr, 0x000000, 0.07 * (1.0 - t));
+                                rect(cr, 0.0, h - bh * t - bh / 4.0, w, bh / 4.0);
+                            }
+                        }
+                        cairo_restore(cr);
+                        // the outline goes round the shape's own path again
+                        trace(&sub);
+                    }
                 }
             }
             if let Some((c, _, dashed)) = v.line {
@@ -993,6 +1288,39 @@ impl Book {
                     cfo = Some(o);
                 }
                 if cfo.as_ref().map(|o| o.hide_value).unwrap_or(false) {
+                    continue;
+                }
+                if self.styles.xf(xf).checkbox && matches!(v, Value::Bool(_) | Value::Empty) {
+                    // a cell check box (Insert > Checkbox): the box in place of TRUE / FALSE
+                    let fs = font_of(&self.styles, xf);
+                    let k = (fs.size * 1.25 * z).min(bh - 2.0).min(bw - 2.0).max(4.0);
+                    let x0 = match self.styles.xf(xf).halign.as_str() {
+                        "left" => bx + 3.0 * z,
+                        "right" => bx + bw - k - 3.0 * z,
+                        _ => bx + (bw - k) / 2.0,
+                    };
+                    let y0 = match self.styles.xf(xf).valign.as_str() {
+                        "top" => by + 2.0 * z,
+                        "center" => by + (bh - k) / 2.0,
+                        _ => by + bh - k - 2.0 * z,
+                    };
+                    let on = matches!(v, Value::Bool(true));
+                    let col = if fs.color == 0 { 0x000000 } else { fs.color };
+                    if on {
+                        rgb(cr, col);
+                        rect(cr, x0, y0, k, k);
+                        rgb(cr, 0xFFFFFF);
+                        cairo_set_line_width(cr, (k * 0.13).max(1.2));
+                        cairo_move_to(cr, x0 + k * 0.22, y0 + k * 0.52);
+                        cairo_line_to(cr, x0 + k * 0.42, y0 + k * 0.72);
+                        cairo_line_to(cr, x0 + k * 0.78, y0 + k * 0.3);
+                        cairo_stroke(cr);
+                    } else {
+                        rgb(cr, col);
+                        cairo_set_line_width(cr, 1.0);
+                        cairo_rectangle(cr, x0.round() + 0.5, y0.round() + 0.5, k.round() - 1.0, k.round() - 1.0);
+                        cairo_stroke(cr);
+                    }
                     continue;
                 }
                 let icon_pad = if cfo.as_ref().map(|o| o.icon.is_some()).unwrap_or(false) { ((h - 4.0 * z).min(16.0 * z) + 3.0 * z).max(0.0) } else { 0.0 };

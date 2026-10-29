@@ -250,6 +250,9 @@ class GridView(Gtk.Box):
         shp = getattr(self.win, "shapes", None)
         if shp is not None:
             shp.draw(cr)
+        fc = getattr(self.win, "form_controls", None)
+        if fc is not None:
+            fc.draw(cr)
         for gut in (self.row_gutter, self.col_gutter):
             if gut.get_visible():
                 gut.queue_draw()
@@ -626,6 +629,10 @@ class GridView(Gtk.Box):
             if self.editing() and self.commit_edit() is False:
                 return True
             return ink.press(ev)
+        fc = getattr(self.win, "form_controls", None)
+        if fc is not None and not (self.editing() and self.win.formula_mode()) and fc.press(ev):
+            self.area.grab_focus()
+            return True
         h = self.hit(ev.x, ev.y)
         pointing = self.editing() and h[0] == "cell" and ev.button == 1 and self.win.formula_mode()
         if not pointing:
@@ -772,6 +779,12 @@ class GridView(Gtk.Box):
                 self.sel.add_cell(r, c)
             else:
                 self.select_cell(r, c, refresh=False)
+                if ev.button == 1 and ev.type == Gdk.EventType.BUTTON_PRESS:
+                    from . import controls_ui
+                    rect = self.book.cell_rect(self.sheet, r, c, self.params())
+                    if rect and controls_ui.click_cell(self.win, r, c, ev, rect):
+                        self.refresh()
+                        return True
                 # a plain click on a link follows it on release, unless held to select
                 if ev.button == 1 and self.win.links.target_at(r, c):
                     self._link_press = (r, c, time.monotonic())
@@ -816,6 +829,10 @@ class GridView(Gtk.Box):
         shp = getattr(self.win, "shapes", None)
         if shp is not None and shp.placing:
             return shp.motion(ev)
+        fc = getattr(self.win, "form_controls", None)
+        if fc is not None and (fc.placing or fc._drag is not None or (fc.sel is not None and self._drag is None)):
+            if fc.motion(ev):
+                return True
         ink = getattr(self.win, "ink", None)
         if ink is not None and ink.active() and self._drag is None:
             return ink.motion(ev)
@@ -951,6 +968,9 @@ class GridView(Gtk.Box):
         return True
 
     def on_release(self, w, ev):
+        fc = getattr(self.win, "form_controls", None)
+        if fc is not None and ((fc.placing and fc.start is not None) or fc._drag is not None):
+            return fc.release(ev)
         shp = getattr(self.win, "shapes", None)
         if shp is not None and shp.placing and shp.start is not None:
             return shp.release(ev)

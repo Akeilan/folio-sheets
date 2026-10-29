@@ -180,6 +180,8 @@ LABELS = {
     "side-by-side": "View Side by Side", "sync-scroll": "Synchronous Scrolling",
     "reset-window": "Reset Window Position", "switch-windows": "Switch Windows", "macros": "Macros", "record-macro": "Record Macro", "relative-refs": "Use Relative References",
     "visual-basic": "Visual Basic",
+    "cell-checkbox": "Insert Checkbox", "form-control": "Insert Form Control", "activex-controls": "ActiveX Controls",
+    "design-mode": "Design Mode", "control-properties": "Format Control",
     # help
     "help": "Help",
     # status bar / misc

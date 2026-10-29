@@ -566,7 +566,9 @@ def effects_menu(win):
     box.pack_start(_heading("This Workbook"), False, False, 0)
     lab = Gtk.Label(label=cur + "  ✓", xalign=0)
     box.pack_start(lab, False, False, 0)
-    options = [("Office", Book.default_theme_xml())]
+    from . import effect_schemes
+    base = Book.default_theme_xml()
+    options = [("Office", base)] + [(n, effect_schemes.theme_with(base, x)) for n, x in effect_schemes.schemes()]
     for name, path in custom_themes(win):
         try:
             x = Book.read_theme_file(path)
@@ -576,15 +578,9 @@ def effects_menu(win):
         options.append(("%s (%s)" % (i["effects_name"] or name, name), x))
     box.pack_start(_heading("Effects"), False, False, 4)
     for name, x in options:
-        b = _menu_button(name, lambda x=x: _apply(win, win.book.set_theme_effects, x), pop)
+        b = _menu_button(name, lambda x=x: _apply(win, win.book.set_theme_effects, x), pop, name="effects:" + name)
         box.pack_start(b, False, False, 0)
         pop.rows.append(b)
-    note = Gtk.Label(label="The other effect schemes (Subtle Solids, Glossy ...) aren't available in %s.\n"
-                           "Effects of a theme you browse for or save are kept and offered here." % APP_NAME, xalign=0)
-    note.get_style_context().add_class("dim-label")
-    note.set_line_wrap(True)
-    note.set_max_width_chars(44)
-    box.pack_start(note, False, False, 6)
     pop.add(box)
     box.show_all()
     return pop

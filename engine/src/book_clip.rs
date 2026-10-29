@@ -122,6 +122,7 @@ pub(crate) fn import_change(st: &Styles, xf: u32) -> Change {
         hidden: Some(sp.hidden),
         numfmt: Some(sp.numfmt.clone()),
         quote_prefix: Some(st.xf(xf).quote_prefix),
+        checkbox: Some(st.xf(xf).checkbox),
     }
 }
 

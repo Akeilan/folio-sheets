@@ -31,7 +31,7 @@ fn quote_sheet(name: &str) -> String {
 }
 
 impl Book {
-    fn ensure_wb_parts(&mut self) {
+    pub(crate) fn ensure_wb_parts(&mut self) {
         if self.file.wb_part.is_empty() {
             self.file.wb_part = "xl/workbook.xml".into();
         }
