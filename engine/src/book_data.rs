@@ -15,6 +15,8 @@ pub enum FilterKind {
     /// one or two conditions: (operator, value); and = both must hold
     Custom { and: bool, conds: Vec<(String, String)> },
     Top10 { top: bool, percent: bool, val: f64 },
+    /// Filter by Color: the cells whose fill (cell) or font colour matches dxf's
+    Color { cell: bool, dxf: u32 },
     /// a filter this program doesn't edit (colour, icon, dynamic, date groups): kept as XML
     Raw(String),
 }
@@ -42,7 +44,9 @@ pub enum FOwner {
 pub struct SortKey {
     /// absolute column (or row, sorting left to right)
     pub line: u32,
+    /// for colour and icon keys: true = On Top, false = On Bottom
     pub ascending: bool,
+    pub on: crate::colorsort::SortOn,
 }
 
 /// Sort order of values: numbers, text, logicals, errors; blanks last either way.
@@ -134,10 +138,27 @@ impl Book {
         let line_key = |i: usize, k: &SortKey| -> Value {
             if by_cols { sh.value(k.line, body.c1 + i as u32) } else { sh.value(body.r1 + i as u32, k.line) }
         };
+        // colour and icon keys: worked out once per line (0 = has it)
+        let mut marks: Vec<Vec<u8>> = Vec::with_capacity(keys.len());
+        for k in keys {
+            if k.on == crate::colorsort::SortOn::Values {
+                marks.push(Vec::new());
+                continue;
+            }
+            marks.push((0..n).map(|i| {
+                let (r, c) = if by_cols { (k.line, body.c1 + i as u32) } else { (body.r1 + i as u32, k.line) };
+                if self.color_key_match(s, r, c, &k.on) { 0 } else { 1 }
+            }).collect());
+        }
         let mut order: Vec<usize> = (0..n).collect();
         order.sort_by(|a, b| {
-            for k in keys {
-                let o = sort_cmp(&line_key(*a, k), &line_key(*b, k), k.ascending);
+            for (ki, k) in keys.iter().enumerate() {
+                let o = if k.on == crate::colorsort::SortOn::Values {
+                    sort_cmp(&line_key(*a, k), &line_key(*b, k), k.ascending)
+                } else {
+                    let o = marks[ki][*a].cmp(&marks[ki][*b]);
+                    if k.ascending { o } else { o.reverse() }
+                };
                 if o != Ordering::Equal {
                     return o;
                 }
@@ -446,6 +467,14 @@ impl Book {
                             _ => false,
                         }
                     }
+                    FilterKind::Color { cell, dxf } => {
+                        let d = self.dxf(*dxf);
+                        if *cell {
+                            self.shown_fill(s, r, c) == d.fill
+                        } else {
+                            self.shown_font(s, r, c).unwrap_or(0) == d.color.unwrap_or(0)
+                        }
+                    }
                     FilterKind::Raw(_) => true,
                 };
                 if !ok {
@@ -556,6 +585,11 @@ pub fn read_autofilter(xml: &str) -> Option<AutoFilter> {
                 and: matches!(cf.attr("and"), Some("1") | Some("true")),
                 conds: cf.elems_named("customFilter").map(|x| (x.attr("operator").unwrap_or("equal").to_string(), x.attr("val").unwrap_or("").to_string())).collect(),
             }
+        } else if let Some(t) = fc.child("colorFilter").filter(|t| t.attr("dxfId").is_some()) {
+            FilterKind::Color {
+                cell: !matches!(t.attr("cellColor"), Some("0") | Some("false")),
+                dxf: t.attr("dxfId").and_then(|v| v.parse().ok()).unwrap_or(0),
+            }
         } else if let Some(t) = fc.child("top10") {
             FilterKind::Top10 {
                 top: !matches!(t.attr("top"), Some("0") | Some("false")),
@@ -581,6 +615,10 @@ pub fn write_autofilter(af: &AutoFilter, pfx: &str, out: &mut String) {
     for fc in &af.cols {
         match &fc.kind {
             FilterKind::Raw(x) => out.push_str(x),
+            FilterKind::Color { cell, dxf } => {
+                out.push_str(&format!("<{}filterColumn colId=\"{}\"><{}colorFilter dxfId=\"{}\"{}/></{}filterColumn>", pfx, fc.col, pfx, dxf,
+                    if *cell { "" } else { " cellColor=\"0\"" }, pfx));
+            }
             FilterKind::Values { values, blank } => {
                 out.push_str(&format!("<{}filterColumn colId=\"{}\"><{}filters{}>", pfx, fc.col, pfx, if *blank { " blank=\"1\"" } else { "" }));
                 for v in values {

@@ -61,6 +61,40 @@ def sort_quick(win, ascending):
         g.refresh()
 
 
+SORT_ON = ["Cell Values", "Cell Color", "Font Color", "Conditional Formatting Icon"]
+_KIND = {1: "cell", 2: "font", 3: "icon"}
+
+
+def color_chip(rgb, label=None, w=40, h=14):
+    """A small coloured bar (None: no fill / automatic, drawn as a white box with a frame)."""
+    area = Gtk.DrawingArea()
+    area.set_size_request(w, h)
+
+    def draw(_w, cr):
+        if rgb is None:
+            cr.set_source_rgb(1, 1, 1)
+        else:
+            cr.set_source_rgb(((rgb >> 16) & 255) / 255.0, ((rgb >> 8) & 255) / 255.0, (rgb & 255) / 255.0)
+        cr.rectangle(0.5, 0.5, w - 1, h - 1)
+        cr.fill_preserve()
+        cr.set_source_rgb(0.55, 0.55, 0.55)
+        cr.set_line_width(1)
+        cr.stroke()
+    area.connect("draw", draw)
+    if label:
+        box = Gtk.Box(spacing=6)
+        box.pack_start(area, False, False, 0)
+        box.pack_start(Gtk.Label(label=label, xalign=0), False, False, 0)
+        return box
+    return area
+
+
+def color_name(rgb, kind):
+    if rgb is None:
+        return "No Fill" if kind == "cell" else "Automatic"
+    return "#%06X" % rgb
+
+
 class SortDialog(Gtk.Dialog):
     """Sort levels: column and order, with My data has headers."""
 
@@ -83,13 +117,13 @@ class SortDialog(Gtk.Dialog):
         bar.pack_end(self.header, False, False, 0)
         box.pack_start(bar, False, False, 0)
         self.grid = Gtk.Grid(row_spacing=6, column_spacing=10)
-        for i, t in enumerate(("", "Column", "Order")):
+        for i, t in enumerate(("", "Column", "Sort On", "Order")):
             self.grid.attach(Gtk.Label(label=t, xalign=0), i, 0, 1, 1)
         box.pack_start(self.grid, False, False, 0)
         self.levels = []
         self.add_btn.connect("clicked", lambda *_: self.add_level())
         self.del_btn.connect("clicked", lambda *_: self.del_level())
-        self.header.connect("toggled", lambda *_: self.refresh_names())
+        self.header.connect("toggled", lambda *_: (self.refresh_names(), [self._on_changed(lv) for lv in self.levels]))
         self.add_level(win.grid.sel.active[1])
         self.show_all()
 
@@ -106,15 +140,67 @@ class SortDialog(Gtk.Dialog):
             cb.append_text(t)
         c = col if col is not None and self.rg[1] <= col <= self.rg[3] else self.rg[1]
         cb.set_active(c - self.rg[1])
+        on = Gtk.ComboBoxText()
+        for t in SORT_ON:
+            on.append_text(t)
+        on.set_active(0)
         order = Gtk.ComboBoxText()
         for t in ("A to Z / Smallest to Largest", "Z to A / Largest to Smallest"):
             order.append_text(t)
         order.set_active(0)
+        # colour keys: which colour (or icon), on top or at the bottom
+        pick = Gtk.ComboBox()
+        pick.store = Gtk.ListStore(str, object)
+        pick.set_model(pick.store)
+        rend = Gtk.CellRendererPixbuf()
+        pick.pack_start(rend, False)
+        pick.set_cell_data_func(rend, self._chip_cell)
+        txt = Gtk.CellRendererText()
+        pick.pack_start(txt, True)
+        pick.add_attribute(txt, "text", 0)
+        where = Gtk.ComboBoxText()
+        for t in ("On Top", "On Bottom"):
+            where.append_text(t)
+        where.set_active(0)
+        obox = Gtk.Box(spacing=6)
+        obox.pack_start(order, False, False, 0)
+        obox.pack_start(pick, False, False, 0)
+        obox.pack_start(where, False, False, 0)
         self.grid.attach(lab, 0, n + 1, 1, 1)
         self.grid.attach(cb, 1, n + 1, 1, 1)
-        self.grid.attach(order, 2, n + 1, 1, 1)
-        self.levels.append((lab, cb, order))
+        self.grid.attach(on, 2, n + 1, 1, 1)
+        self.grid.attach(obox, 3, n + 1, 1, 1)
+        lvl = (lab, cb, order, on, pick, where, obox)
+        self.levels.append(lvl)
         self.grid.show_all()
+        on.connect("changed", lambda *_: self._on_changed(lvl))
+        cb.connect("changed", lambda *_: self._on_changed(lvl))
+        self._on_changed(lvl)
+
+    def _chip_cell(self, layout, cell, model, it, data=None):
+        from gi.repository import GdkPixbuf
+        v = model[it][1]
+        rgb = v[0] if isinstance(v, tuple) else None
+        pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 28, 12)
+        pb.fill(((rgb if rgb is not None else 0xFFFFFF) << 8) | 0xFF)
+        cell.set_property("pixbuf", pb)
+
+    def _on_changed(self, lvl):
+        _lab, cb, order, on, pick, where, _box = lvl
+        k = on.get_active()
+        order.set_visible(k == 0)
+        pick.set_visible(k > 0)
+        where.set_visible(k > 0)
+        if k > 0:
+            col = self.rg[1] + max(0, cb.get_active())
+            r1 = self.rg[0] + (1 if self.header.get_active() else 0)
+            items = self.win.book.colors_in(self.win.grid.sheet, (r1, col, self.rg[2], col), _KIND[k])
+            cur = pick.get_active()
+            pick.store.clear()
+            for it in items:
+                label = ("%s %d" % (it[1], it[2] + 1)) if k == 3 else color_name(it[0], _KIND[k])
+                pick.store.append([label, it])
+            pick.set_active(min(max(cur, 0), len(items) - 1) if items else -1)
 
     def del_level(self):
         if len(self.levels) <= 1:
@@ -124,7 +210,8 @@ class SortDialog(Gtk.Dialog):
 
     def refresh_names(self):
         names = self.names()
-        for _, cb, _ in self.levels:
+        for lvl in self.levels:
+            cb = lvl[1]
             i = cb.get_active()
             cb.remove_all()
             for t in names:
@@ -132,7 +219,33 @@ class SortDialog(Gtk.Dialog):
             cb.set_active(i)
 
     def keys(self):
-        return [(self.rg[1] + cb.get_active(), order.get_active() == 0) for _, cb, order in self.levels]
+        out = []
+        for _lab, cb, order, on, pick, where, _box in self.levels:
+            line = self.rg[1] + cb.get_active()
+            k = on.get_active()
+            if k <= 0:
+                out.append((line, order.get_active() == 0))
+                continue
+            it = pick.get_active_iter()
+            if it is None:
+                continue
+            rgb, iset, idx = pick.store[it][1]
+            out.append((line, where.get_active() == 0, _KIND[k], rgb, iset, idx))
+        return out
+
+    def set_level(self, i, col=None, on=None, color=None, top=True, ascending=True):
+        """Set level i (tests): column, Sort On index, colour (matched among the column's)."""
+        lvl = self.levels[i]
+        if col is not None:
+            lvl[1].set_active(col - self.rg[1])
+        if on is not None:
+            lvl[3].set_active(on)
+        lvl[2].set_active(0 if ascending else 1)
+        lvl[5].set_active(0 if top else 1)
+        if color is not None:
+            for j, row in enumerate(lvl[4].store):
+                if row[1][0] == color:
+                    lvl[4].set_active(j)
 
 
 def sort_custom(win):
@@ -251,8 +364,17 @@ class FilterMenu(Gtk.Popover):
             return bt
         self.sort_asc = item("Sort A to Z", lambda: self.sort(True))
         self.sort_desc = item("Sort Z to A", lambda: self.sort(False))
+        self.sort_color_btn = item("Sort by Color", lambda: self._toggle(self.sort_colors))
+        self.sort_colors = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.sort_colors.set_no_show_all(True)
+        box.pack_start(self.sort_colors, False, False, 0)
         box.pack_start(Gtk.Separator(), False, False, 4)
         self.clear_btn = item('Clear Filter From "%s"' % name, self.clear, cur is not None)
+        self.filter_color_btn = item("Filter by Color", lambda: self._toggle(self.filter_colors))
+        self.filter_colors = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.filter_colors.set_no_show_all(True)
+        box.pack_start(self.filter_colors, False, False, 0)
+        self._fill_color_lists()
         self.custom_btn = item("Text and Number Filters...", self.custom)
         self.search = Gtk.SearchEntry()
         self.search.set_placeholder_text("Search")
@@ -292,6 +414,49 @@ class FilterMenu(Gtk.Popover):
         bb.pack_end(ok, False, False, 0)
         box.pack_start(bb, False, False, 4)
         box.show_all()
+
+    def _toggle(self, w):
+        if w.get_visible():
+            w.hide()
+        else:
+            w.show()
+            for c in w.get_children():
+                c.show_all()
+
+    def column_colors(self, kind):
+        b, s = self.win.book, self.win.grid.sheet
+        return b.colors_in(s, (self.ref[0] + 1, self.col, self.ref[2], self.col), kind)
+
+    def _fill_color_lists(self):
+        for target, act in ((self.sort_colors, self.sort_by_color), (self.filter_colors, self.filter_by_color)):
+            for kind, title in (("cell", "by Cell Color"), ("font", "by Font Color")):
+                items = self.column_colors(kind)
+                if len(items) < 2 and act == self.sort_by_color or not items:
+                    continue
+                target.pack_start(Gtk.Label(label=("Sort " if act == self.sort_by_color else "Filter ") + title, xalign=0), False, False, 0)
+                for rgb, _set, _k in items:
+                    bt = Gtk.Button()
+                    bt.set_relief(Gtk.ReliefStyle.NONE)
+                    bt.add(color_chip(rgb, color_name(rgb, kind)))
+                    bt.set_tooltip_text(color_name(rgb, kind))
+                    bt.connect("clicked", lambda _b, k=kind, c=rgb, a=act: a(k, c))
+                    target.pack_start(bt, False, False, 0)
+            if not target.get_children():
+                target.pack_start(Gtk.Label(label="No colours in this column", xalign=0), False, False, 0)
+
+    def sort_by_color(self, kind, rgb):
+        self.popdown()
+        b, s = self.win.book, self.win.grid.sheet
+        _run(self.win, "Sort", lambda: b.sort_range(s, self.ref, [(self.col, True, kind, rgb, "", 0)], True))
+
+    def filter_by_color(self, kind, rgb):
+        self.popdown()
+        b, s = self.win.book, self.win.grid.sheet
+        from .protect_ui import protected, allows, refuse
+        if protected(self.win) and not allows(self.win, "autoFilter"):
+            refuse(self.win)
+            return
+        _run(self.win, "Filter", lambda: b.filter_column(s, self.off, {"color": (kind == "cell", rgb)}, self.at))
 
     def _visible(self, model, it, data=None):
         q = self.search.get_text().strip().lower()

@@ -112,7 +112,7 @@ impl Book {
             (t[..e].parse::<usize>().ok()?, &t[e + 1..])
         };
         let (sheet, addr) = match rest.rfind('!') {
-            Some(i) => (rest[..i].trim_end_matches('\'').replace("''", "'"), &rest[i + 1..]),
+            Some(i) => (rest[..i].trim_end_matches('\'').trim_start_matches('\'').replace("''", "'"), &rest[i + 1..]),
             None => return None,
         };
         let books = self.ext_cache();

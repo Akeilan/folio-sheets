@@ -3235,47 +3235,111 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         pop.show_all()
         pop.popup()
 
-    def act_move_copy_sheet(self):
+    def other_books(self):
+        """The other open workbooks (one window each), for Move or Copy and Paste Link."""
+        out, seen = [], {id(self.book)}
+        for w in getattr(self.app, "windows", []):
+            if id(w.book) not in seen:
+                seen.add(id(w.book))
+                out.append(w)
+        return out
+
+    def link_target(self):
+        """How another workbook's links name this one: its file, or its name until it's saved."""
+        return self.path or self.doc_name()
+
+    def act_move_copy_sheet(self, to_book=None, before=None, copy=None):
+        """Move or Copy: within this workbook, to another open workbook or to a new one.
+        Tests pass to_book (a window, or "new"), before and copy to skip the dialog."""
         g = self.grid
-        n = self.book.sheet_count
-        d = Gtk.Dialog(title="Move or Copy", transient_for=self, modal=True)
-        d.get_style_context().add_class("folio-dialog")
-        d.add_button("OK", Gtk.ResponseType.OK)
-        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        box = d.get_content_area()
-        box.set_border_width(10)
-        box.set_spacing(6)
-        box.pack_start(Gtk.Label(label="Move selected sheets\nTo book:  %s" % self.doc_name(), xalign=0),
-                       False, False, 0)
-        box.pack_start(Gtk.Label(label="Before sheet:", xalign=0), False, False, 0)
-        store = Gtk.ListStore(int, str)
-        for k in range(n):
-            store.append([k, self.book.sheet_info(k)["name"]])
-        store.append([n, "(move to end)"])
-        tv = Gtk.TreeView(model=store)
-        tv.set_headers_visible(False)
-        tv.append_column(Gtk.TreeViewColumn("", Gtk.CellRendererText(), text=1))
-        tv.get_selection().select_path(Gtk.TreePath(min(g.sheet + 1, n)))
-        sw = Gtk.ScrolledWindow()
-        sw.set_size_request(260, 160)
-        sw.add(tv)
-        box.pack_start(sw, True, True, 0)
-        copy = Gtk.CheckButton(label="Create a copy")
-        copy.set_use_underline(True)
-        box.pack_start(copy, False, False, 0)
-        tv.connect("row-activated", lambda *_: d.response(Gtk.ResponseType.OK))
-        d.show_all()
-        r = d.run()
-        m, it = tv.get_selection().get_selected()
-        before = m[it][0] if it is not None else None
-        want_copy = copy.get_active()
-        d.destroy()
-        if r != Gtk.ResponseType.OK or before is None:
+        if before is None:
+            d = Gtk.Dialog(title="Move or Copy", transient_for=self, modal=True)
+            d.get_style_context().add_class("folio-dialog")
+            d.add_button("OK", Gtk.ResponseType.OK)
+            d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            box = d.get_content_area()
+            box.set_border_width(10)
+            box.set_spacing(6)
+            box.pack_start(Gtk.Label(label="Move selected sheets", xalign=0), False, False, 0)
+            box.pack_start(Gtk.Label(label="To book:", xalign=0), False, False, 0)
+            books = [self] + self.other_books() + ["new"]
+            bcb = Gtk.ComboBoxText()
+            for w in books:
+                bcb.append_text("(new book)" if w == "new" else w.doc_name())
+            bcb.set_active(0)
+            box.pack_start(bcb, False, False, 0)
+            box.pack_start(Gtk.Label(label="Before sheet:", xalign=0), False, False, 0)
+            store = Gtk.ListStore(int, str)
+            tv = Gtk.TreeView(model=store)
+            tv.set_headers_visible(False)
+            tv.append_column(Gtk.TreeViewColumn("", Gtk.CellRendererText(), text=1))
+
+            def fill(*_):
+                store.clear()
+                w = books[max(0, bcb.get_active())]
+                if w == "new":
+                    tv.set_sensitive(False)
+                    return
+                tv.set_sensitive(True)
+                n = w.book.sheet_count
+                for k in range(n):
+                    store.append([k, w.book.sheet_info(k)["name"]])
+                store.append([n, "(move to end)"])
+                tv.get_selection().select_path(Gtk.TreePath(min(g.sheet + 1, n) if w is self else n))
+            bcb.connect("changed", fill)
+            fill()
+            sw = Gtk.ScrolledWindow()
+            sw.set_size_request(260, 160)
+            sw.add(tv)
+            box.pack_start(sw, True, True, 0)
+            cbtn = Gtk.CheckButton(label="Create a copy")
+            box.pack_start(cbtn, False, False, 0)
+            tv.connect("row-activated", lambda *_: d.response(Gtk.ResponseType.OK))
+            d.show_all()
+            r = d.run()
+            m, it = tv.get_selection().get_selected()
+            to_book = books[max(0, bcb.get_active())]
+            before = m[it][0] if it is not None else (0 if to_book == "new" else None)
+            copy = cbtn.get_active()
+            d.destroy()
+            if r != Gtk.ResponseType.OK or before is None:
+                return
+        if to_book is None or to_book is self:
+            if copy:
+                self.copy_sheet_to(g.sheet, before)
+            else:
+                self.move_sheet_to(g.sheet, before)
             return
-        if want_copy:
-            self.copy_sheet_to(g.sheet, before)
+        if not copy and self.book.sheet_count < 2:
+            self.dialogs.message("A workbook must contain at least one visible worksheet.")
             return
-        self.move_sheet_to(g.sheet, before)
+        made = to_book == "new"
+        dest = self.app.new_window() if made else to_book
+        try:
+            at = dest.book.import_sheet(self.book.current, g.sheet, 0 if made else before, self.link_target())
+        except ValueError as e:
+            self.dialogs.info(str(e), "Move or Copy")
+            if made:
+                dest.book.mark_saved()
+                dest.destroy()
+            return
+        if made:
+            # the new book holds just this sheet
+            try:
+                dest.book.delete_sheet(dest.book.sheet_count - 1)
+            except ValueError:
+                pass
+            at = 0
+        dest._after_structure(at)
+        dest.grid.refresh()
+        dest.present()
+        if not copy:
+            n = self.book.sheet_count
+            i = g.sheet
+            self.book.delete_sheet(i)
+            self._remap_states({k: (None if k == i else (k - 1 if k > i else k)) for k in range(n)})
+            self._after_structure(max(0, min(i, self.book.sheet_count - 1)))
+        return dest
 
     def move_sheet_to(self, frm, before):
         n = self.book.sheet_count

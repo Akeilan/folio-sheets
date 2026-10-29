@@ -206,6 +206,25 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             i = k.min(n);
             continue;
         }
+        if c == '\'' && ch(i + 1) == '[' {
+            // '[1]Sheet name'!A1: another workbook's sheet whose name needs quotes
+            let mut j = i + 1;
+            while j < n && !(ch(j) == '\'' && ch(j + 1) != '\'') {
+                if ch(j) == '\'' {
+                    j += 1;
+                }
+                j += 1;
+            }
+            if j < n && ch(j + 1) == '!' {
+                let mut k = j + 2;
+                while k < n && !matches!(ch(k), '+' | '-' | '*' | '/' | '^' | '&' | '=' | '<' | '>' | ',' | ')' | ' ' | ';' | '}') {
+                    k += 1;
+                }
+                push(&mut out, TokKind::Ext, s, at(k.min(n)));
+                i = k.min(n);
+                continue;
+            }
+        }
         if c == '\'' || is_name_start(c) || c == '$' {
             if let Some(len) = match_ref(&cs, i, src) {
                 push(&mut out, TokKind::Ref, s, at(i + len));
