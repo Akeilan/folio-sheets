@@ -151,3 +151,5 @@ tooltip label { color: #f0f0f0; }
 .folio-dialog treeview:backdrop, .folio-dialog list:backdrop { background-color: #222222; color: #f0f0f0; }
 .folio-dialog check:backdrop, .folio-dialog radio:backdrop { background-color: #1f1f1f; background-image: none; }
 .folio-dialog check:checked:backdrop, .folio-dialog radio:checked:backdrop { background-color: #e0b84a; color: #1a1a1a; }
+.folio-dialog viewport, .folio-dialog viewport:backdrop, .folio-dialog scrolledwindow viewport.frame,
+.folio-dialog scrolledwindow viewport.frame:backdrop { background-color: #2b2b2b; background-image: none; }
