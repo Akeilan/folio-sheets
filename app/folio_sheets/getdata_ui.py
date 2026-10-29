@@ -1,7 +1,8 @@
 """Get Data from local sources (SH-25): From Text/CSV, From Workbook and From Folder, loaded as
 tables that Refresh and Refresh All read again. As in Excel's Get & Transform: a preview first,
-then Load (a table on a new sheet) or Load To... (where, or only a connection). The Power Query
-editor (Transform Data) and web or database sources are not available.
+then Load (a table on a new sheet), Load To... (where; a PivotTable or PivotChart; or only a
+connection) or Transform Data (the query editor, query_ui). Also XML, JSON, PDF and SQLite files
+and From Table/Range (datasources). Web, online and server database sources are not available.
 
 A query's settings are kept in the workbook as a hidden defined name, so they travel with the
 file (Excel keeps hidden names) without changing anything Excel reads."""
@@ -19,7 +20,7 @@ from . import text_ui
 
 PREFIX = "_folio_query_"
 STYLE = "TableStyleMedium2"
-NOT_TRANSFORM = "The Power Query editor isn't available in %s." % APP_NAME
+NOT_TRANSFORM = "Combining files with Transform Data isn't available in %s. Combine & Load, then use the table." % APP_NAME
 ENCODINGS = [("65001: Unicode (UTF-8)", "utf-8-sig"), ("1252: Western European (Windows)", "cp1252"),
              ("28591: Western European (ISO)", "latin-1"), ("1200: Unicode", "utf-16"), ("20127: US-ASCII", "ascii")]
 DELIMS = [("Comma", ","), ("Semicolon", ";"), ("Tab", "\t"), ("Space", " "), ("Colon", ":"), ("Equals Sign", "="),
@@ -327,7 +328,9 @@ def read_folder(q):
     return Result(["Source.Name"] + headers, rows, ["text"] + kinds_out, fmts)
 
 
-def read(q):
+def read_source(q, book=None):
+    """A query's rows as its source gives them (before its steps)."""
+    from . import datasources
     kind = q["kind"]
     if kind == "csv":
         return read_csv(q)
@@ -335,7 +338,29 @@ def read(q):
         return read_workbook(q)
     if kind == "folder":
         return read_folder(q)
+    if kind == "range":
+        return datasources.read_range(q, book)
+    if kind in datasources.READERS:
+        return datasources.READERS[kind](q)
     raise ValueError("Unknown query.")
+
+
+def read(q, book=None, _seen=None):
+    """A query's rows: its source, shaped by its applied steps (other queries it merges or
+    appends are read the same way)."""
+    from . import query_ui
+    res = read_source(q, book)
+    steps = q.get("steps") or []
+    if not steps:
+        return res
+    seen = set(_seen or ()) | {q.get("name", "").lower()}
+
+    def resolve(name):
+        if name.lower() in seen:
+            raise ValueError("The query '%s' refers to itself." % name)
+        other = find_query(book, name) if book is not None else None
+        return read(other, book, seen) if other else None
+    return query_ui.apply_steps(res, steps, resolve)
 
 
 # ------------------------------------------------------------------ loading and refreshing
@@ -372,6 +397,8 @@ def load(win, q, res, where="new", at=None):
             save_query(b, q)
             refresh_pane(win)
             return None
+        if where in ("pivot", "pivotchart"):
+            return _load_pivot(win, q, res, where, at)
         if where == "new" or at is None:
             s = b.sheet_count
             name = q["name"][:31]
@@ -406,6 +433,55 @@ def load(win, q, res, where="new", at=None):
     return s, i
 
 
+def _load_pivot(win, q, res, where, at):
+    """Load To... PivotTable Report / PivotChart: the rows go to a hidden sheet of their own
+    (Excel keeps them in the connection's cache) and the PivotTable reads them there."""
+    b = win.book
+    name = ("Query - " + q["name"])[:31]
+    base, k = name, 1
+    while b.check_sheet_name(name, None):
+        k += 1
+        name = ("%s (%d)" % (base[:26], k))[:31]
+    n = b.sheet_count
+    ds = b.insert_sheet(n, name)
+    b.set_sheet_state(ds, "veryHidden")
+    rg = _write(win, ds, 0, 0, res, "Load Query")
+    if not res.rows:
+        rg = (rg[0], rg[1], rg[0] + 1, rg[3])
+    ti = b.create_table(ds, rg, True, STYLE)
+    try:
+        b.rename_table(ds, ti, q["name"])
+    except Exception:
+        pass
+    q["table"] = b.tables(ds)[ti]["name"]
+    q["pivot"] = True
+    if at is None:
+        at_i = win.grid.sheet + 1
+        cnt = b.sheet_count
+        dest = b.insert_sheet(at_i, None)
+        win._remap_states({j: (j + 1 if j >= at_i else j) for j in range(cnt)})
+        top, left = 2, 0
+        ds = ds + 1 if ds >= at_i else ds
+    else:
+        dest, top, left = at
+    pi = b.create_pivot(ds, tuple(b.tables(ds)[ti]["ref"]), dest, (top, left))
+    if where == "pivotchart":
+        try:
+            b.insert_pivot_chart(pi, "col", 420.0, 40.0)
+        except Exception:
+            pass
+    save_query(b, q)
+    win._after_structure(dest)
+    win.grid.refresh()
+    refresh_pane(win)
+    try:
+        from . import pivot_ui
+        pivot_ui.show_pane(win, True)
+    except Exception:
+        pass
+    return dest, pi
+
+
 def locate(book, table):
     for s in range(book.sheet_count):
         for i, t in enumerate(book.tables(s)):
@@ -417,7 +493,7 @@ def locate(book, table):
 def refresh(win, q):
     """Read the source again into the query's table. Returns an error text or None."""
     try:
-        res = read(q)
+        res = read(q, win.book)
     except Exception as e:
         return "%s couldn't be refreshed: %s" % (q["name"], e)
     b = win.book
@@ -436,6 +512,11 @@ def refresh(win, q):
             rg = (rg[0], rg[1], rg[0] + 1, rg[3])
         b.resize_table(s, i, rg)
         save_query(b, q)
+        if q.get("pivot"):
+            try:
+                b.refresh_all_pivots()
+            except Exception:
+                pass
     win.grid.refresh()
     refresh_pane(win)
     return None
@@ -537,8 +618,7 @@ class _LoadButtons:
         split.pack_start(more, False, False, 0)
         row.pack_start(split, False, False, 0)
         tr = Gtk.Button(label="Transform Data")
-        tr.set_sensitive(False)
-        tr.set_tooltip_text(NOT_TRANSFORM)
+        tr.connect("clicked", lambda *_: self._go(dialog, "transform"))
         row.pack_start(tr, False, False, 0)
         cancel = Gtk.Button(label="Cancel")
         cancel.connect("clicked", lambda *_: dialog.response(Gtk.ResponseType.CANCEL))
@@ -716,9 +796,7 @@ class LoadToDialog(Gtk.Dialog):
         pivot = Gtk.RadioButton.new_with_label_from_widget(self.table, "PivotTable Report")
         chart = Gtk.RadioButton.new_with_label_from_widget(self.table, "PivotChart")
         self.conn = Gtk.RadioButton.new_with_label_from_widget(self.table, "Only Create Connection")
-        for w in (pivot, chart):
-            w.set_sensitive(False)
-            w.set_tooltip_text("PivotTables aren't available yet.")
+        self.pivot, self.chart = pivot, chart
         for w in (self.table, pivot, chart, self.conn):
             area.pack_start(w, False, False, 0)
         area.pack_start(Gtk.Label(label="Where do you want to put the data?", xalign=0), False, False, 6)
@@ -741,8 +819,9 @@ class LoadToDialog(Gtk.Dialog):
     def where(self):
         if self.conn.get_active():
             return "connection", None
+        kind = "pivot" if self.pivot.get_active() else "pivotchart" if self.chart.get_active() else None
         if self.new.get_active():
-            return "new", None
+            return (kind or "new"), None
         from .core import parse_ref
         t = self.ref.get_text().lstrip("=").replace("$", "")
         try:
@@ -756,7 +835,23 @@ class LoadToDialog(Gtk.Dialog):
             for ch in m.group(1).upper():
                 c = c * 26 + ord(ch) - 64
             r, c = int(m.group(2)) - 1, c - 1
-        return "existing", (self.win.grid.sheet, r, c)
+        return (kind or "existing"), (self.win.grid.sheet, r, c)
+
+
+def finish(win, q, res, choice):
+    """After a source's preview: Load, Load To... or Transform Data (the editor, then load)."""
+    if choice == "transform":
+        from . import query_ui
+        out = query_ui.edit(win, q, read_source(q, win.book))
+        if out is None:
+            return None
+        choice, q, res = out
+        q["name"] = unique_query_name(win.book, q["name"]) if find_query(win.book, q["name"]) is not None and not q.get("_editing") else q["name"]
+    where, at = _where(win, choice)
+    if where is None:
+        return None
+    q.pop("_editing", None)
+    return load(win, q, res, where, at)
 
 
 def _where(win, choice):
@@ -795,12 +890,9 @@ def from_text_csv(win, path=None):
     d.destroy()
     if r != Gtk.ResponseType.OK or not choice:
         return None
-    where, at = _where(win, choice)
-    if where is None:
-        return None
     q["name"] = unique_query_name(win.book, os.path.splitext(os.path.basename(path))[0])
     q["headers"] = bool(res.headers and res.headers[0] != "Column1") or None
-    return load(win, q, res, where, at)
+    return finish(win, q, res, choice)
 
 
 def from_workbook(win, path=None):
@@ -820,13 +912,17 @@ def from_workbook(win, path=None):
     d.destroy()
     if r != Gtk.ResponseType.OK or not choice or not qs:
         return None
-    where, at = _where(win, choice)
+    if len(qs) == 1:
+        q = qs[0]
+        q["name"] = unique_query_name(win.book, q.get("table") or q.get("sheet"))
+        return finish(win, q, read_workbook(q, src), choice)
+    where, at = _where(win, "load-to" if choice == "load-to" else "load")
     if where is None:
         return None
     out = None
     for q in qs:
         q["name"] = unique_query_name(win.book, q.get("table") or q.get("sheet"))
-        out = load(win, q, read_workbook(q, src), where if len(qs) == 1 else ("connection" if where == "connection" else "new"), at)
+        out = load(win, q, read_workbook(q, src), "connection" if where == "connection" else "new", None)
     return out
 
 
@@ -847,16 +943,139 @@ def from_folder(win, path=None):
         except ValueError as e:
             win.dialogs.message(str(e), "Combine Files")
             return None
-    where, at = _where(win, choice)
-    if where is None:
-        return None
     q["name"] = unique_query_name(win.book, os.path.basename(os.path.normpath(path)) or "Folder")
-    return load(win, q, res, where, at)
+    return finish(win, q, res, choice)
+
+
+class ItemsNavigator(Gtk.Dialog):
+    """Navigator for XML, JSON, PDF and SQLite files: the file's tables, a preview, Load."""
+
+    def __init__(self, win, kind, path):
+        from . import datasources
+        super().__init__(title="Navigator", transient_for=win, modal=True)
+        self.get_style_context().add_class("folio-dialog")
+        self.kind, self.path = kind, path
+        self.items = datasources.ITEMS[kind](path)
+        if not self.items:
+            raise ValueError("There are no tables in this file.")
+        area = self.get_content_area()
+        area.set_border_width(12)
+        area.set_spacing(8)
+        body = Gtk.Box(spacing=10)
+        self.store = Gtk.ListStore(str, int)
+        for k, (label, _i) in enumerate(self.items):
+            self.store.append([label, k])
+        self.tree = Gtk.TreeView(model=self.store, headers_visible=False)
+        self.tree.append_column(Gtk.TreeViewColumn("", Gtk.CellRendererText(), text=0))
+        sw = Gtk.ScrolledWindow()
+        sw.set_shadow_type(Gtk.ShadowType.IN)
+        sw.set_size_request(260, 300)
+        sw.add(self.tree)
+        body.pack_start(sw, False, False, 0)
+        self.holder = Gtk.Box()
+        body.pack_start(self.holder, True, True, 0)
+        area.pack_start(body, True, True, 0)
+        self.buttons = _LoadButtons(self, area)
+        self.tree.get_selection().connect("changed", self._picked)
+        self.show_all()
+        self.tree.get_selection().select_path(Gtk.TreePath(0))
+
+    def query(self):
+        m, it = self.tree.get_selection().get_selected()
+        k = m[it][1] if it is not None else 0
+        return {"kind": self.kind, "path": self.path, "item": self.items[k][1]}
+
+    def _picked(self, _sel):
+        from . import datasources
+        try:
+            res = datasources.READERS[self.kind](self.query())
+        except Exception as e:
+            res = Result(["Error"], [[str(e)]], ["text"])
+        self.result = res
+        for c in self.holder.get_children():
+            self.holder.remove(c)
+        self.holder.pack_start(_preview_view(res), True, True, 0)
+        self.holder.show_all()
+
+
+def from_source(win, kind, path=None, item=None, choice=None):
+    """From XML, JSON, PDF or SQLite: the Navigator, then load (tests pass item and choice)."""
+    from . import datasources
+    title, pats = datasources.TITLES[kind]
+    path = path or _choose(win, "Import Data", Gtk.FileChooserAction.OPEN, ("%s files" % title, pats))
+    if not path:
+        return None
+    if item is None:
+        try:
+            d = ItemsNavigator(win, kind, path)
+        except Exception as e:
+            win.dialogs.message("%s can't read '%s'.\n\n%s" % (APP_NAME, os.path.basename(path), e))
+            return None
+        r = d.run()
+        choice, q = d.buttons.choice, d.query()
+        d.destroy()
+        if r != Gtk.ResponseType.OK or not choice:
+            return None
+    else:
+        q = {"kind": kind, "path": path, "item": item}
+    try:
+        res = datasources.READERS[kind](q)
+    except Exception as e:
+        win.dialogs.message("%s can't read '%s'.\n\n%s" % (APP_NAME, os.path.basename(path), e))
+        return None
+    label = q["item"].strip("/").rsplit("/", 1)[-1].rsplit(".", 1)[-1] if kind in ("xml", "json") and q["item"] else None
+    if kind == "pdf":
+        label = "Table" if not q["item"].endswith("page") else "Page"
+    q["name"] = unique_query_name(win.book, label or q["item"] or os.path.splitext(os.path.basename(path))[0])
+    return finish(win, q, res, choice or "load")
+
+
+def from_table_range(win, choice="transform"):
+    """From Table/Range: the table at the active cell (a range becomes a table first), opened in
+    the query editor."""
+    g = win.grid
+    b = win.book
+    r, c = g.sel.active
+    ti = b.table_at(g.sheet, r, c)
+    if ti is None:
+        rg = tuple(g.sel.ranges[-1])
+        if rg[0] == rg[2] and rg[1] == rg[3]:
+            rg = tuple(b.current_region(g.sheet, r, c))
+        if rg[2] <= rg[0]:
+            win.dialogs.message("Select a cell in a table or range of data first.", "From Table/Range")
+            return None
+        with b.group("Create Table"):
+            ti = b.create_table(g.sheet, rg, True, STYLE)
+        g.refresh()
+    t = b.tables(g.sheet)[ti]
+    q = {"kind": "range", "item": t["name"], "name": unique_query_name(b, t["name"])}
+    return finish(win, q, read_source(q, b), choice)
+
+
+def edit_query(win, q):
+    """Edit a query from the Queries & Connections pane: the editor, then its table follows."""
+    from . import query_ui
+    import copy
+    q2 = copy.deepcopy(q)
+    try:
+        base = read_source(q2, win.book)
+    except Exception as e:
+        win.dialogs.message("%s couldn't be read: %s" % (q["name"], e), "Edit")
+        return None
+    out = query_ui.edit(win, q2, base)
+    if out is None:
+        return None
+    _choice, q2, _res = out
+    with win.book.group("Edit Query"):
+        if q2["name"] != q["name"]:
+            delete_query(win.book, q)
+        save_query(win.book, q2)
+    return refresh(win, q2)
 
 
 def not_available(win, what):
     win.dialogs.info("%s isn't available in %s. Folio Sheets gets data from files on this computer: "
-                     "Text/CSV, Excel workbooks and folders." % (what, APP_NAME), "Get Data")
+                     "Text/CSV, Excel workbooks, folders, XML, JSON, PDF and SQLite files." % (what, APP_NAME), "Get Data")
 
 
 # ------------------------------------------------------------------ Queries & Connections pane
@@ -923,6 +1142,11 @@ def refresh_pane(win):
         rb.set_relief(Gtk.ReliefStyle.NONE)
         rb.connect("clicked", lambda _b, q=q: _pane_refresh(win, q))
         box.pack_end(rb, False, False, 0)
+        eb = Gtk.Button.new_from_icon_name("document-edit-symbolic", Gtk.IconSize.MENU)
+        eb.set_tooltip_text("Edit")
+        eb.set_relief(Gtk.ReliefStyle.NONE)
+        eb.connect("clicked", lambda _b, q=q: edit_query(win, q))
+        box.pack_end(eb, False, False, 0)
         db = Gtk.Button.new_from_icon_name("user-trash-symbolic", Gtk.IconSize.MENU)
         db.set_tooltip_text("Delete")
         db.set_relief(Gtk.ReliefStyle.NONE)

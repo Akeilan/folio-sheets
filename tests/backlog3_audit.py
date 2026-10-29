@@ -181,6 +181,146 @@ af = b.autofilter(S)
 check("filter menu: Filter by Color applies", af["columns"].get(0, {}).get("color") == (True, 0x00B050), af)
 b.filter_column(S, 0, None)
 
+# ---------------------------------------------------------------- S3-06 more local sources
+from folio_sheets import getdata_ui, query_ui, datasources  # noqa: E402
+import json as _json  # noqa: E402
+import sqlite3 as _sq  # noqa: E402
+jp = os.path.join(TMP, "people.json")
+with open(jp, "w") as fh:
+    _json.dump({"meta": {"v": 1}, "people": [{"name": "Ann", "age": 31, "city": {"name": "Utrecht"}},
+                                             {"name": "Bob", "age": 45, "city": {"name": "Delft"}},
+                                             {"name": "Cy", "age": 28, "city": {"name": "Utrecht"}}]}, fh)
+items = datasources.json_items(jp)
+check("json: tables listed", any(i[1] == "people" for i in items), items)
+res = datasources.read_json({"path": jp, "item": "people"})
+check("json: records become rows, nested keys columns", res.headers == ["name", "age", "city.name"] and len(res.rows) == 3
+      and res.kinds[1] == "number", (res.headers, res.kinds))
+xp = os.path.join(TMP, "orders.xml")
+with open(xp, "w") as fh:
+    fh.write("<orders><order id='1'><item>Pen</item><qty>3</qty></order><order id='2'><item>Ink</item><qty>5</qty></order></orders>")
+items = datasources.xml_items(xp)
+res = datasources.read_xml({"path": xp, "item": "/orders/order"})
+check("xml: repeating elements become rows", res.headers == ["Attribute:id", "item", "qty"] and [r[1] for r in res.rows] == ["Pen", "Ink"],
+      (items, res.headers, res.rows))
+dbp = os.path.join(TMP, "shop.db")
+con = _sq.connect(dbp)
+con.execute("create table stock (sku text, n integer, price real)")
+con.executemany("insert into stock values (?,?,?)", [("A1", 4, 2.5), ("B2", 0, 10.0), ("C3", 7, 1.25)])
+con.commit()
+con.close()
+items = datasources.sqlite_items(dbp)
+check("sqlite: tables listed", items and items[0][1] == "stock", items)
+res = datasources.read_sqlite({"path": dbp, "item": "stock"})
+check("sqlite: rows", res.headers == ["sku", "n", "price"] and res.rows[1] == ["B2", "0", "10"], (res.headers, res.rows))
+import cairo  # noqa: E402
+pp = os.path.join(TMP, "report.pdf")
+surf = cairo.PDFSurface(pp, 595, 842)
+cr = cairo.Context(surf)
+cr.select_font_face("DejaVu Sans")
+cr.set_font_size(11)
+cr.move_to(60, 60)
+cr.show_text("Quarterly report")
+for i, row in enumerate([("Region", "Sales", "Units"), ("North", "1200", "30"), ("South", "950", "22"), ("East", "1430", "41")]):
+    for j, t in enumerate(row):
+        cr.move_to(60 + j * 140, 120 + i * 20)
+        cr.show_text(t)
+cr.move_to(60, 300)
+cr.show_text("End of report.")
+surf.finish()
+items = datasources.pdf_items(pp)
+check("pdf: a table found on the page", items and items[0][0].startswith("Table001"), items)
+res = datasources.read_pdf({"path": pp, "item": items[0][1]}) if items else None
+check("pdf: its rows and headers", res and res.headers == ["Region", "Sales", "Units"] and res.rows[2] == ["East", "1430", "41"],
+      res and (res.headers, res.rows))
+out = getdata_ui.from_source(win, "sqlite", dbp, item="stock", choice="load")
+pump(0.3)
+q = getdata_ui.find_query(b, "stock")
+check("from SQLite: loaded as a table with its query", out and q and q["kind"] == "sqlite" and b.display(out[0], 3, 0) == "C3",
+      (out, q))
+from folio_sheets import commands as _cmds  # noqa: E402
+check("Get Data menu commands are wired", all(hasattr(win, _cmds.method_name(c)) for c in ("from-source:xml", "from-source:json", "from-source:pdf", "from-source:sqlite", "from-table-range")))
+g.set_sheet(0)
+b.set_input(0, 20, 0, "k")
+b.set_input(0, 20, 1, "v")
+b.set_input(0, 21, 0, "a")
+b.set_input(0, 21, 1, "1")
+b.set_input(0, 22, 0, "b")
+b.set_input(0, 22, 1, "2")
+g.sel.ranges = [(20, 0, 22, 1)]
+g.sel.active = (20, 0)
+got = getdata_ui.from_table_range(win, "load")
+pump(0.3)
+qr = [q for q in getdata_ui.queries(b) if q["kind"] == "range"]
+check("From Table/Range: the range becomes a table and a query", got and qr and b.display(got[0], 2, 0) == "b", (got, qr))
+
+# ---------------------------------------------------------------- S3-05 the query editor
+res = datasources.read_json({"path": jp, "item": "people"})
+steps = [{"op": "filter", "col": "city.name", "cmp": "eq", "value": "Utrecht"},
+         {"op": "rename", "col": "city.name", "new": "City"},
+         {"op": "sort", "keys": [("age", False)]},
+         {"op": "index", "start": 1}]
+r2 = query_ui.apply_steps(res, steps)
+check("steps: filter, rename, sort, index", r2.headers == ["name", "age", "City", "Index"] and [r[0] for r in r2.rows] == ["Ann", "Cy"]
+      and r2.rows[1][3] == "2", (r2.headers, r2.rows))
+r3 = query_ui.apply_steps(res, [{"op": "group", "by": ["city.name"], "aggs": [("Total age", "sum", "age"), ("Count", "count", None)]}])
+check("steps: group by", r3.rows == [["Utrecht", "59", "2"], ["Delft", "45", "1"]], r3.rows)
+r4 = query_ui.apply_steps(res, [{"op": "split", "col": "name", "delim": "n", "mode": "left"}, {"op": "remove", "cols": ["age"]}])
+check("steps: split and remove", r4.headers[:2] == ["name.1", "name.2"] and "age" not in r4.headers, r4.headers)
+q0 = {"kind": "json", "path": jp, "item": "people", "name": "people"}
+ed = query_ui.QueryEditor(win, q0, res)
+ed.select_column("age")
+ed.add_step({"op": "filter", "col": "age", "cmp": "gt", "value": "30"})
+ed.add_step({"op": "type", "col": "age", "kind": "text"})
+check("editor: steps listed", [r.get_child().get_text() for r in ed.steps.get_children()] == ["Source", "Filtered Rows", "Changed Type"])
+check("editor: preview follows", len(ed.res.rows) == 2, ed.res.rows)
+ed.steps.select_row(ed.steps.get_row_at_index(0))
+check("editor: picking a step shows the rows up to it", len(ed.res.rows) == 3)
+ed.delete_step(1)
+check("editor: Delete Step", [s["op"] for s in ed.q["steps"]] == ["filter"])
+ok = ed.add_step({"op": "rename", "col": "nope", "new": "x"})
+check("editor: a step on a missing column is refused", ok is False and len(ed.q["steps"]) == 1)
+qq, rr = ed.finish()
+ed.destroy()
+got = getdata_ui.load(win, qq, rr, "new")
+pump(0.3)
+q1 = getdata_ui.find_query(b, "people")
+check("editor: Close & Load keeps the steps with the query", q1 and q1.get("steps") and q1["steps"][0]["op"] == "filter")
+check("editor: and loads the shaped rows", got and b.display(got[0], 2, 0) == "Bob" and b.display(got[0], 3, 0) == "", got)
+with open(jp, "w") as fh:
+    _json.dump({"people": [{"name": "Ann", "age": 31, "city": {"name": "Utrecht"}}, {"name": "Dee", "age": 60, "city": {"name": "Ede"}},
+                           {"name": "Bob", "age": 45, "city": {"name": "Delft"}}]}, fh)
+getdata_ui.refresh(win, q1)
+pump(0.3)
+check("refresh runs the steps again", [b.display(got[0], r, 0) for r in (1, 2, 3)] == ["Ann", "Dee", "Bob"])
+# merge and append
+qa = {"kind": "sqlite", "path": dbp, "item": "stock", "name": "stockB", "steps": [{"op": "top", "n": 1}]}
+getdata_ui.save_query(b, qa)
+r5 = getdata_ui.read({"kind": "sqlite", "path": dbp, "item": "stock", "name": "x", "steps": [{"op": "append", "queries": ["stockB"]}]}, b)
+check("append another query", len(r5.rows) == 4 and r5.rows[3][0] == "A1", r5.rows)
+r6 = getdata_ui.read({"kind": "sqlite", "path": dbp, "item": "stock", "name": "y",
+                      "steps": [{"op": "merge", "query": "stockB", "left": "sku", "right": "sku", "kind": "inner"}]}, b)
+check("merge with another query (inner)", len(r6.rows) == 1 and r6.headers[-1] == "stockB.price", (r6.headers, r6.rows))
+# Transform Data button exists and works from a preview
+d = getdata_ui.ItemsNavigator(win, "json", jp)
+check("Transform Data is on", d.buttons.transform_button.get_sensitive())
+d.destroy()
+
+# ---------------------------------------------------------------- S3-04 load to a PivotTable
+qp = {"kind": "sqlite", "path": dbp, "item": "stock", "name": "stockP"}
+nsh = b.sheet_count
+got = getdata_ui.load(win, qp, datasources.read_sqlite(qp), "pivot", None)
+pump(0.3)
+check("load to PivotTable: a PivotTable on a new sheet", got and b.pivot_count() >= 1 and b.sheet_count == nsh + 2, (got, b.sheet_count))
+hidden = [i for i in range(b.sheet_count) if b.sheet_info(i)["state"] == "veryHidden"]
+check("load to PivotTable: the rows on a hidden sheet", hidden, hidden)
+pv = b.pivot(got[1]) if got else None
+check("load to PivotTable: fields from the query", pv and [f["name"] for f in pv["fields"]] == ["sku", "n", "price"], pv and pv["fields"])
+dlg = getdata_ui.LoadToDialog(win)
+check("Import Data: PivotTable Report and PivotChart choosable", dlg.pivot.get_sensitive() and dlg.chart.get_sensitive())
+dlg.pivot.set_active(True)
+check("Import Data: where() says pivot", dlg.where()[0] == "pivot", dlg.where())
+dlg.destroy()
+
 # ---------------------------------------------------------------- end
 w2.book.mark_saved()
 for p in tuple(globals().get("EXTRA", ())):

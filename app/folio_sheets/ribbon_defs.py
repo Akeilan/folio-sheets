@@ -692,17 +692,19 @@ def build_ribbon(win):
     B.group(t, "Get & Transform Data", [
         B.big("Get\nData", "r-get-data", None, "PN", key="get-data", menu=[
             ("From File", [("From Workbook", "from-workbook"), ("From Text/CSV", "from-text-csv"),
-                           ("From Folder", "from-folder")]),
-            ("From Database", "get-data-unavailable:Getting data from a database"),
+                           ("From XML", "from-source:xml"), ("From JSON", "from-source:json"),
+                           ("From PDF", "from-source:pdf"), ("From Folder", "from-folder")]),
+            ("From Database", [("From SQLite Database", "from-source:sqlite"),
+                               ("From SQL Server Database", "get-data-unavailable:Getting data from a database server")]),
             ("From Online Services", "get-data-unavailable:Getting data from online services"),
-            ("From Other Sources", [("From Table/Range", "get-data-unavailable:From Table/Range"),
+            ("From Other Sources", [("From Table/Range", "from-table-range"),
                                     ("From Web", "get-data-unavailable:Getting data from the web")]),
             None,
             ("Legacy Wizards", [("From Text (Legacy)", "from-text-legacy")]),
             ("Query Options", "get-data-unavailable:Query Options")]),
         [B.small("From Text/CSV", "r-from-text-csv-sm", "from-text-csv", "FT"),
          B.small("From Web", "r-from-web-sm", "get-data-unavailable:Getting data from the web", "FW"),
-         B.small("From Table/Range", "r-from-table-sm", "get-data-unavailable:From Table/Range", "FR")],
+         B.small("From Table/Range", "r-from-table-sm", "from-table-range", "FR")],
         [B.small("Recent Sources", "r-recent-sources-sm", "existing-connections", "FE"),
          B.small("Existing Connections", "r-existing-connections-sm", "existing-connections", "EX")],
     ])
