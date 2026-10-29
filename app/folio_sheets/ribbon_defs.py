@@ -549,6 +549,8 @@ def build_ribbon(win):
          B.small("Signature Line", "r-signature-line-sm", "signature-line", "G"),
          B.small("Object", "r-object-sm", "object", "J")],
     ])
+    B.group(t, "Cell Controls", [B.big("Checkbox", "r-checkbox", "cell-checkbox", "CB",
+                                       tip="Checkbox\nPut check boxes in the selected cells. The cells hold TRUE or FALSE.")])
     B.group(t, "Symbols", [
         SplitButton(B.r, "Equation", "r-equation", "equation", lambda: _equation_menu(win), size="large", keytip="E",
                     tooltip="Equation\nAdd an equation, or choose one of the common ones."),
@@ -820,6 +822,25 @@ def build_ribbon(win):
     ])
     B.group(t, "Macros", [B.big("Macros", "r-macros", None, "M", menu=[("View Macros", "macros"), ("Record Macro...", "record-macro"),
                                                                     ("Use Relative References", "relative-refs")])])
+    r.add_tab(t)
+
+    # ================================================================ Developer
+    t = r.building(Tab("Developer", "L"))
+    B.group(t, "Code", [
+        B.big("Visual\nBasic", "r-visual-basic", "visual-basic", "V"),
+        B.big("Macros", "r-macros", "macros", "PM"),
+        [B.small("Record Macro", "r-record-macro-sm", "record-macro", "R"),
+         B.small("Use Relative References", "r-relative-refs-sm", "relative-refs", "U")],
+    ])
+    from .controls_ui import KINDS as _FC
+    B.group(t, "Controls", [
+        B.big("Insert", "r-form-controls", None, "I", key="form-controls-menu",
+              menu=[("#", "Form Controls")] + [(lab, "form-control:" + k, "fc-" + k) for k, lab, _s in _FC]
+              + [("#", "ActiveX Controls"), ("ActiveX Controls...", "activex-controls")]),
+        RibbonButton(B.r, "Design\nMode", "r-design-mode", "design-mode", size="large", keytip="DM",
+                     tooltip="Design Mode\nClicks select the form controls instead of using them.", state="design-mode"),
+        [B.small("Properties", "r-control-properties-sm", "control-properties", "PR")],
+    ])
     r.add_tab(t)
 
     # ================================================================ Help

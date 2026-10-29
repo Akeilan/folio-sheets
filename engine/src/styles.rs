@@ -103,7 +103,12 @@ pub struct Xf {
     pub locked: bool,
     pub hidden: bool,
     pub quote_prefix: bool,
+    /// Insert > Checkbox: the cell shows a check box for its TRUE/FALSE value
+    pub checkbox: bool,
 }
+
+pub const XFPB_URI: &str = "{C7286773-470A-42A8-94C5-96B5CB345126}";
+pub const NS_XFPB: &str = "http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag";
 
 pub struct Styles {
     pub prolog: String,
@@ -258,6 +263,7 @@ impl Xf {
         let n = |k: &str| e.attr(k).and_then(|v| v.parse().ok()).unwrap_or(0);
         let mut x = Xf { numfmt: n("numFmtId"), font: n("fontId"), fill: n("fillId"), border: n("borderId"), locked: true, ..Default::default() };
         x.quote_prefix = matches!(e.attr("quotePrefix"), Some("1") | Some("true"));
+        x.checkbox = e.child("extLst").map(|l| l.elems().any(|x| x.attr("uri").map(|u| u.eq_ignore_ascii_case(XFPB_URI)).unwrap_or(false))).unwrap_or(false);
         if let Some(a) = e.child("alignment") {
             x.halign = a.attr("horizontal").unwrap_or("").to_string();
             x.valign = a.attr("vertical").unwrap_or("").to_string();
@@ -614,6 +620,23 @@ impl Styles {
                 xf.remove_attr("quotePrefix");
             }
         }
+        if let Some(cb) = ch.checkbox {
+            let tag = name_like_tag(&xf.name, "extLst");
+            if let Some(l) = xf.child_mut("extLst") {
+                l.children.retain(|n| !matches!(n, Node::Elem(x) if x.attr("uri").map(|u| u.eq_ignore_ascii_case(XFPB_URI)).unwrap_or(false)));
+            }
+            if xf.child("extLst").map(|l| l.elems().next().is_none()).unwrap_or(false) {
+                xf.remove_children("extLst");
+            }
+            if cb {
+                if xf.child("extLst").is_none() {
+                    xf.push(Element::new(&tag));
+                }
+                let mut ext = Element::with_attrs(&name_like_tag(&xf.name, "ext"), &[("uri", XFPB_URI), ("xmlns:xfpb", NS_XFPB)]);
+                ext.push(Element::with_attrs("xfpb:xfComplement", &[("i", "0")]));
+                xf.child_mut("extLst").unwrap().push(ext);
+            }
+        }
         let id = self.intern(3, "cellXfs", xf);
         if id as usize >= self.xfs.len() {
             self.reload();
@@ -705,6 +728,7 @@ pub struct Change {
     pub hidden: Option<bool>,
     pub numfmt: Option<String>,
     pub quote_prefix: Option<bool>,
+    pub checkbox: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]

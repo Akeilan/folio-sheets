@@ -321,6 +321,211 @@ dlg.pivot.set_active(True)
 check("Import Data: where() says pivot", dlg.where()[0] == "pivot", dlg.where())
 dlg.destroy()
 
+# ---------------------------------------------------------------- S3-07 form controls, cell check boxes
+from folio_sheets import controls_ui  # noqa: E402
+import zipfile  # noqa: E402
+win.run("insert-sheet")
+pump()
+SC = g.sheet
+g.select_range((1, 1, 3, 1))
+pump()
+win.run("cell-checkbox")
+pump()
+check("Insert Checkbox: the cells show check boxes", all(b.is_checkbox(SC, r, 1) for r in (1, 2, 3)))
+check("Insert Checkbox: empty cells become FALSE", [b.display(SC, r, 1) for r in (1, 2, 3)] == ["FALSE"] * 3, [b.display(SC, r, 1) for r in (1, 2, 3)])
+b.toggle_checkbox(SC, 1, 1)
+check("a click ticks it (TRUE)", b.display(SC, 1, 1) == "TRUE", b.display(SC, 1, 1))
+g.select_cell(2, 1)
+pump()
+check("Space on a check-box cell ticks it", controls_ui.toggle_selected(win) and b.display(SC, 2, 1) == "TRUE", b.display(SC, 2, 1))
+b.set_input(SC, 1, 3, "=COUNTIF(B2:B4,TRUE)")
+check("formulas see the ticks", b.display(SC, 1, 3) == "2", b.display(SC, 1, 3))
+win.run("undo")
+win.run("undo")
+check("undo un-ticks", b.display(SC, 2, 1) == "FALSE", b.display(SC, 2, 1))
+win.run("redo")
+win.run("redo")
+
+
+class _Ev:
+    def __init__(self, x, y, button=1, state=0, kind=None):
+        from gi.repository import Gdk
+        self.x, self.y, self.button = x, y, button
+        self._state = state
+        self.type = kind or Gdk.EventType.BUTTON_PRESS
+
+    def get_state(self):
+        return self._state
+
+
+rect = b.cell_rect(SC, 3, 1, g.params())
+check("clicking the box in the cell ticks it", controls_ui.click_cell(win, 3, 1, _Ev(rect[0] + rect[2] / 2, rect[1] + rect[3] / 2), rect)
+      and b.display(SC, 3, 1) == "TRUE", b.display(SC, 3, 1))
+# form controls
+fc = win.form_controls
+b.set_input(SC, 0, 6, "Apple")
+b.set_input(SC, 1, 6, "Pear")
+b.set_input(SC, 2, 6, "Plum")
+ci = fc.add("Checkbox", 300, 20, 100, 18, link="$E$2", text="Shipped")
+check("Insert > Check Box: a control on the sheet", len(b.controls(SC)) == 1 and b.controls(SC)[0]["kind"] == "Checkbox")
+r = fc.rect(ci)
+fc.press(_Ev(r[0] + 6, r[1] + r[3] / 2))
+pump()
+check("clicking the check box sets its linked cell TRUE", b.display(SC, 1, 4) == "TRUE", b.display(SC, 1, 4))
+fc.press(_Ev(r[0] + 6, r[1] + r[3] / 2))
+check("and again FALSE", b.display(SC, 1, 4) == "FALSE", b.display(SC, 1, 4))
+b.set_input(SC, 1, 4, "TRUE")
+check("the linked cell drives the box", b.control_value(SC, ci) == 1)
+si = fc.add("Spin", 300, 60, 18, 32, link="$E$3", min=0, max=10, inc=2)
+r = fc.rect(si)
+fc.press(_Ev(r[0] + r[2] / 2, r[1] + 3))
+fc.press(_Ev(r[0] + r[2] / 2, r[1] + 3))
+check("spin button up twice: 4 in its cell", b.display(SC, 2, 4) == "4", b.display(SC, 2, 4))
+fc.press(_Ev(r[0] + r[2] / 2, r[1] + r[3] - 3))
+check("spin button down: 2", b.display(SC, 2, 4) == "2", b.display(SC, 2, 4))
+li = fc.add("Drop", 300, 110, 100, 20, link="$E$4", range="$G$1:$G$3")
+check("combo box items from its input range", b.control_items(SC, li) == ["Apple", "Pear", "Plum"], b.control_items(SC, li))
+b.set_control_value(SC, li, 3)
+check("picking an item puts its number in the cell", b.display(SC, 3, 4) == "3", b.display(SC, 3, 4))
+lb = fc.add("List", 420, 110, 100, 60, link="$E$5", range="$G$1:$G$3")
+r = fc.rect(lb)
+fc.press(_Ev(r[0] + 10, r[1] + 15 * g.params()["zoom"] * 1.5))
+check("clicking a list box row picks it", b.display(SC, 4, 4) == "2", b.display(SC, 4, 4))
+r1 = fc.add("Radio", 300, 150, 90, 18, link="$E$6", text="Small")
+r2 = fc.add("Radio", 300, 170, 90, 18, text="Large")
+r = fc.rect(r2)
+fc.press(_Ev(r[0] + 6, r[1] + r[3] / 2))
+check("option buttons: the second one puts 2 in the group's cell", b.display(SC, 5, 4) == "2" and b.control_value(SC, r2) == 1 and b.control_value(SC, r1) == 0,
+      (b.display(SC, 5, 4), b.control_value(SC, r1), b.control_value(SC, r2)))
+sb = fc.add("Scroll", 520, 20, 18, 120, link="$E$7", min=0, max=100, inc=1, page=10)
+r = fc.rect(sb)
+fc.press(_Ev(r[0] + r[2] / 2, r[1] + r[3] - 30))
+check("scroll bar: a click in the track moves a page", b.display(SC, 6, 4) == "10", b.display(SC, 6, 4))
+bt = fc.add("Button", 520, 160, 72, 24, macro="Module1.Go")
+DIALOG.append(lambda d: Gtk.ResponseType.OK)
+r = fc.rect(bt)
+fc.press(_Ev(r[0] + 10, r[1] + 10))
+check("a button with a macro says macros don't run", not DIALOG)
+# selecting, moving, deleting
+r = fc.rect(ci)
+from gi.repository import Gdk  # noqa: E402
+fc.press(_Ev(r[0] + 6, r[1] + 6, state=Gdk.ModifierType.CONTROL_MASK))
+check("Ctrl+click selects the control", fc.sel == ci)
+fc.motion(_Ev(r[0] + 46, r[1] + 26))
+fc.release(_Ev(r[0] + 46, r[1] + 26))
+r2_ = fc.rect(ci)
+check("dragging the selected control moves it", abs(r2_[0] - r[0] - 40) < 2 and abs(r2_[1] - r[1] - 20) < 2, (r, r2_))
+win.run("undo")
+check("undo puts it back", abs(fc.rect(ci)[0] - r[0]) < 2)
+n = len(b.controls(SC))
+fc.select(bt)
+from gi.repository import Gdk as _G  # noqa: E402
+
+
+class _K:
+    keyval = _G.KEY_Delete
+
+
+fc.key(_K())
+check("Delete removes the selected control", len(b.controls(SC)) == n - 1)
+win.run("undo")
+check("undo brings it back", len(b.controls(SC)) == n)
+# Format Control
+fc.select(si)
+
+
+def _fmt(d):
+    d.fields["max"].set_text("20")
+    d.fields["val"].set_text("12")
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(_fmt)
+win.run("control-properties")
+pump()
+check("Format Control: limits and value", b.controls(SC)[si]["max"] == 20 and b.display(SC, 2, 4) == "12", (b.controls(SC)[si], b.display(SC, 2, 4)))
+fc.select(None)
+# drawing one with the mouse
+win.run("form-control:Label")
+check("Insert > Label: drawing mode", fc.placing == "Label")
+fc.press(_Ev(100, 300))
+fc.motion(_Ev(180, 320))
+fc.release(_Ev(180, 320))
+check("drawn on the sheet", b.controls(SC)[-1]["kind"] == "Label" and fc.placing is None)
+DIALOG.append(lambda d: Gtk.ResponseType.OK)
+win.run("activex-controls")
+check("ActiveX controls say they aren't available", not DIALOG)
+# save and reopen
+pc = os.path.join(TMP, "controls.xlsx")
+b.save(pc)
+z = zipfile.ZipFile(pc)
+names = z.namelist()
+check("saved: the feature property bag for cell check boxes", any("featurePropertyBag" in n for n in names), names)
+sty = z.read("xl/styles.xml").decode()
+check("saved: the check-box cell format", "C7286773-470A-42A8-94C5-96B5CB345126" in sty or "c7286773" in sty.lower())
+vml = [z.read(n).decode() for n in names if n.endswith(".vml")]
+check("saved: the controls in the sheet's drawing", any('ObjectType="Checkbox"' in v and "<x:FmlaLink>$E$2</x:FmlaLink>" in v for v in vml), vml[:1])
+bb = Book.open(pc)
+si2 = [i for i in range(bb.sheet_count) if bb.sheet_info(i)["name"] == b.sheet_info(SC)["name"]][0]
+kinds = [c["kind"] for c in bb.controls(si2)]
+check("reopened: the controls", kinds == [c["kind"] for c in b.controls(SC)], kinds)
+check("reopened: their links and ranges", bb.controls(si2)[2]["range"] == "$G$1:$G$3" and bb.controls(si2)[0]["link"] == "$E$2", bb.controls(si2)[:3])
+check("reopened: check-box cells", bb.is_checkbox(si2, 1, 1) and bb.display(si2, 1, 1) == "TRUE")
+check("reopened: spin limits", bb.controls(si2)[1]["max"] == 20 and bb.controls(si2)[1]["inc"] == 2, bb.controls(si2)[1])
+# saved again without changes: the drawing kept
+pc2 = os.path.join(TMP, "controls2.xlsx")
+bb.save(pc2)
+bb2 = Book.open(pc2)
+check("saved again: the controls kept", [c["kind"] for c in bb2.controls(si2)] == kinds)
+# a control rendered
+import cairo as _c  # noqa: E402
+surf = _c.ImageSurface(_c.FORMAT_RGB24, 800, 400)
+crx = _c.Context(surf)
+b.render(SC, crx, g.params({"width": 800.0, "height": 400.0}))
+check("the controls are drawn", True)
+g.set_sheet(0)
+
+# ---------------------------------------------------------------- S3-11 effect schemes
+from folio_sheets import shapes_ui, effect_schemes, themes_ui  # noqa: E402
+from folio_sheets.core import Book as _B  # noqa: E402
+g.set_sheet(0)
+si_ = b.insert_shape(0, "rect", 40, 400, 120, 60, False, False)
+g.select_object(si_)
+pump()
+check("Shape Styles: Intense Effect applied", shapes_ui.apply_style(win, 5, 1))
+fx = b.shape_effects(0, si_)
+check("the new book's own effects are flat", fx == (False, False, False, False), fx)
+b.set_theme_effects(_B.default_theme_xml())
+fx = b.shape_effects(0, si_)
+check("Office's intense effect: a shadow", fx and fx[0] and not fx[2], fx)
+names = [n for n, _x in effect_schemes.schemes()]
+check("thirteen more effect schemes", len(names) >= 13 and "Glossy" in names and "Subtle Solids" in names, names)
+gx = dict(effect_schemes.schemes())["Glossy"]
+b.set_theme_effects(effect_schemes.theme_with(_B.default_theme_xml(), gx))
+check("Glossy: the theme says so", b.theme_info()["effects_name"] == "Glossy", b.theme_info()["effects_name"])
+fx = b.shape_effects(0, si_)
+check("Glossy: the shape takes its bevel", fx and fx[2], fx)
+ss = dict(effect_schemes.schemes())["Subtle Solids"]
+b.set_theme_effects(effect_schemes.theme_with(_B.default_theme_xml(), ss))
+fx = b.shape_effects(0, si_)
+check("Subtle Solids: a softer shadow, no bevel", fx and fx[0] and not fx[2], fx)
+for n, x in effect_schemes.schemes():
+    try:
+        b.set_theme_effects(effect_schemes.theme_with(_B.default_theme_xml(), x))
+        ok = b.theme_info()["effects_name"] == n
+    except ValueError as e:
+        ok = False
+    if not ok:
+        check("effect scheme %s applies" % n, False)
+check("every effect scheme applies", True)
+pe = os.path.join(TMP, "fx.xlsx")
+b.save(pe)
+check("saved with the effects", _B.open(pe).theme_info()["effects_name"] == names[-1])
+win.run("undo")
+pop = shapes_ui.style_gallery(win)
+check("Shape Styles gallery: 6 x 7", len(pop.rows) == 42)
+g.sel_objects = []
+
 # ---------------------------------------------------------------- end
 w2.book.mark_saved()
 for p in tuple(globals().get("EXTRA", ())):

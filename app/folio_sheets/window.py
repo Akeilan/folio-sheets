@@ -87,6 +87,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.ink = InkTools(self)
         from .shapes_ui import Shapes
         self.shapes = Shapes(self)
+        from .controls_ui import Controls
+        self.form_controls = Controls(self)
         from .macros_ui import MacroBar
         self.macro_bar = MacroBar(self)
         self.outer.pack_start(self.macro_bar, False, False, 0)
@@ -923,6 +925,40 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def act_ink_replay(self):
         from . import ink_ui
         ink_ui.not_available(self, "Ink Replay")
+
+    # ------------------------------------------------------------ form controls (S3-07)
+    def act_cell_checkbox(self):
+        from . import controls_ui
+        if self.book is None:
+            return
+        controls_ui.insert_cell_checkboxes(self)
+
+    def act_form_control(self, kind="Checkbox"):
+        if self.book is None:
+            return
+        self.form_controls.place(kind)
+
+    def act_activex_controls(self):
+        from . import controls_ui
+        self.dialogs.info(controls_ui.NO_ACTIVEX, "ActiveX Controls")
+
+    def act_design_mode(self):
+        fc = self.form_controls
+        fc.design = not fc.design
+        self.ribbon.update("design-mode", "true" if fc.design else "false")
+        if not fc.design:
+            fc.select(None)
+        self.status.extra.set_text("Design Mode: click a control to select it." if fc.design else "")
+
+    def act_control_properties(self):
+        fc = self.form_controls
+        if fc.stale():
+            lst = fc.list()
+            if not lst:
+                self.dialogs.info("Select a form control first: Ctrl+click it, or turn on Design Mode and click it.", "Properties")
+                return
+            fc.select(0)
+        fc.format(fc.sel)
 
     def act_macros(self):
         from . import macros_ui
@@ -3428,6 +3464,14 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if kv == Gdk.KEY_Escape and self.shapes.placing:
             self.shapes.cancel()
             return True
+        if (self.form_controls.placing or self.form_controls.sel is not None) and not self.grid.editing() and self.get_focus() is self.grid.area:
+            if self.form_controls.key(ev):
+                return True
+        if kv == Gdk.KEY_space and not (ctrl or shift or alt) and not self.grid.editing() and self.get_focus() is self.grid.area \
+                and self.book is not None and not self.grid.sel_objects:
+            from . import controls_ui
+            if controls_ui.toggle_selected(self):
+                return True
         if kv == Gdk.KEY_Escape and self.ink.active() and not self.grid.editing():
             self.ink.set_tool(None)
             return True

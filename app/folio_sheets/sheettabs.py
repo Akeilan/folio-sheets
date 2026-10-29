@@ -39,7 +39,8 @@ class SheetTabs(Gtk.Paned):
 
     def rebuild(self):
         for b in self.buttons:
-            self.tabs.remove(b)
+            if b is not None:
+                self.tabs.remove(b)
         self.buttons = []
         book = self.win.book
         for i in range(book.sheet_count):

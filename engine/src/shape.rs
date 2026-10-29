@@ -62,6 +62,8 @@ pub struct ShapeView {
     pub connector: bool,
     /// an equation (Insert › Equation): what it says, its size in points
     pub math: Option<(crate::math::M, f64)>,
+    /// effects (the shape's own effectLst, else its style's effectRef in the theme)
+    pub fx: Effects,
 }
 
 fn emu_attr(e: &Element, n: &str) -> Option<f64> {
@@ -130,6 +132,7 @@ impl ShapeView {
             textbox: sp.child("nvSpPr").and_then(|n| n.child("cNvSpPr")).and_then(|c| c.attr("txBox")).map(|t| t == "1").unwrap_or(false),
             connector,
             math: None,
+            fx: Effects::default(),
         };
         // the style's references: what a shape looks like unless spPr says otherwise
         let style = sp.child("style");
@@ -1009,5 +1012,161 @@ pub fn set_math(body: &mut [Node], m: &crate::math::M, size_pt: f64) {
     let x = format!("<a:p><a:pPr algn=\"ctr\"/>{}<a:endParaRPr lang=\"en-US\" sz=\"{}\"/></a:p>", crate::math::write_omml(m, Some(size_pt)), sz);
     if let Ok((_, p)) = crate::xml::parse(&x) {
         tb.push(p);
+    }
+}
+
+
+/// The effects a shape is drawn with: shadows, glow and soft edges (sizes in points).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Effects {
+    /// (blur, distance, direction in degrees, alpha)
+    pub shadow: Option<(f64, f64, f64, f64)>,
+    pub inner: Option<(f64, f64, f64, f64)>,
+    /// (radius, colour, alpha); colour None = the shape's own
+    pub glow: Option<(f64, Option<u32>, f64)>,
+    pub soft_edge: Option<f64>,
+    pub bevel: bool,
+    pub reflection: bool,
+}
+
+fn alpha_in(e: &Element) -> f64 {
+    e.elems().next().and_then(|c| c.child("alpha")).and_then(|a| a.attr("val")).and_then(|v| v.parse::<f64>().ok()).map(|v| v / 100000.0).unwrap_or(1.0)
+}
+
+/// The effects of an effectStyle / effectLst's parent element.
+pub fn effects_of(parent: &Element, theme: &[u32; 12]) -> Option<Effects> {
+    let lst = parent.child("effectLst");
+    let has3d = parent.child("sp3d").map(|s| s.child("bevelT").is_some()).unwrap_or(false);
+    if lst.is_none() && !has3d {
+        return None;
+    }
+    let mut fx = Effects { bevel: has3d, ..Default::default() };
+    if let Some(l) = lst {
+        let emu = |e: &Element, n: &str| e.attr(n).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) / EMU_PER_PT;
+        if let Some(s) = l.child("outerShdw") {
+            fx.shadow = Some((emu(s, "blurRad"), emu(s, "dist"), s.attr("dir").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) / 60000.0, alpha_in(s)));
+        }
+        if let Some(s) = l.child("innerShdw") {
+            fx.inner = Some((emu(s, "blurRad"), emu(s, "dist"), s.attr("dir").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) / 60000.0, alpha_in(s)));
+        }
+        if let Some(gl) = l.child("glow") {
+            let col = gl.elems().next().filter(|c| !(c.local() == "schemeClr" && c.attr("val") == Some("phClr"))).and_then(|_| color_in(gl, theme));
+            fx.glow = Some((emu(gl, "rad"), col, alpha_in(gl)));
+        }
+        if let Some(se) = l.child("softEdge") {
+            fx.soft_edge = Some(emu(se, "rad"));
+        }
+        fx.reflection = l.child("reflection").is_some();
+    }
+    Some(fx)
+}
+
+impl ShapeView {
+    /// Effects from the shape's own spPr, else from the theme's effect style its effectRef names.
+    pub fn with_effects(mut self, body: &[Node], theme_fx: &[Effects], theme: &[u32; 12]) -> ShapeView {
+        let sp = match shape_elem(body) {
+            Some(s) => s,
+            None => return self,
+        };
+        if let Some(fx) = sp.child("spPr").and_then(|p| effects_of(p, theme)) {
+            self.fx = fx;
+            return self;
+        }
+        let idx = sp.child("style").and_then(|s| s.child("effectRef")).and_then(|r| r.attr("idx")).and_then(|i| i.parse::<usize>().ok()).unwrap_or(0);
+        if idx >= 1 {
+            if let Some(fx) = theme_fx.get(idx - 1) {
+                self.fx = fx.clone();
+            }
+        }
+        self
+    }
+}
+
+/// The three effect styles of a theme.
+pub fn theme_effects(theme_xml: &str, theme: &[u32; 12]) -> Vec<Effects> {
+    let (_, root) = match crate::xml::parse(theme_xml) {
+        Ok(x) => x,
+        Err(_) => return vec![],
+    };
+    let lst = root.child("themeElements").and_then(|t| t.child("fmtScheme")).and_then(|f| f.child("effectStyleLst"));
+    match lst {
+        Some(l) => l.elems().map(|e| effects_of(e, theme).unwrap_or_default()).collect(),
+        None => vec![],
+    }
+}
+
+thread_local! {
+    static FX_CACHE: std::cell::RefCell<Option<(u64, Vec<Effects>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// theme_effects, remembered for the last theme asked about.
+pub fn theme_effects_cached(theme_xml: Option<&str>, theme: &[u32; 12]) -> Vec<Effects> {
+    use std::hash::{Hash, Hasher};
+    let owned;
+    let x = match theme_xml {
+        Some(x) => x,
+        None => {
+            owned = crate::themes::default_theme_xml();
+            &owned
+        }
+    };
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    x.hash(&mut h);
+    theme.hash(&mut h);
+    let key = h.finish();
+    FX_CACHE.with(|c| {
+        if let Some((k, v)) = &*c.borrow() {
+            if *k == key {
+                return v.clone();
+            }
+        }
+        let v = theme_effects(x, theme);
+        *c.borrow_mut() = Some((key, v.clone()));
+        v
+    })
+}
+
+/// Shape Styles (Quick Styles): the theme's fill, line and effect styles by number (0 none,
+/// 1 subtle .. 3 intense) in a scheme colour; the shape's own fill, line and effects go.
+pub fn set_quick_style(body: &mut [Node], fill: u32, line: u32, effect: u32, clr: &str, fill_clr: &str, font: &str) {
+    if let Some(sp) = shape_elem_mut(body) {
+        {
+            let pr = sp_pr(sp);
+            pr.children.retain(|n| !matches!(n, Node::Elem(e) if FILLS.contains(&e.local()) || matches!(e.local(), "ln" | "effectLst" | "effectDag" | "scene3d" | "sp3d")));
+        }
+        let pfx = match sp.name.find(':') {
+            Some(i) => sp.name[..=i].to_string(),
+            None => String::new(),
+        };
+        let c = |shade: bool| if shade { format!("<a:schemeClr val=\"{}\"><a:shade val=\"50000\"/></a:schemeClr>", clr) } else { format!("<a:schemeClr val=\"{}\"/>", clr) };
+        let lclr = if line > 0 && fill > 0 && fill_clr == clr { c(true) } else { c(false) };
+        let st = format!("<{p}style xmlns:{q}=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:lnRef idx=\"{l}\">{lc}</a:lnRef><a:fillRef idx=\"{f}\">{fc}</a:fillRef><a:effectRef idx=\"{e}\">{ec}</a:effectRef><a:fontRef idx=\"minor\"><a:schemeClr val=\"{font}\"/></a:fontRef></{p}style>",
+            p = pfx, q = pfx.trim_end_matches(':').if_empty("xdr"), l = line, lc = lclr, f = fill, fc = format!("<a:schemeClr val=\"{}\"/>", fill_clr), e = effect, ec = c(false), font = font);
+        let mut el = parse_frag(&st);
+        let new = match el.children.drain(..).find(|n| matches!(n, Node::Elem(_))) {
+            Some(Node::Elem(mut e)) => {
+                e.attrs.retain(|(k, _)| !k.starts_with("xmlns"));
+                e
+            }
+            _ => return,
+        };
+        let pos = sp.children.iter().position(|n| matches!(n, Node::Elem(e) if e.local() == "style"));
+        match pos {
+            Some(i) => sp.children[i] = Node::Elem(new),
+            None => {
+                let at = sp.children.iter().position(|n| matches!(n, Node::Elem(e) if e.local() == "txBody")).unwrap_or(sp.children.len());
+                sp.children.insert(at, Node::Elem(new));
+            }
+        }
+        // the text takes the style's font colour: an explicit colour on the runs stays
+    }
+}
+
+trait IfEmpty {
+    fn if_empty<'a>(&'a self, d: &'a str) -> &'a str;
+}
+impl IfEmpty for str {
+    fn if_empty<'a>(&'a self, d: &'a str) -> &'a str {
+        if self.is_empty() { d } else { self }
     }
 }

@@ -370,6 +370,7 @@ def build_tab(win, B):
          B.small("Text Box", "r-text-box-sm", "text-box", "X")],
     ])
     B.group(t, "Shape Styles", [
+        B.big("Quick\nStyles", "r-shape-styles", None, "SS", menu=lambda: style_gallery(win)),
         [B.small("Shape Fill", "r-shape-fill-sm", None, "SF", menu=palette("fill", "shape-fill", "No Fill")),
          B.small("Shape Outline", "r-shape-outline-sm", None, "SO", menu=palette("line", "shape-outline", "No Outline"))],
     ])
@@ -423,3 +424,87 @@ def sync_tab(win):
         finally:
             win._shape_sync = False
     return shapes
+
+
+# ---------------------------------------------------------------- Shape Styles (theme styles)
+STYLE_ROWS = [
+    # (name, fill idx, line idx, effect idx, fill colour (None = the column's), font)
+    ("Colored Outline", 1, 2, 0, "lt1", None),
+    ("Colored Fill", 1, 2, 0, None, "lt1"),
+    ("Light 1 Outline, Colored Fill", 1, 1, 0, None, "lt1"),
+    ("Subtle Effect", 2, 1, 1, None, None),
+    ("Moderate Effect", 3, 0, 2, None, "lt1"),
+    ("Intense Effect", 3, 0, 3, None, "lt1"),
+]
+STYLE_COLS = [("dk1", "Black, Dark 1"), ("accent1", "Accent 1"), ("accent2", "Accent 2"), ("accent3", "Accent 3"),
+              ("accent4", "Accent 4"), ("accent5", "Accent 5"), ("accent6", "Accent 6")]
+# theme_colors() order: lt1 dk1 lt2 dk2 accent1..6
+_COL_INDEX = {"lt1": 0, "dk1": 1, "lt2": 2, "dk2": 3, "accent1": 4, "accent2": 5, "accent3": 6, "accent4": 7, "accent5": 8, "accent6": 9}
+
+
+def apply_style(win, row, col):
+    name, f, ln, fx, fill_clr, font = STYLE_ROWS[row]
+    clr = STYLE_COLS[col][0]
+    sel = selected_shapes(win)
+    if not sel:
+        return False
+    win.book.shape_quick_style(win.grid.sheet, sel, f, ln, fx, clr, fill_clr or clr, font or (clr if fill_clr == "lt1" else "dk1"))
+    win.grid.refresh()
+    win.update_title()
+    return True
+
+
+def style_gallery(win):
+    pop = Gtk.Popover()
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    box.set_border_width(8)
+    box.pack_start(Gtk.Label(label="Theme Styles", xalign=0), False, False, 0)
+    grid = Gtk.Grid(row_spacing=4, column_spacing=4)
+    theme = win.book.theme_colors() if win.book is not None else [0xFFFFFF, 0, 0xE7E6E6, 0x44546A] + [0x4472C4] * 8
+    pop.rows = []
+    for r, (name, f, ln, fx, fill_clr, font) in enumerate(STYLE_ROWS):
+        for c, (clr, cname) in enumerate(STYLE_COLS):
+            base = theme[_COL_INDEX[clr]]
+            fillc = theme[_COL_INDEX[fill_clr]] if fill_clr else base
+            area = Gtk.DrawingArea()
+            area.set_size_request(42, 28)
+
+            def draw(w, cr, base=base, fillc=fillc, fx=fx, ln=ln, f=f):
+                def rgb(v, a=1.0):
+                    cr.set_source_rgba(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255, a)
+                if fx >= 2:
+                    rgb(0, 0.25 if fx == 2 else 0.4)
+                    cr.rectangle(6, 7, 33, 19)
+                    cr.fill()
+                rgb(fillc)
+                cr.rectangle(4, 4, 33, 19)
+                if f >= 2 and fillc == base:
+                    import cairo
+                    gr = cairo.LinearGradient(0, 4, 0, 23)
+                    gr.add_color_stop_rgba(0, min(1, ((base >> 16) & 255) / 255 + .25), min(1, ((base >> 8) & 255) / 255 + .25), min(1, (base & 255) / 255 + .25), 1)
+                    gr.add_color_stop_rgb(1, ((base >> 16) & 255) / 255, ((base >> 8) & 255) / 255, (base & 255) / 255)
+                    cr.set_source(gr)
+                cr.fill_preserve()
+                if ln:
+                    rgb(base if fillc != base else (0xFFFFFF if ln == 1 else base))
+                    cr.set_line_width(1.5 if ln == 2 else 1)
+                    cr.stroke()
+                cr.new_path()
+                rgb(0x000000 if fillc != base else 0xFFFFFF)
+                cr.select_font_face("Sans")
+                cr.set_font_size(11)
+                cr.move_to(13, 18)
+                cr.show_text("Abc")
+            area.connect("draw", draw)
+            btn = Gtk.Button()
+            btn.set_relief(Gtk.ReliefStyle.NONE)
+            btn.add(area)
+            btn.set_name("shape-style:%d:%d" % (r, c))
+            btn.set_tooltip_text("%s - %s" % (name, cname))
+            btn.connect("clicked", lambda _b, r=r, c=c: (pop.popdown(), apply_style(win, r, c)))
+            grid.attach(btn, c, r, 1, 1)
+            pop.rows.append(btn)
+    box.pack_start(grid, False, False, 0)
+    pop.add(box)
+    box.show_all()
+    return pop

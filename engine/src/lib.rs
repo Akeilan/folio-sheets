@@ -67,6 +67,7 @@ pub mod page_view;
 pub mod chartex;
 pub mod chart_extra;
 pub mod colorsort;
+pub mod controls;
 pub mod xbook;
 #[cfg(feature = "python")]
 pub mod py;

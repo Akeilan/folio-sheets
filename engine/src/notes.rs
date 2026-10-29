@@ -41,6 +41,8 @@ pub struct CommentsFile {
     pub threads: Option<String>,
     pub notes: BTreeMap<(u32, u32), Note>,
     pub thread_map: BTreeMap<(u32, u32), Thread>,
+    /// the form controls the drawing held
+    pub controls: Vec<crate::controls::FormControl>,
 }
 
 pub const NOTE_W: f64 = 144.0;
@@ -531,7 +533,7 @@ pub fn write_comments(notes: &BTreeMap<(u32, u32), Note>, threads: &BTreeMap<(u3
 
 /// The VML drawing that shows the notes (and the threaded comments' stand-ins).
 /// `keep`: the old drawing, whose other shapes (form controls) stay.
-pub fn write_vml(book: &Book, s: usize, idmap: usize, keep: Option<&str>) -> String {
+pub fn write_vml(book: &Book, s: usize, idmap: usize, keep: Option<&str>, new_controls: bool) -> String {
     let sh = &book.sheets[s];
     let mut shapes = String::new();
     let mut k = 1;
@@ -562,7 +564,7 @@ pub fn write_vml(book: &Book, s: usize, idmap: usize, keep: Option<&str>) -> Str
             let after = &rest[i..];
             let end = after.find("</v:shape>").map(|e| e + 10).unwrap_or(after.len());
             let shape = &after[..end];
-            if !shape.contains("ObjectType=\"Note\"") {
+            if !shape.contains("ObjectType=\"Note\"") && !(new_controls && crate::controls::is_control_shape(shape)) {
                 others.push_str(shape);
             }
             rest = &after[end..];
@@ -581,6 +583,15 @@ pub fn write_vml(book: &Book, s: usize, idmap: usize, keep: Option<&str>) -> Str
         }
     }
     let _ = has_note_type;
+    if new_controls || keep.is_none() {
+        for c in &sh.controls {
+            shapes.push_str(&crate::controls::write_shape(book, s, c, idmap * 1024 + k, k));
+            k += 1;
+        }
+        if !sh.controls.is_empty() && !others.contains("_x0000_t201") {
+            others.insert_str(0, crate::controls::SHAPETYPE);
+        }
+    }
     format!("<xml xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:x=\"urn:schemas-microsoft-com:office:excel\"><o:shapelayout v:ext=\"edit\"><o:idmap v:ext=\"edit\" data=\"{}\"/></o:shapelayout><v:shapetype id=\"_x0000_t202\" coordsize=\"21600,21600\" o:spt=\"202\" path=\"m,l,21600r21600,l21600,xe\"><v:stroke joinstyle=\"miter\"/><v:path gradientshapeok=\"t\" o:connecttype=\"rect\"/></v:shapetype>{}{}</xml>",
         idmap, others, shapes)
 }

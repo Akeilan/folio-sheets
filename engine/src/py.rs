@@ -415,6 +415,7 @@ fn change(d: &Bound<'_, PyDict>) -> PyResult<Change> {
     if let Some(n) = get::<String>(d, "numfmt") {
         ch.numfmt = Some(n);
     }
+    ch.checkbox = get(d, "checkbox");
     Ok(ch)
 }
 
@@ -864,6 +865,7 @@ impl PyBook {
         d.set_item("wrap", x.wrap)?;
         d.set_item("numfmt", st.numfmt_code(x.numfmt))?;
         d.set_item("style_index", xi)?;
+        d.set_item("checkbox", x.checkbox)?;
         Ok(d)
     }
     /// Everything Format Cells needs about a cell.
@@ -1200,6 +1202,98 @@ impl PyBook {
         self.sheet(s)?;
         let ctx = cairo_ptr(cr)?;
         unsafe { self.b.render_page(s, k, ctx, file_name) }.map_err(verr)
+    }
+
+    // ---- form controls and cell check boxes (S3-07)
+    fn controls<'py>(&self, py: Python<'py>, s: usize) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.sheet(s)?;
+        let mut out = Vec::new();
+        for c in &self.b.sheets[s].controls {
+            out.push(control_dict(py, &self.b, s, c)?);
+        }
+        Ok(out)
+    }
+    /// Replace the sheet's controls (one undo step). Each dict: kind, rect (x, y, w, h sheet
+    /// pixels) and the other fields of controls().
+    fn set_controls(&mut self, s: usize, list: &Bound<'_, PyList>, label: &str) -> PyResult<()> {
+        self.sheet(s)?;
+        let mut v = Vec::new();
+        for (i, it) in list.iter().enumerate() {
+            let d = it.downcast::<PyDict>()?;
+            let kind: String = get(d, "kind").unwrap_or_else(|| "Button".into());
+            if !crate::controls::KINDS.contains(&kind.as_str()) {
+                return Err(PyValueError::new_err(format!("unknown control kind {}", kind)));
+            }
+            let mut c = self.b.sheets[s].controls.get(i).filter(|c| c.kind == kind).cloned().unwrap_or_else(|| crate::controls::FormControl::new(&kind));
+            c.kind = kind;
+            if let Some((x, y, w, h)) = get::<(f64, f64, f64, f64)>(d, "rect") {
+                self.b.place_control(s, &mut c, x, y, w, h);
+            }
+            if let Some(t) = get::<String>(d, "text") { c.text = t; }
+            if let Some(t) = get::<String>(d, "name") { c.name = t; }
+            if d.contains("link")? { c.link = get::<String>(d, "link").filter(|x| !x.is_empty()); }
+            if d.contains("range")? { c.range = get::<String>(d, "range").filter(|x| !x.is_empty()); }
+            if d.contains("macro")? { c.macro_name = get::<String>(d, "macro").filter(|x| !x.is_empty()); }
+            if let Some(x) = get::<u8>(d, "checked") { c.checked = x; }
+            if let Some(x) = get::<i64>(d, "val") { c.val = x; }
+            if let Some(x) = get::<i64>(d, "min") { c.min = x; }
+            if let Some(x) = get::<i64>(d, "max") { c.max = x; }
+            if let Some(x) = get::<i64>(d, "inc") { c.inc = x; }
+            if let Some(x) = get::<i64>(d, "page") { c.page = x; }
+            if let Some(x) = get::<bool>(d, "horiz") { c.horiz = x; }
+            if let Some(x) = get::<u32>(d, "drop_lines") { c.drop_lines = x; }
+            if let Some(x) = get::<bool>(d, "first_button") { c.first_button = x; }
+            if c.name.is_empty() {
+                c.name = self.b.control_name(s, &c.kind);
+            }
+            v.push(c);
+        }
+        self.b.set_controls(s, v, label);
+        Ok(())
+    }
+    fn control_screen_rect(&self, s: usize, i: usize, p: &Bound<'_, PyDict>) -> PyResult<Option<(f64, f64, f64, f64)>> {
+        self.sheet(s)?;
+        let vp = view_params(p);
+        let g = self.b.geometry(s, &vp);
+        Ok(self.b.sheets[s].controls.get(i).map(|c| self.b.control_screen_rect(s, &vp, &g, c)))
+    }
+    fn control_value(&self, s: usize, i: usize) -> PyResult<i64> {
+        self.sheet(s)?;
+        if i >= self.b.sheets[s].controls.len() {
+            return Err(PyIndexError::new_err("no such control"));
+        }
+        Ok(self.b.control_value(s, i))
+    }
+    fn set_control_value(&mut self, s: usize, i: usize, v: i64) -> PyResult<()> {
+        self.sheet(s)?;
+        if i >= self.b.sheets[s].controls.len() {
+            return Err(PyIndexError::new_err("no such control"));
+        }
+        self.b.set_control_value(s, i, v).map_err(verr)
+    }
+    fn control_items(&self, s: usize, i: usize) -> PyResult<Vec<String>> {
+        self.sheet(s)?;
+        Ok(self.b.sheets[s].controls.get(i).map(|c| self.b.control_items(s, c)).unwrap_or_default())
+    }
+    fn control_ref_ok(&self, s: usize, text: &str) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.control_ref(s, text).is_some())
+    }
+    fn control_name(&self, s: usize, kind: &str) -> PyResult<String> {
+        self.sheet(s)?;
+        Ok(self.b.control_name(s, kind))
+    }
+    fn cell_checkboxes(&mut self, s: usize, ranges: Vec<R4>, on: bool) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.cell_checkboxes(s, &rects(ranges), on).map_err(verr)
+    }
+    fn is_checkbox(&self, s: usize, r: u32, c: u32) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.is_checkbox(s, r, c))
+    }
+    fn toggle_checkbox(&mut self, s: usize, r: u32, c: u32) -> PyResult<()> {
+        self.sheet(s)?;
+        self.b.toggle_checkbox(s, r, c).map_err(verr)
     }
 
     // ---- notes and comments
@@ -2088,6 +2182,26 @@ impl PyBook {
     fn shape_set_fill(&mut self, s: usize, which: Vec<usize>, color: Option<u32>) -> PyResult<()> {
         self.b.edit_shape(s, &which, "Shape Fill", |b| crate::shape::set_fill(b, color)).map_err(verr)
     }
+    /// Shape Styles: theme fill/line/effect style numbers in a scheme colour ("accent1", "dk1"...).
+    #[pyo3(signature = (s, which, fill, line, effect, color, fill_color=None, font="lt1"))]
+    fn shape_quick_style(&mut self, s: usize, which: Vec<usize>, fill: u32, line: u32, effect: u32, color: &str, fill_color: Option<&str>, font: &str) -> PyResult<()> {
+        let fc = fill_color.unwrap_or(color).to_string();
+        self.b.edit_shape(s, &which, "Shape Style", |b| crate::shape::set_quick_style(b, fill, line, effect, color, &fc, font)).map_err(verr)
+    }
+    fn shape_effects(&self, s: usize, i: usize) -> PyResult<Option<(bool, bool, bool, bool)>> {
+        self.sheet(s)?;
+        let o = match self.b.sheets[s].objects.get(i) {
+            Some(o) => o,
+            None => return Ok(None),
+        };
+        let v = match self.b.shape_view(s, i) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let tfx = crate::shape::theme_effects_cached(self.b.styles.theme_xml.as_deref(), &self.b.styles.theme);
+        let v = v.with_effects(&o.body, &tfx, &self.b.styles.theme);
+        Ok(Some((v.fx.shadow.is_some(), v.fx.glow.is_some(), v.fx.bevel, v.fx.inner.is_some() || v.fx.soft_edge.is_some())))
+    }
     /// Shape Outline: colour ("none" for No Outline), weight in points, dashes.
     #[pyo3(signature = (s, which, color=None, no_line=false, weight=None, dashed=None))]
     fn shape_set_line(&mut self, s: usize, which: Vec<usize>, color: Option<u32>, no_line: bool, weight: Option<f64>, dashed: Option<bool>) -> PyResult<()> {
@@ -2775,4 +2889,25 @@ fn folio_sheets_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MAX_COLS", MAX_COLS)?;
     m.add("ENGINE", "folio-sheets-engine-2")?;
     Ok(())
+}
+
+fn control_dict<'py>(py: Python<'py>, b: &Book, s: usize, c: &crate::controls::FormControl) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new_bound(py);
+    d.set_item("kind", &c.kind)?;
+    d.set_item("rect", b.control_rect(s, c))?;
+    d.set_item("text", &c.text)?;
+    d.set_item("name", &c.name)?;
+    d.set_item("link", c.link.clone().unwrap_or_default())?;
+    d.set_item("range", c.range.clone().unwrap_or_default())?;
+    d.set_item("macro", c.macro_name.clone().unwrap_or_default())?;
+    d.set_item("checked", c.checked)?;
+    d.set_item("val", c.val)?;
+    d.set_item("min", c.min)?;
+    d.set_item("max", c.max)?;
+    d.set_item("inc", c.inc)?;
+    d.set_item("page", c.page)?;
+    d.set_item("horiz", c.horiz)?;
+    d.set_item("drop_lines", c.drop_lines)?;
+    d.set_item("first_button", c.first_button)?;
+    Ok(d)
 }

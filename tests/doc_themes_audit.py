@@ -183,8 +183,15 @@ def walk(w):
 
 
 walk(pop)
-check("Effects shows the workbook's effects and says the others aren't available",
-      any("aren't available" in t for t in labels) and any(t.startswith("Office") for t in labels))
+check("Effects offers the effect schemes (S3-11)",
+      all(any(t.startswith(n) for t in labels) for n in ("Office", "Subtle Solids", "Glossy", "Milk Glass", "Extreme Shadow")), labels)
+gl = [r for r in pop.rows if r.get_name() == "effects:Glossy"]
+check("Glossy is in the gallery", gl)
+if gl:
+    gl[0].clicked()
+    check("picking Glossy: the effects change, colours and fonts stay", b().theme_info()["effects_name"] == "Glossy" and b().theme_info()["colors_name"] == "My Colors",
+          b().theme_info())
+    pop = T.effects_menu(win)
 pop.rows[0].clicked()
 check("picking Office keeps colours and fonts", b().theme_info()["colors_name"] == "My Colors" and b().theme_info()["effects_name"] == "Office")
 

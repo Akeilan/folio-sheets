@@ -449,11 +449,16 @@ fn load_comments(sh: &mut Sheet, parts: &[(String, Vec<u8>)], persons: &HashMap<
     let comments = rels.iter().find(|r| r.1.ends_with("/comments") && !r.3).map(|r| r.2.clone());
     let threads = rels.iter().find(|r| r.1.ends_with("/threadedComment") && !r.3).map(|r| r.2.clone());
     let vml = rels.iter().find(|r| r.1.ends_with("/vmlDrawing") && !r.3).map(|r| r.2.clone());
-    if comments.is_none() && threads.is_none() {
+    if comments.is_none() && threads.is_none() && vml.is_none() {
         return;
     }
     let text = |p: &Option<String>| p.as_ref().and_then(|p| find_part(parts, p)).and_then(|d| xml::decode(d).ok());
     let vml_text = text(&vml);
+    let controls = vml_text.as_deref().map(crate::controls::read_vml).unwrap_or_default();
+    if comments.is_none() && threads.is_none() && controls.is_empty() {
+        return;
+    }
+    sh.controls = controls.clone();
     let mut cf = crate::notes::CommentsFile { comments: comments.clone(), vml: vml.clone(), vml_text: vml_text.clone(), threads: threads.clone(), ..Default::default() };
     if let Some(t) = text(&comments) {
         match crate::notes::read_comments(&t, vml_text.as_deref()) {
@@ -470,6 +475,7 @@ fn load_comments(sh: &mut Sheet, parts: &[(String, Vec<u8>)], persons: &HashMap<
     }
     cf.notes = sh.notes.clone();
     cf.thread_map = sh.threads.clone();
+    cf.controls = controls;
     sh.comments_file = Some(cf);
 }
 
@@ -1138,6 +1144,9 @@ impl Sst {
 impl Book {
     pub fn save(&mut self, path: &str) -> Result<(), String> {
         let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("xlsx").to_string();
+        if self.styles.xfs.iter().any(|x| x.checkbox) {
+            self.ensure_feature_bag();
+        }
         let data = self.to_bytes_as(&ext)?;
         let tmp = format!("{}.~tmp", path);
         std::fs::write(&tmp, &data).map_err(|e| format!("Could not save {}: {}", path, e))?;
@@ -1326,8 +1335,8 @@ impl Book {
             let has_d = !(sh.objects.is_empty() && sh.drawing.is_none());
             let has_t = !sh.tables.is_empty() || sh.pieces.iter().any(|p| matches!(p, Piece::Known(t) if t == "tableParts"));
             let has_c = match &sh.comments_file {
-                Some(f) => f.notes != sh.notes || f.thread_map != sh.threads,
-                None => !sh.notes.is_empty() || !sh.threads.is_empty(),
+                Some(f) => f.notes != sh.notes || f.thread_map != sh.threads || f.controls != sh.controls,
+                None => !sh.notes.is_empty() || !sh.threads.is_empty() || !sh.controls.is_empty(),
             };
             let had_links = self.file.parts.iter().any(|(n, d)| *n == rels_name(&sheet_parts[i].0) && String::from_utf8_lossy(d).contains("/hyperlink\""));
             let has_l = crate::links::has_targets(sh) || had_links;
@@ -1586,11 +1595,22 @@ impl Book {
             }
         };
         let empty = sh.notes.is_empty() && sh.threads.is_empty();
-        let others = old.vml_text.as_deref().map(|v| {
+        let ctrl_changed = old.controls != sh.controls;
+        let others = !sh.controls.is_empty() || old.vml_text.as_deref().map(|v| {
             let n_shapes = v.matches("<v:shape ").count();
             let n_notes = v.matches("ObjectType=\"Note\"").count();
-            n_shapes > n_notes
+            let n_ctrls = if ctrl_changed { crate::controls::KINDS.iter().map(|k| v.matches(&format!("ObjectType=\"{}\"", k)).count()).sum::<usize>() } else { 0 };
+            n_shapes > n_notes + n_ctrls
         }).unwrap_or(false);
+        if ctrl_changed {
+            // the newer control parts describe the old controls: they go, the drawing carries the new ones
+            let gone: Vec<String> = srels.elems().filter(|e| is(e, "/ctrlProp")).filter_map(|e| e.attr("Target").map(|t| resolve(sheet_part, t))).collect();
+            for p in gone {
+                remove_override(ct, &p);
+                dropped.push(p);
+            }
+            srels.children.retain(|n| !matches!(n, Node::Elem(e) if is(e, "/ctrlProp")));
+        }
         // the comments part
         if !empty {
             let cp = old.comments.clone().unwrap_or_else(|| fresh("comments", "xml", taken));
@@ -1622,7 +1642,7 @@ impl Book {
             return None;
         }
         let vp = old.vml.clone().unwrap_or_else(|| fresh("drawings/vmlDrawing", "vml", taken));
-        out.push((vp.clone(), crate::notes::write_vml(self, i, i + 1, old.vml_text.as_deref()).into_bytes()));
+        out.push((vp.clone(), crate::notes::write_vml(self, i, i + 1, old.vml_text.as_deref(), ctrl_changed).into_bytes()));
         set_default(ct, "vml", "application/vnd.openxmlformats-officedocument.vmlDrawing");
         let id = rid(&mut ids);
         srels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing"), ("Target", &relative(sheet_part, &vp))]));
@@ -2114,6 +2134,10 @@ impl Book {
         if legacy.is_some() {
             // the notes' drawing is written anew (or goes)
             pieces.retain(|x| !matches!(x, Piece::Known(t) | Piece::Raw(t, _) if t == "legacyDrawing"));
+            if sh.comments_file.as_ref().map(|f| f.controls != sh.controls).unwrap_or(!sh.controls.is_empty()) {
+                // the newer controls list describes the old controls
+                pieces.retain(|x| !matches!(x, Piece::Raw(t, body) if t == "controls" || body.contains("<controls") || body.contains(":controls")));
+            }
             pieces.push(Piece::Known("legacyDrawing".into()));
         }
         let rank = |p: &Piece| -> usize {
