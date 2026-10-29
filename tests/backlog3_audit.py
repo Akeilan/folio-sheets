@@ -655,6 +655,52 @@ check("output range", b.display(SA, 2, 8) == "1" and b.display(SA, 1, 8) == "A",
 check("Data Analysis command wired", hasattr(win, "act_data_analysis"))
 g.set_sheet(0)
 
+# ---------------------------------------------------------------- S3-10 Scenario PivotTable report
+from folio_sheets import whatif_ui  # noqa: E402
+win.run("insert-sheet")
+pump()
+SS = g.sheet
+b.set_input(SS, 0, 0, "Rate")
+b.set_input(SS, 0, 1, "0.05")
+b.set_input(SS, 1, 0, "Years")
+b.set_input(SS, 1, 1, "10")
+b.set_input(SS, 2, 0, "Value")
+b.set_input(SS, 2, 1, "=1000*(1+B1)^B2")
+b.set_scenarios(SS, [{"name": "Low", "cells": [(0, 1, "0.02"), (1, 1, "5")]}, {"name": "High", "cells": [(0, 1, "0.08"), (1, 1, "20")]}], "Add Scenario")
+
+
+def _pivot_pick(d):
+    rb = [w for w in widgets(d, Gtk.RadioButton) if w.get_label() == "Scenario PivotTable report"]
+    rb[0].set_active(True)
+    ent = widgets(d, Gtk.Entry)
+    ent[0].set_text("$B$3")
+    return Gtk.ResponseType.OK
+
+
+nsh = b.sheet_count
+np_ = b.pivot_count()
+DIALOG.append(_pivot_pick)
+try:
+    mgr = whatif_ui.ScenarioManager.__new__(whatif_ui.ScenarioManager)
+    mgr.win = win
+    dest = mgr.summary()
+except Exception as e:
+    dest = None
+    print("scenario pivot:", e)
+pump(0.2)
+check("Scenario PivotTable report: a PivotTable on a new sheet", dest is not None and dest is not False and b.pivot_count() == np_ + 1 and b.sheet_count == nsh + 2,
+      (dest, b.pivot_count(), b.sheet_count))
+if dest:
+    shown = [[b.display(dest, r, c) for c in range(3)] for r in range(2, 7)]
+    flat = sum(shown, [])
+    check("the scenarios down the rows, the result cell's values", "Low" in flat and "High" in flat
+          and any(abs(float(x.replace(",", "")) - 1000 * 1.02 ** 5) < 0.01 for x in flat if x.replace(",", "").replace(".", "").isdigit()), shown)
+    check("its field names the changing cells", b.pivot(b.pivot_count() - 1)["fields"][0]["name"] == "$B$1:$B$2 by",
+          b.pivot(b.pivot_count() - 1)["fields"])
+SS = SS + 1 if dest is not None and dest <= SS else SS
+check("the sheet itself is unchanged", b.input(SS, 0, 1) == "0.05" and b.input(SS, 1, 1) == "10")
+g.set_sheet(0)
+
 # ---------------------------------------------------------------- end
 w2.book.mark_saved()
 for p in tuple(globals().get("EXTRA", ())):
