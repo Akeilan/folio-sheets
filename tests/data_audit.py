@@ -83,10 +83,10 @@ check("sort undoes in one step", col(0) == ["fig", "pear", "apple", "apple", "ki
 
 def sort_dialog(d):
     d.add_level()
-    _, cb, order = d.levels[0]
+    _, cb, order = d.levels[0][:3]
     cb.set_active(2)          # Price
     order.set_active(1)       # largest first
-    _, cb2, order2 = d.levels[1]
+    _, cb2, order2 = d.levels[1][:3]
     cb2.set_active(0)
     return Gtk.ResponseType.OK
 

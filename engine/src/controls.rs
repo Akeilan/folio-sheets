@@ -323,7 +323,7 @@ impl Book {
     /// A range limited to sensible bounds (a whole column: down to the data, at least row 1).
     fn clip_used(&self, s: usize, rg: crate::cellref::Rect) -> crate::cellref::Rect {
         let mut rg = rg;
-        if rg.count() > 100_000 {
+        if rg.count() > 10_000 {
             let (er, ec) = self.sheets[s].data_extent().unwrap_or((rg.r1, rg.c1));
             rg.r2 = rg.r2.min(er.max(rg.r1));
             rg.c2 = rg.c2.min(ec.max(rg.c1));

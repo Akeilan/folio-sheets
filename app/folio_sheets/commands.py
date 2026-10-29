@@ -123,7 +123,7 @@ LABELS = {
     "sparkline-column": "Column Sparkline", "sparkline-winloss": "Win/Loss Sparkline",
     "spark-type": "Sparkline Type", "spark-show": "Show Points", "spark-color": "Sparkline Color", "spark-weight": "Sparkline Weight",
     "spark-marker": "Marker Color", "spark-clear": "Clear Selected Sparklines", "spark-clear-group": "Clear Selected Sparkline Groups",
-    "spark-group": "Group Sparklines", "spark-ungroup": "Ungroup Sparklines", "spark-edit-data": "Edit Sparkline Data", "spark-axis": "Sparkline Axis", "spark-axis-opt": "Axis", "spark-hidden-empty": "Hidden & Empty Cells",
+    "spark-group": "Group Sparklines", "spark-ungroup": "Ungroup Sparklines", "spark-edit-data": "Edit Sparkline Data", "spark-axis-opt": "Axis", "spark-hidden-empty": "Hidden & Empty Cells",
     "slicer": "Slicer", "timeline": "Timeline", "link": "Link", "comment": "New Comment",
     "text-box": "Text Box", "shape-insert": "Insert Shape", "wordart-insert": "Insert WordArt", "shape-fill": "Shape Fill",
     "shape-outline": "Shape Outline", "shape-weight": "Shape Outline Weight", "shape-dash": "Shape Outline Dashes",
