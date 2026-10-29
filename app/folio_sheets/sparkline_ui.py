@@ -197,6 +197,8 @@ def build_tab(win, B):
     r = win.ribbon
     t = r.building(Tab("Sparkline", "JS", contextual=True))
     B.group(t, "Sparkline", [B.big("Edit\nData", "r-spark-edit-data", "spark-edit-data", "D",
+                                   menu=[("Edit Group Location & Data...", "spark-edit-data"),
+                                         ("Hidden & Empty Cells...", "spark-hidden-empty")],
                                    tip="Edit Data\nChange the data and the cells of this group of sparklines.")])
     B.group(t, "Type", [
         RibbonButton(B.r, label.replace("/", "/\n") if "/" in label else label, "r-sparkline-" + k, "spark-type:" + k,
@@ -240,7 +242,14 @@ def build_tab(win, B):
     marker_menu = [(label, [(name, "spark-marker:%s:%06X" % (key, c)) for name, c in COLORS]) for key, label in MARKERS]
     B.group(t, "Style", [[B.small("Sparkline Color", "r-spark-color-sm", None, "SC", menu=series_color),
                           B.small("Marker Color", "r-marker-color-sm", None, "M", menu=marker_menu)]])
-    B.group(t, "Group", [[B.small("Axis", "r-spark-axis-sm", "spark-axis", "A"),
+    axis_menu = [("#", "Horizontal Axis Options"), ("General Axis Type", "spark-axis-opt:general"),
+                 ("Date Axis Type...", "spark-axis-opt:date"), ("Show Axis", "spark-axis-opt:show"),
+                 ("Plot Data Right-to-left", "spark-axis-opt:rtl"), None,
+                 ("#", "Vertical Axis Minimum Value Options"), ("Automatic for Each Sparkline", "spark-axis-opt:min-individual"),
+                 ("Same for All Sparklines", "spark-axis-opt:min-group"), ("Custom Value...", "spark-axis-opt:min-custom"), None,
+                 ("#", "Vertical Axis Maximum Value Options"), ("Automatic for Each Sparkline", "spark-axis-opt:max-individual"),
+                 ("Same for All Sparklines", "spark-axis-opt:max-group"), ("Custom Value...", "spark-axis-opt:max-custom")]
+    B.group(t, "Group", [[B.small("Axis", "r-spark-axis-sm", None, "A", menu=axis_menu),
                           B.small("Group", "r-group-sm", "spark-group", "G"),
                           B.small("Ungroup", "r-group-sm", "spark-ungroup", "U")],
                          [B.small("Clear", "r-clear-sm", None, "C", menu=[
@@ -267,6 +276,93 @@ def sync_tab(win):
     return cur
 
 
-def axis_not_available(win):
-    win.dialogs.info("Sparkline axis options aren't available in %s yet. Sparklines are drawn "
-                     "with an automatic axis for each sparkline." % APP_NAME, "Axis")
+def _ask_value(win, title, label, cur):
+    d = Gtk.Dialog(title=title, transient_for=win, modal=True)
+    d.get_style_context().add_class("folio-dialog")
+    d.add_button("OK", Gtk.ResponseType.OK)
+    d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+    d.set_default_response(Gtk.ResponseType.OK)
+    box = d.get_content_area()
+    box.set_border_width(12)
+    box.set_spacing(6)
+    box.pack_start(Gtk.Label(label=label, xalign=0), False, False, 0)
+    e = Gtk.Entry()
+    e.set_text(cur)
+    e.set_activates_default(True)
+    box.pack_start(e, False, False, 0)
+    d.show_all()
+    r = d.run()
+    t = e.get_text().strip()
+    d.destroy()
+    return t if r == Gtk.ResponseType.OK else None
+
+
+def axis_option(win, what, value=None):
+    """Sparkline > Axis. value: the custom number or the date range (tests skip the dialogs)."""
+    cur = current(win)
+    if cur is None:
+        return False
+    info = cur[1]
+    if what == "general":
+        return set_options(win, date_range=None)
+    if what == "date":
+        if value is None:
+            value = _ask_value(win, "Sparkline Date Range", "Select the range that contains the date values for the sparkline data:",
+                               info.get("date_range") or "")
+            if value is None:
+                return False
+        value = value.lstrip("=")
+        return set_options(win, date_range=value or None)
+    if what == "show":
+        return set_options(win, show_axis=not info.get("show_axis"))
+    if what == "rtl":
+        return set_options(win, right_to_left=not info.get("right_to_left"))
+    side, kind = what.split("-", 1)
+    if kind != "custom":
+        return set_options(win, **{side + "_type": kind})
+    if value is None:
+        t = _ask_value(win, "Sparkline Vertical Axis Settings", "Enter the %s value for the vertical axis:" % ("minimum" if side == "min" else "maximum"),
+                       "%g" % (info.get("manual_" + side) or 0.0))
+        if t is None:
+            return False
+        try:
+            value = float(t)
+        except ValueError:
+            win.dialogs.message("Enter a number.", "Axis")
+            return False
+    return set_options(win, **{side + "_type": "custom", "manual_" + side: float(value)})
+
+
+def hidden_empty(win, empty_as=None, show_hidden=None):
+    """Edit Data > Hidden & Empty Cells."""
+    cur = current(win)
+    if cur is None:
+        return False
+    info = cur[1]
+    if empty_as is None:
+        d = Gtk.Dialog(title="Hidden and Empty Cell Settings", transient_for=win, modal=True)
+        d.get_style_context().add_class("folio-dialog")
+        d.add_button("OK", Gtk.ResponseType.OK)
+        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        box = d.get_content_area()
+        box.set_border_width(12)
+        box.set_spacing(4)
+        box.pack_start(Gtk.Label(label="Show empty cells as:", xalign=0), False, False, 0)
+        gap = Gtk.RadioButton.new_with_label(None, "Gaps")
+        zero = Gtk.RadioButton.new_with_label_from_widget(gap, "Zero")
+        span = Gtk.RadioButton.new_with_label_from_widget(gap, "Connect data points with line")
+        for w in (gap, zero, span):
+            box.pack_start(w, False, False, 0)
+        {"gap": gap, "zero": zero, "span": span}.get(info.get("empty_as", "gap"), gap).set_active(True)
+        span.set_sensitive(info["kind"] == "line")
+        hid = Gtk.CheckButton(label="Show data in hidden rows and columns")
+        hid.set_active(bool(info.get("show_hidden")))
+        box.pack_start(hid, False, False, 6)
+        d.show_all()
+        r = d.run()
+        empty_as = "zero" if zero.get_active() else "span" if span.get_active() else "gap"
+        show_hidden = hid.get_active()
+        d.destroy()
+        if r != Gtk.ResponseType.OK:
+            return False
+    return set_options(win, empty_as=empty_as, show_hidden=bool(show_hidden))

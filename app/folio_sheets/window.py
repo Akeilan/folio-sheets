@@ -792,9 +792,13 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import sparkline_ui
         sparkline_ui.edit_data(self)
 
-    def act_spark_axis(self):
+    def act_spark_axis_opt(self, arg):
         from . import sparkline_ui
-        sparkline_ui.axis_not_available(self)
+        sparkline_ui.axis_option(self, arg)
+
+    def act_spark_hidden_empty(self):
+        from . import sparkline_ui
+        sparkline_ui.hidden_empty(self)
 
     def act_shape_fill(self, arg):
         sel = self._shapes_sel()

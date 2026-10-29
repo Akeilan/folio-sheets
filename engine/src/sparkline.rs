@@ -32,6 +32,20 @@ pub struct SparkGroup {
     pub show_negative: bool,
     /// points
     pub weight: f64,
+    /// vertical axis: "individual" (each its own), "group" (same for all) or "custom" (manual_*)
+    pub min_type: String,
+    pub max_type: String,
+    pub manual_min: Option<f64>,
+    pub manual_max: Option<f64>,
+    /// Show Axis (a line at zero), its colour, Plot Data Right-to-left
+    pub show_axis: bool,
+    pub axis_color: u32,
+    pub right_to_left: bool,
+    /// Date Axis Type: the dates the points sit at (a range), or None for evenly spaced points
+    pub date_range: Option<String>,
+    /// Hidden & Empty Cells: "gap", "zero" or "span"; show data in hidden rows and columns
+    pub empty_as: String,
+    pub show_hidden: bool,
     /// (data reference, location cell)
     pub items: Vec<(String, (u32, u32))>,
     /// the element as read (what isn't modelled is written back)
@@ -58,6 +72,16 @@ impl SparkGroup {
             last: false,
             show_negative: kind == "stacked",
             weight: 0.75,
+            min_type: "individual".into(),
+            max_type: "individual".into(),
+            manual_min: None,
+            manual_max: None,
+            show_axis: false,
+            axis_color: 0x000000,
+            right_to_left: false,
+            date_range: None,
+            empty_as: "gap".into(),
+            show_hidden: false,
             items: vec![],
             el: None,
         }
@@ -68,7 +92,7 @@ impl SparkGroup {
     /// The group with its theme colours worked out, for drawing.
     pub fn resolved(&self, f: impl Fn(u32) -> u32) -> SparkGroup {
         let mut g = self.clone();
-        for c in [&mut g.color, &mut g.negative, &mut g.markers_color, &mut g.high_color, &mut g.low_color, &mut g.first_color, &mut g.last_color] {
+        for c in [&mut g.color, &mut g.negative, &mut g.markers_color, &mut g.high_color, &mut g.low_color, &mut g.first_color, &mut g.last_color, &mut g.axis_color] {
             *c = f(*c);
         }
         g
@@ -111,6 +135,18 @@ fn parse_group(g: &Element) -> SparkGroup {
     s.last = flag(g, "last");
     s.show_negative = flag(g, "negative");
     s.weight = g.attr("lineWeight").and_then(|v| v.parse().ok()).unwrap_or(0.75);
+    s.min_type = g.attr("minAxisType").unwrap_or("individual").to_string();
+    s.max_type = g.attr("maxAxisType").unwrap_or("individual").to_string();
+    s.manual_min = g.attr("manualMin").and_then(|v| v.parse().ok());
+    s.manual_max = g.attr("manualMax").and_then(|v| v.parse().ok());
+    s.show_axis = flag(g, "displayXAxis");
+    s.axis_color = argb(g.child("colorAxis"), 0x000000);
+    s.right_to_left = flag(g, "rightToLeft");
+    s.empty_as = g.attr("displayEmptyCellsAs").unwrap_or("zero").to_string();
+    s.show_hidden = flag(g, "displayHidden");
+    if flag(g, "dateAxis") {
+        s.date_range = g.elems().find(|e| e.local() == "f").map(|e| e.text());
+    }
     if let Some(list) = g.child("sparklines") {
         for sp in list.elems().filter(|e| e.local() == "sparkline") {
             let f = sp.child("f").map(|e| e.text()).unwrap_or_default();
@@ -174,18 +210,41 @@ fn write_group(g: &SparkGroup) -> Element {
     set(&mut e, "first", g.first);
     set(&mut e, "last", g.last);
     set(&mut e, "negative", g.show_negative);
+    set(&mut e, "displayXAxis", g.show_axis);
+    set(&mut e, "rightToLeft", g.right_to_left);
+    set(&mut e, "displayHidden", g.show_hidden);
+    set(&mut e, "dateAxis", g.date_range.is_some());
+    e.set_attr("displayEmptyCellsAs", &g.empty_as);
+    for (n, t) in [("minAxisType", &g.min_type), ("maxAxisType", &g.max_type)] {
+        if t == "individual" {
+            e.remove_attr(n);
+        } else {
+            e.set_attr(n, t);
+        }
+    }
+    for (n, v) in [("manualMin", g.manual_min), ("manualMax", g.manual_max)] {
+        match v {
+            Some(x) => e.set_attr(n, &crate::xlsx::num_text(x)),
+            None => e.remove_attr(n),
+        }
+    }
     // colours, then the sparklines, in the schema's order
-    e.children.retain(|n| !matches!(n, Node::Elem(c) if c.local().starts_with("color") || c.local() == "sparklines"));
+    e.children.retain(|n| !matches!(n, Node::Elem(c) if c.local().starts_with("color") || c.local() == "sparklines" || c.local() == "f"));
     let mut kids = vec![
         color_el("colorSeries", g.color),
         color_el("colorNegative", g.negative),
-        color_el("colorAxis", 0x000000),
+        color_el("colorAxis", g.axis_color),
         color_el("colorMarkers", g.markers_color),
         color_el("colorFirst", g.first_color),
         color_el("colorLast", g.last_color),
         color_el("colorHigh", g.high_color),
         color_el("colorLow", g.low_color),
     ];
+    if let Some(d) = &g.date_range {
+        let mut fe = Element::new("xm:f");
+        fe.children.push(Node::Text(d.clone()));
+        kids.push(fe);
+    }
     let mut list = Element::new("x14:sparklines");
     for (f, (r, c)) in &g.items {
         let mut sp = Element::new("x14:sparkline");
@@ -406,6 +465,58 @@ impl Book {
         Ok(())
     }
 
+    /// A sparkline's numbers as its group shows them: without hidden rows and columns unless
+    /// the group shows them.
+    pub fn group_values(&self, s: usize, g: &SparkGroup, f: &str) -> Vec<Option<f64>> {
+        let vals = self.sparkline_values(s, f);
+        if g.show_hidden {
+            return vals;
+        }
+        let (sheet, rng) = match f.rfind('!') {
+            Some(i) => (self.sheet_index(f[..i].trim_matches('\'')).unwrap_or(s), &f[i + 1..]),
+            None => (s, f),
+        };
+        let r = match parse_range(&rng.replace('$', "")) {
+            Some(r) => r,
+            None => return vals,
+        };
+        let horizontal = r.r1 == r.r2;
+        let sh = &self.sheets[sheet];
+        vals.into_iter().enumerate().filter(|(k, _)| {
+            let k = *k as u32;
+            if horizontal { !sh.col_hidden(r.c1 + k) } else { !sh.rows.get(&(r.r1 + k)).map(|x| x.hidden).unwrap_or(false) }
+        }).map(|(_, v)| v).collect()
+    }
+
+    /// The group's vertical axis when it is the same for all (min, max over its sparklines).
+    pub fn group_bounds(&self, s: usize, g: &SparkGroup) -> Option<(f64, f64)> {
+        let mut lo = f64::MAX;
+        let mut hi = f64::MIN;
+        for (f, _) in &g.items {
+            for v in self.group_values(s, g, f).into_iter().flatten() {
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        if lo <= hi { Some((lo, hi)) } else { None }
+    }
+
+    /// Where the points sit along the cell (0..1) on a date axis.
+    pub fn date_positions(&self, s: usize, g: &SparkGroup) -> Option<Vec<f64>> {
+        let d = g.date_range.as_ref()?;
+        let ds: Vec<f64> = self.sparkline_values(s, d).into_iter().map(|v| v.unwrap_or(f64::NAN)).collect();
+        let ok: Vec<f64> = ds.iter().copied().filter(|v| v.is_finite()).collect();
+        if ok.len() < 2 {
+            return None;
+        }
+        let lo = ok.iter().cloned().fold(f64::MAX, f64::min);
+        let hi = ok.iter().cloned().fold(f64::MIN, f64::max);
+        if hi <= lo {
+            return None;
+        }
+        Some(ds.iter().map(|v| if v.is_finite() { (v - lo) / (hi - lo) } else { 0.0 }).collect())
+    }
+
     /// A sparkline's numbers (non-numbers are gaps).
     pub fn sparkline_values(&self, s: usize, f: &str) -> Vec<Option<f64>> {
         let (sheet, rng) = match f.rfind('!') {
@@ -432,16 +543,63 @@ impl Book {
 }
 
 /// Draw one sparkline in a cell box.
+/// The vertical axis of one sparkline: its own numbers, or the group's (Same for All), or the
+/// custom values. `group` = (min, max) over every sparkline of the group.
+pub fn bounds(g: &SparkGroup, vals: &[Option<f64>], group: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    let nums: Vec<f64> = vals.iter().flatten().copied().collect();
+    if nums.is_empty() {
+        return None;
+    }
+    let own_mn = nums.iter().cloned().fold(f64::MAX, f64::min);
+    let own_mx = nums.iter().cloned().fold(f64::MIN, f64::max);
+    let mn = match g.min_type.as_str() {
+        "group" => group.map(|x| x.0).unwrap_or(own_mn),
+        "custom" => g.manual_min.unwrap_or(own_mn),
+        _ => own_mn,
+    };
+    let mx = match g.max_type.as_str() {
+        "group" => group.map(|x| x.1).unwrap_or(own_mx),
+        "custom" => g.manual_max.unwrap_or(own_mx),
+        _ => own_mx,
+    };
+    Some((mn, mx.max(mn)))
+}
+
+/// Draw one sparkline in a cell box. `range` = the vertical axis (bounds()); `xs` = where the
+/// points sit along the cell (0..1) for a date axis.
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn paint(cr: *mut crate::ffi::cairo_t, g: &SparkGroup, vals: &[Option<f64>], x: f64, y: f64, w: f64, h: f64, z: f64) {
+    paint_with(cr, g, vals, None, None, x, y, w, h, z)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn paint_with(cr: *mut crate::ffi::cairo_t, g: &SparkGroup, vals: &[Option<f64>], range: Option<(f64, f64)>, xs: Option<&[f64]>,
+                         x: f64, y: f64, w: f64, h: f64, z: f64) {
     use crate::ffi::*;
     let pad = (2.0 * z).max(1.5);
     let (x, y, w, h) = (x + pad, y + pad, (w - 2.0 * pad).max(1.0), (h - 2.0 * pad).max(1.0));
+    // empty cells as zero; right to left
+    let mut owned: Vec<Option<f64>> = if g.empty_as == "zero" { vals.iter().map(|v| Some(v.unwrap_or(0.0))).collect() } else { vals.to_vec() };
+    let mut xs_owned: Option<Vec<f64>> = xs.map(|v| v.to_vec());
+    if g.right_to_left {
+        owned.reverse();
+        if let Some(v) = xs_owned.as_mut() {
+            v.reverse();
+            for t in v.iter_mut() {
+                *t = 1.0 - *t;
+            }
+        }
+    }
+    let vals = &owned[..];
+    let xs = xs_owned.as_deref();
     let nums: Vec<f64> = vals.iter().flatten().copied().collect();
     if nums.is_empty() {
         return;
     }
-    let mn = nums.iter().cloned().fold(f64::MAX, f64::min);
-    let mx = nums.iter().cloned().fold(f64::MIN, f64::max);
+    let (mn, mx) = match range.or_else(|| bounds(g, vals, None)) {
+        Some(b) => b,
+        None => return,
+    };
     let n = vals.len().max(1);
     let col = |c: u32| ((c >> 16 & 255) as f64 / 255.0, (c >> 8 & 255) as f64 / 255.0, (c & 255) as f64 / 255.0);
     let set = |c: u32| {
@@ -489,28 +647,43 @@ pub unsafe fn paint(cr: *mut crate::ffi::cairo_t, g: &SparkGroup, vals: &[Option
                     cairo_fill(cr);
                 }
             } else {
-                let lo = mn.min(0.0);
-                let hi = mx.max(0.0);
+                let lo = if g.min_type == "individual" { mn.min(0.0) } else { mn };
+                let hi = if g.max_type == "individual" { mx.max(0.0) } else { mx };
+                if g.show_axis && lo < 0.0 && hi > 0.0 {
+                    set(g.axis_color);
+                    cairo_set_line_width(cr, 1.0);
+                    let ay = (y + h * (hi / (hi - lo))).floor() + 0.5;
+                    cairo_move_to(cr, x, ay);
+                    cairo_line_to(cr, x + w, ay);
+                    cairo_stroke(cr);
+                }
                 let span = if hi > lo { hi - lo } else { 1.0 };
-                let base = y + h * (hi / span);
+                let ypos = |v: f64| y + h * ((hi - v.clamp(lo, hi)) / span);
+                let base = ypos(0.0);
                 for (i, v) in vals.iter().enumerate() {
                     let v = match v {
                         Some(v) => *v,
                         None => continue,
                     };
                     set(point_color(i, v).unwrap_or(if v < 0.0 && g.show_negative { g.negative } else { g.color }));
-                    let bx = x + i as f64 * bw + gap / 2.0;
-                    let top = y + h * ((hi - v.max(0.0)) / span);
-                    let bottom = y + h * ((hi - v.min(0.0)) / span);
+                    let bx = match xs {
+                        Some(t) if i < t.len() => x + (w - bw) * t[i] + gap / 2.0,
+                        _ => x + i as f64 * bw + gap / 2.0,
+                    };
+                    let yv = ypos(v);
+                    let (top, bottom) = if yv < base { (yv, base) } else { (base, yv) };
                     let hh = (bottom - top).max(1.0);
-                    cairo_rectangle(cr, bx, if v >= 0.0 { base - hh } else { base }, bw - gap, hh);
+                    cairo_rectangle(cr, bx, top, bw - gap, hh);
                     cairo_fill(cr);
                 }
             }
         }
         _ => {
             let span = if mx > mn { mx - mn } else { 1.0 };
-            let px = |i: usize| if n > 1 { x + w * i as f64 / (n - 1) as f64 } else { x + w / 2.0 };
+            let px = |i: usize| match xs {
+                Some(v) if i < v.len() => x + w * v[i],
+                _ => if n > 1 { x + w * i as f64 / (n - 1) as f64 } else { x + w / 2.0 },
+            };
             let py = |v: f64| if mx > mn { y + h * (mx - v) / span } else { (y + h / 2.0).floor() + 0.5 };
             set(g.color);
             cairo_set_line_width(cr, (g.weight * 96.0 / 72.0 * z).max(0.75));
@@ -527,10 +700,18 @@ pub unsafe fn paint(cr: *mut crate::ffi::cairo_t, g: &SparkGroup, vals: &[Option
                             down = true;
                         }
                     }
-                    None => down = false,
+                    None => if g.empty_as != "span" { down = false },
                 }
             }
             cairo_stroke(cr);
+            if g.show_axis && mn < 0.0 && mx > 0.0 {
+                set(g.axis_color);
+                cairo_set_line_width(cr, 1.0);
+                let ay = py(0.0).floor() + 0.5;
+                cairo_move_to(cr, x, ay);
+                cairo_line_to(cr, x + w, ay);
+                cairo_stroke(cr);
+            }
             let r = (1.8 * z).max(1.5);
             for (i, v) in vals.iter().enumerate() {
                 if let Some(v) = v {
@@ -550,6 +731,30 @@ pub unsafe fn paint(cr: *mut crate::ffi::cairo_t, g: &SparkGroup, vals: &[Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn axis_bounds_and_round_trip() {
+        let mut g = SparkGroup::new("line");
+        let v = vec![Some(2.0), None, Some(8.0)];
+        assert_eq!(bounds(&g, &v, Some((-5.0, 20.0))), Some((2.0, 8.0)));
+        g.min_type = "group".into();
+        g.max_type = "custom".into();
+        g.manual_max = Some(50.0);
+        assert_eq!(bounds(&g, &v, Some((-5.0, 20.0))), Some((-5.0, 50.0)));
+        g.show_axis = true;
+        g.right_to_left = true;
+        g.date_range = Some("Sheet1!A1:C1".into());
+        g.items.push(("Sheet1!A2:C2".into(), (3, 4)));
+        let e = write_group(&g);
+        let x = e.to_string();
+        assert!(x.contains("minAxisType=\"group\"") && x.contains("manualMax=\"50\"") && x.contains("dateAxis=\"1\""), "{}", x);
+        let back = parse_group(&e);
+        assert_eq!(back.min_type, "group");
+        assert_eq!(back.manual_max, Some(50.0));
+        assert!(back.show_axis && back.right_to_left);
+        assert_eq!(back.date_range.as_deref(), Some("Sheet1!A1:C1"));
+        assert_eq!(back.items.len(), 1);
+    }
 
     #[test]
     fn read_and_write() {

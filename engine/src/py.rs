@@ -2131,6 +2131,16 @@ impl PyBook {
                 d.set_item(k, v)?;
             }
             d.set_item("weight", g.weight)?;
+            d.set_item("min_type", &g.min_type)?;
+            d.set_item("max_type", &g.max_type)?;
+            d.set_item("manual_min", g.manual_min)?;
+            d.set_item("manual_max", g.manual_max)?;
+            d.set_item("show_axis", g.show_axis)?;
+            d.set_item("axis_color", g.axis_color)?;
+            d.set_item("right_to_left", g.right_to_left)?;
+            d.set_item("date_range", g.date_range.clone())?;
+            d.set_item("empty_as", &g.empty_as)?;
+            d.set_item("show_hidden", g.show_hidden)?;
             d.set_item("items", g.items.clone())?;
             out.push(d);
         }
@@ -2147,9 +2157,15 @@ impl PyBook {
         let mut cols: Vec<(String, u32)> = vec![];
         let mut flags: Vec<(String, bool)> = vec![];
         let mut weight: Option<f64> = None;
+        let mut texts: Vec<(String, String)> = vec![];
+        let mut nums: Vec<(String, Option<f64>)> = vec![];
+        let mut date: Option<Option<String>> = None;
         for (k, v) in opts.iter() {
             let k: String = k.extract()?;
             match k.as_str() {
+                "min_type" | "max_type" | "empty_as" => texts.push((k.clone(), v.extract()?)),
+                "manual_min" | "manual_max" => nums.push((k.clone(), v.extract()?)),
+                "date_range" => date = Some(v.extract()?),
                 "kind" => kind = Some(v.extract()?),
                 "weight" => weight = Some(v.extract()?),
                 x if x.ends_with("color") => cols.push((k.clone(), v.extract()?)),
@@ -2165,14 +2181,26 @@ impl PyBook {
                 match k.as_str() {
                     "color" => g.color = v, "negative_color" => g.negative = v, "markers_color" => g.markers_color = v,
                     "high_color" => g.high_color = v, "low_color" => g.low_color = v, "first_color" => g.first_color = v,
-                    "last_color" => g.last_color = v, _ => {}
+                    "last_color" => g.last_color = v, "axis_color" => g.axis_color = v, _ => {}
                 }
             }
             for (k, v) in flags {
                 match k.as_str() {
                     "markers" => g.markers = v, "high" => g.high = v, "low" => g.low = v, "first" => g.first = v,
-                    "last" => g.last = v, "negative" => g.show_negative = v, _ => {}
+                    "last" => g.last = v, "negative" => g.show_negative = v, "show_axis" => g.show_axis = v,
+                    "right_to_left" => g.right_to_left = v, "show_hidden" => g.show_hidden = v, _ => {}
                 }
+            }
+            for (k, v) in texts {
+                match k.as_str() {
+                    "min_type" => g.min_type = v, "max_type" => g.max_type = v, _ => g.empty_as = v,
+                }
+            }
+            for (k, v) in nums {
+                if k == "manual_min" { g.manual_min = v } else { g.manual_max = v }
+            }
+            if let Some(d) = date {
+                g.date_range = d;
             }
         }).map_err(verr)
     }
