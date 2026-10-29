@@ -701,6 +701,39 @@ SS = SS + 1 if dest is not None and dest <= SS else SS
 check("the sheet itself is unchanged", b.input(SS, 0, 1) == "0.05" and b.input(SS, 1, 1) == "10")
 g.set_sheet(0)
 
+# ---------------------------------------------------------------- S3-12 Ink Equation
+from folio_sheets import equation_ui  # noqa: E402
+g.set_sheet(0)
+n_obj = len(b.objects(0))
+_v = lambda x, y0, y1: [(x, y0 + i * (y1 - y0) / 10) for i in range(11)]  # noqa: E731
+_h = lambda y, x0, x1: [(x0 + i * (x1 - x0) / 10, y) for i in range(11)]  # noqa: E731
+seen = {}
+
+
+def _write(d):
+    dlg = win.ink_dialog
+    check("Math Input Control: Insert waits for writing", not dlg.insert_b.get_sensitive())
+    for st in ([_v(200, 60, 110), _h(130, 160, 250), _v(200, 150, 200)]):
+        dlg.add_stroke(st)
+    dlg.recognise()
+    seen["text"] = dlg.text
+    seen["alts"] = len(dlg.alts.get_children())
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(_write)
+win.run("equation-ink")
+pump(0.2)
+check("Ink Equation: handwriting recognised here", seen.get("text") == "1/1", seen)
+objs = b.objects(0)
+check("Ink Equation: the equation is inserted", len(objs) == n_obj + 1, len(objs))
+eqs = [i for i in range(len(objs)) if (b.shape_info(0, i) or {}).get("equation") is not None]
+check("and it is the written one", eqs and b.equation_linear(0, eqs[-1]) in ("1/1", "(1)/(1)"), eqs and b.equation_linear(0, eqs[-1]))
+win.run("undo")
+DIALOG.append(lambda d: Gtk.ResponseType.CANCEL)
+win.run("ink-to-math")
+check("Draw > Ink to Math opens it too (cancel inserts nothing)", len(b.objects(0)) == n_obj)
+
 # ---------------------------------------------------------------- end
 w2.book.mark_saved()
 for p in tuple(globals().get("EXTRA", ())):

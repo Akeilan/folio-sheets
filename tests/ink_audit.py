@@ -157,7 +157,13 @@ red = [i for i, o in enumerate(again.objects(0)) if again.ink_strokes(0, i)[0][1
 check("with its colours", len(red) == 1)
 
 # what is out
-for cmd in ("draw-ruler", "ink-to-shape", "ink-to-math", "ink-replay"):
+_orig_run = Gtk.Dialog.run
+_seen_ink = []
+Gtk.Dialog.run = lambda d: (_seen_ink.append(d.get_title()), Gtk.ResponseType.CANCEL)[1]
+win.run("ink-to-math")
+Gtk.Dialog.run = _orig_run
+check("Ink to Math opens the Math Input Control (S3-12)", _seen_ink == ["Math Input Control"], _seen_ink)
+for cmd in ("draw-ruler", "ink-to-shape", "ink-replay"):
     k = len(INFO)
     win.run(cmd)
     check("%s says it isn't available" % cmd, len(INFO) == k + 1 and "isn't available" in INFO[-1][1], INFO[-1:])
