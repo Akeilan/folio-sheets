@@ -2,6 +2,7 @@
 Format Cells: the formatting commands of the workbook window (a mixin)."""
 from gi.repository import GLib, Gtk
 
+from . import APP_NAME
 from .core import MAX_COLS, MAX_ROWS
 
 
@@ -401,7 +402,7 @@ class FormattingMixin:
             d = Gtk.MessageDialog(transient_for=self, modal=True, message_type=Gtk.MessageType.WARNING,
                                   buttons=Gtk.ButtonsType.OK_CANCEL,
                                   text="Merging cells only keeps the upper-left value and discards other values.")
-            d.set_title("Folio Sheets")
+            d.set_title(APP_NAME)
             ok = d.run() == Gtk.ResponseType.OK
             d.destroy()
             if not ok:

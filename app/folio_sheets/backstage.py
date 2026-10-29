@@ -1,5 +1,5 @@
 """The File view (Backstage): Home, New, Open, Info, Save, Save As, Print,
-Export, Close, Options. Shares its look with Folio Writer's."""
+Export, Close, Options. Shares its look with Folio Page's."""
 import datetime
 import os
 

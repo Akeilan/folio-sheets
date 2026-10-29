@@ -1083,8 +1083,8 @@ def edit_query(win, q):
 
 
 def not_available(win, what):
-    win.dialogs.info("%s isn't available in %s. Folio Sheets gets data from files on this computer: "
-                     "Text/CSV, Excel workbooks, folders, XML, JSON, PDF and SQLite files." % (what, APP_NAME), "Get Data")
+    win.dialogs.info("%s isn't available in %s. %s gets data from files on this computer: "
+                     "Text/CSV, Excel workbooks, folders, XML, JSON, PDF and SQLite files." % (what, APP_NAME, APP_NAME), "Get Data")
 
 
 # ------------------------------------------------------------------ Queries & Connections pane

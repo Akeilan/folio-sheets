@@ -1,4 +1,4 @@
-"""Folio Sheets application: windows, recent files, settings."""
+"""Folio Sheet application: windows, recent files, settings."""
 import json
 import os
 import subprocess
@@ -19,8 +19,9 @@ GLib.set_prgname(APP_ID)
 GLib.set_application_name(APP_NAME)
 Gdk.set_program_class(APP_ID)
 
-CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
-                      "folio-sheets")
+from . import config_dir  # noqa: E402
+
+CONFIG = config_dir()
 
 
 class SheetsApp(Gtk.Application):

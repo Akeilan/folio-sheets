@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Data Validation through the window — the
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Data Validation through the window — the
 # dialog, the check on entry (Stop, Warning, Information), the drop-down list, Alt+Down,
 # the input message, Circle Invalid Data, and paste.
 import os

@@ -1,5 +1,5 @@
-Package: folio-sheets
-Version: 0.18.0
+Package: folio-sheet
+Version: 0.19.0
 Section: editors
 Priority: optional
 Architecture: amd64
@@ -7,9 +7,14 @@ Installed-Size: 4604
 Depends: python3 (>= 3.10), libc6 (>= 2.34), libcairo2, libpango-1.0-0, libpangocairo-1.0-0, libglib2.0-0, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0, gir1.2-poppler-0.18, librsvg2-common, fonts-crosextra-carlito, fonts-crosextra-caladea, fonts-liberation2 | fonts-liberation
 Recommends: xdg-utils, libhunspell-1.7-0, hunspell-en-us | hunspell-dictionary, mythes-en-us | mythes-thesaurus
 Suggests: libreoffice-calc-nogui | libreoffice-calc
+Replaces: folio-sheets (<< 0.19.0)
+Breaks: folio-sheets (<< 0.19.0)
 Maintainer: Ron Shillings <ron.shillings@gmail.com>
 Description: ribbon spreadsheet
- Folio Sheets is a spreadsheet with a ribbon interface, KeyTips, a File
+ Folio Sheet is a spreadsheet with a ribbon interface, KeyTips, a File
  view, the standard desktop spreadsheet keyboard shortcuts and .xlsx as its
  native format, kept lossless: whatever it doesn't understand is saved
  back untouched.
+ .
+ Folio Sheet was called Folio Sheets before 0.19; the folio-sheets command still
+ starts it.

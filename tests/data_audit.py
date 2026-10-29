@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Sort, Filter and Remove Duplicates through the
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Sort, Filter and Remove Duplicates through the
 # window, with their dialogs answered.
 import os
 import sys

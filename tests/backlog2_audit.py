@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): the Backlog 2 commands — copied sheets, the
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): the Backlog 2 commands — copied sheets, the
 # Formulas tab's function menus, Advanced Filter, Consolidate, the Review tools, Custom Views,
 # Background, objects (Selection Pane, Align, Group, Rotate) and more.
 import os

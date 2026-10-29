@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Find and Replace, Go To Special.
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Find and Replace, Go To Special.
 import os
 import sys
 import time

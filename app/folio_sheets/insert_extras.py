@@ -2,7 +2,7 @@
 
 SmartArt graphics are drawn as a group of shapes (laid out from the text typed for them), so
 any spreadsheet program shows and edits them; the layout and text are kept with the group so
-Sheets can lay them out again. A signature line is a picture of the line with the signer's
+Folio Sheet can lay them out again. A signature line is a picture of the line with the signer's
 details, signed by typing a name. Insert > Object puts a file on the sheet as its icon; the
 file itself travels inside the icon's picture (or, linked, its path), and a double-click
 opens it."""

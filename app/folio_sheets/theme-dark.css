@@ -1,4 +1,4 @@
-/* Folio Sheets — dark mode, used when the desktop is set to dark (S-08). Excel-like: the chrome
+/* Folio Sheet — dark mode, used when the desktop is set to dark (S-08). Excel-like: the chrome
    goes dark, the cells keep their own colours. Loaded after theme.css and sheets.css. */
 @define-color ribbon_bg #2b2b2b;
 @define-color ribbon_fg #f0f0f0;

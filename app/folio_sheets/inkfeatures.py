@@ -1,4 +1,4 @@
-"""Vendored from Folio Writer (app/folio/inkfeatures.py), unchanged apart from this line."""
+"""Vendored from Folio Page (formerly Folio Writer) (app/folio/inkfeatures.py), unchanged apart from this line."""
 """Shape features for handwritten symbols (pure Python, no dependencies):
 the strokes are normalised into a unit square and their direction is
 accumulated into a coarse grid (4 directions x 8 x 8), then blurred.

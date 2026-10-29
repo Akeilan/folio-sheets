@@ -4,7 +4,7 @@
 # DISPLAY must be set (Xvfb).
 cd /tmp/fs
 PP=app
-[ "$1" = "--installed" ] && { PP=/usr/lib/folio-sheets; shift; }
+[ "$1" = "--installed" ] && { PP=/usr/lib/folio-sheet; shift; }
 FAIL=0
 for t in ${@:-tests/*_audit.py tests/command_walk.py}; do
   out=$(FOLIO_TEST_SCRIPT=$t PYTHONPATH=$PP timeout 900 python3 -m folio_sheets 2>&1)

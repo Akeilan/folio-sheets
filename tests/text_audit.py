@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Text to Columns and the Text Import Wizard —
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Text to Columns and the Text Import Wizard —
 # the parsing, the wizard's three steps, column formats, destination, and files.
 import os
 import sys

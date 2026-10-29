@@ -1,0 +1,10 @@
+Package: folio-sheets
+Version: 0.19.0
+Section: oldlibs
+Priority: optional
+Architecture: all
+Depends: folio-sheet (>= 0.19.0)
+Maintainer: Ron Shillings <ron.shillings@gmail.com>
+Description: transitional package: Folio Sheets is now Folio Sheet
+ Folio Sheets was renamed Folio Sheet. This package moves an installed Folio
+ Sheets over to folio-sheet and can be removed afterwards.

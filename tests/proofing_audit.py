@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Spelling (Hunspell) and the Thesaurus (MyThes),
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Spelling (Hunspell) and the Thesaurus (MyThes),
 # offline: the dialog's buttons, the scope, the user's word list.
 import os
 import sys

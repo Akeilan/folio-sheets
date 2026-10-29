@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-26 the Draw tab — pen, pencil and highlighter
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-26 the Draw tab — pen, pencil and highlighter
 # ink over the sheet, the eraser, Lasso Select; kept in the file as Office ink.
 import os
 import sys

@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): notes and threaded comments from the Review
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): notes and threaded comments from the Review
 # tab, the context menu and the keyboard; the Comments pane; the file.
 import os
 import sys

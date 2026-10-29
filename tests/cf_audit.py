@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): conditional formatting from the menu, the
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): conditional formatting from the menu, the
 # rule dialogs, Manage Rules, Clear Rules, copy/paste and the file.
 import os
 import sys

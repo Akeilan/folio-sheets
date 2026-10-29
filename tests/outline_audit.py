@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Group and Outline — Group / Ungroup, the
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Group and Outline — Group / Ungroup, the
 # outline bars and their buttons, Show / Hide Detail, Clear Outline, Auto Outline, Subtotal.
 import os
 import sys

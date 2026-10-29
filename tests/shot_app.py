@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): open a file and save a screenshot of the window.
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): open a file and save a screenshot of the window.
 import os
 import time
 from gi.repository import Gdk, Gtk

@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): the fill handle, Fill Series, Flash Fill, Justify.
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): the fill handle, Fill Series, Flash Fill, Justify.
 import os
 import sys
 import time

@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-20 slicers, timelines and PivotCharts — Insert
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-20 slicers, timelines and PivotCharts — Insert
 # Slicer / Insert Timeline, clicking items and periods on the sheet, Clear Filter, the Slicer and
 # Timeline tabs, Report Connections, Slicer Settings, PivotCharts that follow their PivotTable,
 # saving and opening.

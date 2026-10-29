@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): every command the ribbon knows, on a
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): every command the ribbon knows, on a
 # small workbook with a few selections, with every dialog answered (OK, then Cancel).
 # Nothing may raise; undo must walk all the way back.
 import os

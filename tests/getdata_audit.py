@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-25 Get Data from local sources — From Text/CSV,
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-25 Get Data from local sources — From Text/CSV,
 # From Workbook and From Folder into tables; Refresh and Refresh All read the sources again; the
 # queries travel with the file; web, database and the Power Query editor say they aren't available.
 import os

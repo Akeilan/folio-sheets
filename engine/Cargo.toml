@@ -2,7 +2,7 @@
 name = "folio_sheets_core"
 version = "1.0.0"
 edition = "2021"
-description = "Folio Sheets calculation and file engine"
+description = "Folio Sheet calculation and file engine"
 
 [lib]
 name = "folio_sheets_core"

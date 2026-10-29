@@ -256,7 +256,7 @@ def paste_picture(win, quiet=False):
 
 
 def insert_picture_file(win, path):
-    """Insert > Pictures: a picture file (types Sheets can't read are converted to PNG)."""
+    """Insert > Pictures: a picture file (types Folio Sheet can't read are converted to PNG)."""
     try:
         with open(path, "rb") as f:
             data = f.read()
@@ -273,7 +273,7 @@ def insert_picture_file(win, path):
     data = _png_of(pb) if pb is not None else None
     if data and _place_picture(win, data):
         return True
-    win.dialogs.message("This file isn't a picture Sheets can insert.", "Insert Picture")
+    win.dialogs.message("This file isn't a picture Folio Sheet can insert.", "Insert Picture")
     return False
 
 

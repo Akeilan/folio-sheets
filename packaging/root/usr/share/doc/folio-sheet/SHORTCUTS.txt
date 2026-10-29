@@ -1,4 +1,4 @@
-Folio Sheets — keyboard shortcuts (this version)
+Folio Sheet — keyboard shortcuts (this version)
 
 Moving
   Arrow keys              Move one cell

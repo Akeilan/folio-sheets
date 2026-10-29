@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-20 PivotTables — Insert › PivotTable, the PivotTable
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-20 PivotTables — Insert › PivotTable, the PivotTable
 # Fields pane, the Analyze and Design tabs, filter drop-downs, Value Field Settings, Show Details,
 # Refresh, Move, Recommended PivotTables, saving and opening.
 import os

@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): Page Layout commands, Page Setup, page
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Page Layout commands, Page Setup, page
 # breaks, Page Break Preview, the Backstage Print page, printing and Export to PDF.
 import os
 import sys

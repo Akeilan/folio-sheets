@@ -1,4 +1,4 @@
-# Run inside Folio Sheets (FOLIO_TEST_SCRIPT): SH-22 document themes — Page Layout › Themes, Colors,
+# Run inside Folio Sheet (FOLIO_TEST_SCRIPT): SH-22 document themes — Page Layout › Themes, Colors,
 # Fonts, Effects; the palette and everything in theme colours and fonts follow; custom sets; .thmx files.
 import os
 import sys
