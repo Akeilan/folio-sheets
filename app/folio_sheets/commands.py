@@ -158,7 +158,7 @@ LABELS = {
     # data
     "get-data": "Get Data", "from-text-csv": "From Text/CSV", "existing-connections": "Existing Connections",
     "refresh-all": "Refresh All", "refresh": "Refresh", "from-workbook": "From Workbook", "from-folder": "From Folder",
-    "from-text-legacy": "From Text (Legacy)", "get-data-unavailable": "Get Data", "queries-connections": "Queries & Connections",
+    "from-text-legacy": "From Text (Legacy)", "get-data-unavailable": "Get Data", "from-source": "Get Data", "from-table-range": "From Table/Range", "queries-connections": "Queries & Connections",
     "workbook-links": "Workbook Links", "advanced-filter": "Advanced", "text-to-columns": "Text to Columns",
     "remove-duplicates": "Remove Duplicates", "data-validation": "Data Validation", "pick-from-list": "Pick From Drop-down List", "consolidate": "Consolidate",
     "what-if": "What-If Analysis", "scenario-manager": "Scenario Manager", "goal-seek": "Goal Seek",

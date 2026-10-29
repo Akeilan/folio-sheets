@@ -49,7 +49,7 @@ check("the preview reads the file: comma, headers from the first row",
       d.delim.get_active_id() == "," and d.result.headers == ["Name", "Qty", "Price", "When"] and len(d.result.rows) == 3,
       (d.delim.get_active_id(), d.result.headers))
 check("and detects the column types", d.result.kinds == ["text", "number", "number", "date"], d.result.kinds)
-check("Transform Data is there but not available", not d.buttons.transform_button.get_sensitive())
+check("Transform Data is there and available", d.buttons.transform_button.get_sensitive())
 d.destroy()
 
 CHOICE = {"v": "load"}

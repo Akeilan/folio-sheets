@@ -2777,6 +2777,14 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import getdata_ui
         getdata_ui.from_folder(self)
 
+    def act_from_source(self, kind="json"):
+        from . import getdata_ui
+        return getdata_ui.from_source(self, kind)
+
+    def act_from_table_range(self):
+        from . import getdata_ui
+        return getdata_ui.from_table_range(self)
+
     def act_get_data_unavailable(self, what="This source"):
         from . import getdata_ui
         getdata_ui.not_available(self, what)
