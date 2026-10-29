@@ -747,7 +747,8 @@ def build_ribbon(win):
         [B.icon("r-show-detail-sm", "show-detail", "J", "Show Detail"),
          B.icon("r-hide-detail-sm", "hide-detail", "H", "Hide Detail")],
     ], launcher="group:settings", launcher_keytip="OS")
-    B.group(t, "Analyze", [B.big("Solver", "r-solver", "solver", "Y2")])
+    B.group(t, "Analyze", [B.big("Solver", "r-solver", "solver", "Y2"),
+                           B.big("Data\nAnalysis", "r-data-analysis", "data-analysis", "Y1")])
     r.add_tab(t)
 
     # ================================================================ Review
