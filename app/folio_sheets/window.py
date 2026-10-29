@@ -723,7 +723,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def act_equation_ink(self):
         from . import equation_ui
-        equation_ui.ink_not_available(self)
+        equation_ui.ink_equation(self)
 
     def act_screenshot(self):
         from . import screenshot_ui
@@ -919,8 +919,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         ink_ui.not_available(self, "Ink to Shape")
 
     def act_ink_to_math(self):
-        from . import ink_ui
-        ink_ui.not_available(self, "Ink to Math")
+        from . import equation_ui
+        equation_ui.ink_equation(self)
 
     def act_ink_replay(self):
         from . import ink_ui

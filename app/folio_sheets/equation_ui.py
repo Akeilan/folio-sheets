@@ -123,7 +123,7 @@ def equation_menu(win):
     pop = gallery(win, Book.equation_built_ins(), lambda lin: insert(win, lin), "Built-In", cols=1, size=16)
     box = pop.get_child()
     box.pack_start(Gtk.Separator(), False, False, 2)
-    for label, cb in (("Insert New Equation", lambda: insert(win)), ("Ink Equation", lambda: ink_not_available(win))):
+    for label, cb in (("Insert New Equation", lambda: insert(win)), ("Ink Equation", lambda: ink_equation(win))):
         mb = Gtk.ModelButton(text=label)
         mb.connect("clicked", lambda _b, cb=cb: (pop.popdown(), cb()))
         box.pack_start(mb, False, False, 0)
@@ -132,8 +132,209 @@ def equation_menu(win):
 
 
 def ink_not_available(win):
-    win.dialogs.info("Ink Equation isn't available in %s. Type the equation instead: for example "
-                     "x=(−b±√(b^2−4ac))/2a or \\frac{a}{b}." % APP_NAME, "Ink Equation")
+    """Kept for old callers: Ink Equation now opens the Math Input Control."""
+    return ink_equation(win)
+
+
+class InkDialog:
+    """Math Input Control: write an equation by hand, see it recognised as you write (on this
+    computer, no service), correct the last symbol, and insert it."""
+
+    def __init__(self, win):
+        import math
+        self._hypot = math.hypot
+        self.win = win
+        self.strokes = []
+        self.cur = None
+        self.erase = False
+        self.text = ""
+        self.syms = []
+        self.timer = 0
+        d = Gtk.Dialog(title="Math Input Control", transient_for=win, modal=True)
+        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        self.insert_b = d.add_button("Insert", Gtk.ResponseType.OK)
+        d.set_resizable(True)
+        self.d = d
+        box = d.get_content_area()
+        box.set_spacing(6)
+        box.set_border_width(8)
+        self.preview = preview("", size=26, w=640, h=110)
+        self.preview.linear = None
+        pf = Gtk.Frame()
+        pf.add(self.preview)
+        box.pack_start(pf, False, False, 0)
+        self.pad = Gtk.DrawingArea()
+        self.pad.set_size_request(640, 300)
+        self.pad.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK |
+                            Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.TOUCH_MASK)
+        self.pad.connect("draw", self._draw_pad)
+        self.pad.connect("button-press-event", self._press)
+        self.pad.connect("motion-notify-event", self._motion)
+        self.pad.connect("button-release-event", self._release)
+        fr = Gtk.Frame()
+        fr.add(self.pad)
+        box.pack_start(fr, True, True, 0)
+        tools = Gtk.Box(spacing=6)
+        self.write_b = Gtk.RadioButton.new_with_label(None, "Write")
+        self.erase_b = Gtk.RadioButton.new_with_label_from_widget(self.write_b, "Erase")
+        for b in (self.write_b, self.erase_b):
+            b.set_mode(False)
+            tools.pack_start(b, False, False, 0)
+        self.erase_b.connect("toggled", lambda b: setattr(self, "erase", b.get_active()))
+        undo = Gtk.Button(label="Undo")
+        undo.connect("clicked", lambda *_: self.undo())
+        clear = Gtk.Button(label="Clear")
+        clear.connect("clicked", lambda *_: self.clear())
+        tools.pack_start(undo, False, False, 0)
+        tools.pack_start(clear, False, False, 0)
+        self.alts = Gtk.Box(spacing=2)
+        tools.pack_end(self.alts, False, False, 0)
+        box.pack_start(tools, False, False, 0)
+        self.insert_b.set_sensitive(False)
+        d.show_all()
+
+    def run(self):
+        r = self.d.run()
+        if self.timer:
+            GLib.source_remove(self.timer)
+            self.timer = 0
+            self.recognise()
+        text = self.text
+        self.d.destroy()
+        if r != Gtk.ResponseType.OK or not text:
+            return None
+        ed = getattr(self.win, "equation_editor", None)
+        if ed is not None and not ed.done:
+            ed.insert(text)
+            return text
+        insert(self.win, text)
+        return text
+
+    # the pen
+    def add_stroke(self, pts):
+        self.strokes.append([(float(x), float(y)) for x, y in pts])
+        self._schedule()
+
+    def _press(self, w, ev):
+        if ev.button != 1:
+            return False
+        if self.erase:
+            self._erase_at(ev.x, ev.y)
+            return True
+        self.cur = [(ev.x, ev.y)]
+        return True
+
+    def _motion(self, w, ev):
+        if self.erase and ev.get_state() & Gdk.ModifierType.BUTTON1_MASK:
+            self._erase_at(ev.x, ev.y)
+            return True
+        if self.cur is not None:
+            last = self.cur[-1]
+            if self._hypot(ev.x - last[0], ev.y - last[1]) >= 1.5:
+                self.cur.append((ev.x, ev.y))
+                self.pad.queue_draw()
+        return True
+
+    def _release(self, w, ev):
+        if self.cur is not None:
+            self.strokes.append(self.cur)
+            self.cur = None
+            self._schedule()
+        return True
+
+    def _erase_at(self, x, y):
+        for s in list(self.strokes):
+            if any(self._hypot(px - x, py - y) < 7 for px, py in s):
+                self.strokes.remove(s)
+                self._schedule()
+                return
+
+    def undo(self):
+        if self.strokes:
+            self.strokes.pop()
+            self._schedule()
+
+    def clear(self):
+        self.strokes = []
+        self._schedule()
+
+    def _schedule(self):
+        self.pad.queue_draw()
+        if self.timer:
+            GLib.source_remove(self.timer)
+        self.timer = GLib.timeout_add(250, self.recognise)
+
+    def recognise(self):
+        from . import inkrecog
+        self.timer = 0
+        try:
+            self.text, self.syms = inkrecog.recognise(self.strokes)
+        except (ValueError, IndexError, ZeroDivisionError):
+            self.text, self.syms = "", []
+        self._shown()
+        return False
+
+    def _shown(self):
+        self.preview.linear = self.text or None
+        self.preview.queue_draw()
+        self.insert_b.set_sensitive(bool(self.text))
+        self._show_alts()
+
+    def _show_alts(self):
+        from . import inkrecog
+        for c in self.alts.get_children():
+            self.alts.remove(c)
+        last = max(self.syms, key=lambda s: s.x1, default=None) if self.syms else None
+        if last is None or not last.alts:
+            return
+        self.alts.pack_start(Gtk.Label(label="Last symbol:"), False, False, 0)
+        for ch in [last.ch] + last.alts[:4]:
+            b = Gtk.Button(label=ch)
+
+            def pick(_b, ch=ch, s=last):
+                s.alts = [c for c in [s.ch] + s.alts if c != ch]
+                s.ch = ch
+                self.text = inkrecog._parse(list(self.syms), inkrecog._unit(self.strokes))
+                self._shown()
+            b.connect("clicked", pick)
+            self.alts.pack_start(b, False, False, 0)
+        self.alts.show_all()
+
+    def _draw_pad(self, w, cr):
+        cr.set_source_rgb(1, 1, 1)
+        cr.paint()
+        if not self.strokes and self.cur is None:
+            cr.set_source_rgb(0.8, 0.8, 0.8)
+            cr.select_font_face("Sans")
+            cr.set_font_size(28)
+            lab = "Write math here"
+            ext = cr.text_extents(lab)
+            cr.move_to((w.get_allocated_width() - ext.width) / 2, w.get_allocated_height() / 2)
+            cr.show_text(lab)
+        cr.set_source_rgb(0.1, 0.2, 0.55)
+        cr.set_line_width(2.6)
+        cr.set_line_cap(1)
+        cr.set_line_join(1)
+        for st in self.strokes + ([self.cur] if self.cur else []):
+            cr.move_to(*st[0])
+            if len(st) == 1:
+                cr.line_to(st[0][0] + 0.5, st[0][1])
+            for pt in st[1:]:
+                cr.line_to(*pt)
+            cr.stroke()
+        return False
+
+
+def ink_equation(win):
+    from . import inkrecog
+    if not inkrecog.templates():
+        win.dialogs.message("The handwriting recognition data is missing from this installation.", "Ink Equation")
+        return None
+    win.ink_dialog = dlg = InkDialog(win)
+    try:
+        return dlg.run()
+    finally:
+        win.ink_dialog = None
 
 
 # ---------------------------------------------------------------- inserting and editing

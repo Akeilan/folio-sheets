@@ -125,8 +125,12 @@ pump(0.1)
 check("a symbol with an equation selected opens it and adds the symbol", win.equation_editor is not None
       and win.equation_editor.entry.get_text().endswith("≠"))
 win.equation_editor.finish()
+_orig_run = Gtk.Dialog.run
+_seen_ink = []
+Gtk.Dialog.run = lambda d: (_seen_ink.append(d.get_title()), Gtk.ResponseType.CANCEL)[1]
 win.run("equation-ink")
-check("Ink Equation says it isn't available", INFO and INFO[-1][0] == "Ink Equation")
+Gtk.Dialog.run = _orig_run
+check("Ink Equation opens the Math Input Control (S3-12)", _seen_ink == ["Math Input Control"], _seen_ink)
 
 # saved as Office keeps it, and read back
 path = os.path.join(tempfile.mkdtemp(), "eq.xlsx")
