@@ -131,3 +131,23 @@ tooltip label { color: #f0f0f0; }
 .folio-main scrollbar slider { background-color: #5a5a5a; }
 .folio-main scrollbar slider:hover { background-color: #707070; }
 .folio-main scrollbar button { color: #c0c0c0; }
+
+/* X3-05: a dialog's own title bar, focused or not */
+.folio-dialog headerbar, .folio-dialog headerbar:backdrop, .folio-dialog .titlebar, .folio-dialog .titlebar:backdrop,
+.folio-dialog.background headerbar.default-decoration, .folio-dialog.background headerbar.default-decoration:backdrop {
+  background-color: #2b2b2b; background-image: none; color: #f0f0f0; border-color: #404040; box-shadow: none; }
+.folio-dialog headerbar label, .folio-dialog headerbar label:backdrop, .folio-dialog headerbar .title,
+.folio-dialog headerbar .title:backdrop, .folio-dialog headerbar .subtitle, .folio-dialog headerbar .subtitle:backdrop { color: #f0f0f0; }
+.folio-dialog headerbar button.titlebutton, .folio-dialog headerbar button.titlebutton:backdrop {
+  background-color: transparent; background-image: none; color: #f0f0f0; border-color: transparent; box-shadow: none; }
+.folio-dialog headerbar button.titlebutton:hover { background-color: #3d3d3d; }
+.folio-dialog:backdrop, .folio-dialog.background:backdrop, .folio-dialog notebook stack:backdrop,
+.folio-dialog notebook header:backdrop { background-color: #2b2b2b; background-image: none; color: #f0f0f0; }
+.folio-dialog label:backdrop, .folio-dialog checkbutton label:backdrop, .folio-dialog radiobutton label:backdrop { color: #f0f0f0; }
+.folio-dialog entry:backdrop, .folio-dialog textview text:backdrop, .folio-dialog spinbutton:backdrop,
+.folio-dialog spinbutton entry:backdrop { background-color: #1f1f1f; background-image: none; color: #f0f0f0; }
+.folio-dialog button:not(.folio-default):not(.suggested-action):not(.flat):backdrop { background-color: #333333; background-image: none; color: #f0f0f0; }
+.folio-dialog button.suggested-action:backdrop { background-color: #e0b84a; background-image: none; color: #1a1a1a; }
+.folio-dialog treeview:backdrop, .folio-dialog list:backdrop { background-color: #222222; color: #f0f0f0; }
+.folio-dialog check:backdrop, .folio-dialog radio:backdrop { background-color: #1f1f1f; background-image: none; }
+.folio-dialog check:checked:backdrop, .folio-dialog radio:checked:backdrop { background-color: #e0b84a; color: #1a1a1a; }
