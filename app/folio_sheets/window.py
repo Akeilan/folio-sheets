@@ -926,6 +926,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import ink_ui
         ink_ui.not_available(self, "Ink Replay")
 
+    def act_data_analysis(self):
+        from . import analysis_ui
+        if self.book is not None:
+            analysis_ui.show(self)
+
     # ------------------------------------------------------------ form controls (S3-07)
     def act_cell_checkbox(self):
         from . import controls_ui

@@ -526,6 +526,135 @@ pop = shapes_ui.style_gallery(win)
 check("Shape Styles gallery: 6 x 7", len(pop.rows) == 42)
 g.sel_objects = []
 
+# ---------------------------------------------------------------- S3-09 Analysis ToolPak
+from folio_sheets import analysis_ui, analysis as AN  # noqa: E402
+win.run("insert-sheet")
+pump()
+SA = g.sheet
+SA_NAME = b.sheet_info(SA)["name"]
+xa = [12, 15, 11, 18, 14, 16, 13, 17, 19, 15]
+xb = [10, 14, 12, 15, 11, 13, 12, 16, 14, 12]
+xc = [20, 22, 19, 25, 21, 23, 24, 22, 26, 20]
+b.set_input(SA, 0, 0, "A")
+b.set_input(SA, 0, 1, "B")
+b.set_input(SA, 0, 2, "C")
+for i in range(10):
+    b.set_input(SA, i + 1, 0, str(xa[i]))
+    b.set_input(SA, i + 1, 1, str(xb[i]))
+    b.set_input(SA, i + 1, 2, str(xc[i]))
+
+
+def ev(f):
+    return float(b.evaluate(SA, 30, 30, f))
+
+
+def close(a, b_, tol=1e-6):
+    return isinstance(a, (int, float)) and abs(a - b_) <= tol * max(1, abs(b_))
+
+
+def find(table, label, col=1):
+    for r in table:
+        if r and r[0] == label:
+            return r[col]
+    return None
+
+
+t, _ = analysis_ui.run_tool(win, "Descriptive Statistics", {"input": "$A$1:$C$11", "grouped": "cols", "labels": True, "summary": True,
+                                                           "conf_on": True, "conf": 95, "large_on": True, "large": 2, "small_on": False, "small": 1})
+check("descriptive: mean, sd, kurtosis, skewness as the functions", close(find(t, "Mean"), ev("AVERAGE(A2:A11)")) and close(find(t, "Standard Deviation"), ev("STDEV.S(A2:A11)"))
+      and close(find(t, "Kurtosis"), ev("KURT(A2:A11)")) and close(find(t, "Skewness"), ev("SKEW(A2:A11)")), t[:10])
+check("descriptive: confidence level = CONFIDENCE.T", close(find(t, "Confidence Level(95.0%)"), ev("CONFIDENCE.T(0.05,STDEV.S(A2:A11),10)")), find(t, "Confidence Level(95.0%)"))
+check("descriptive: three blocks side by side", t[0][0] == "A" and t[0][2] == "B" and t[0][4] == "C" and find(t, "Largest(2)") == 18, t[0])
+t, _ = analysis_ui.run_tool(win, "t-Test: Two-Sample Assuming Equal Variances", {"input": "A1:A11", "input2": "B1:B11", "labels": True, "hyp": 0, "alpha": 0.05})
+check("t-test equal: two-tail p = T.TEST(,,2,2)", close(find(t, "P(T<=t) two-tail"), ev("T.TEST(A2:A11,B2:B11,2,2)")), (find(t, "P(T<=t) two-tail"), ev("T.TEST(A2:A11,B2:B11,2,2)")))
+check("t-test equal: critical = T.INV.2T", close(find(t, "t Critical two-tail"), ev("T.INV.2T(0.05,18)")))
+t, _ = analysis_ui.run_tool(win, "t-Test: Two-Sample Assuming Unequal Variances", {"input": "A1:A11", "input2": "C1:C11", "labels": True, "hyp": 0, "alpha": 0.05})
+check("t-test unequal: df and t", find(t, "df") == round(find(t, "df")) and close(abs(find(t, "t Stat")), abs((sum(xa) / 10 - sum(xc) / 10) / ((AN.var_s(xa) + AN.var_s(xc)) / 10) ** 0.5)))
+t, _ = analysis_ui.run_tool(win, "t-Test: Paired Two Sample for Means", {"input": "A1:A11", "input2": "B1:B11", "labels": True, "hyp": 0, "alpha": 0.05})
+check("t-test paired: = T.TEST(,,2,1)", close(find(t, "P(T<=t) two-tail"), ev("T.TEST(A2:A11,B2:B11,2,1)")) and close(find(t, "Pearson Correlation"), ev("CORREL(A2:A11,B2:B11)")))
+t, _ = analysis_ui.run_tool(win, "F-Test Two-Sample for Variances", {"input": "A1:A11", "input2": "B1:B11", "labels": True, "alpha": 0.05})
+check("F-test: F and one-tail p", close(find(t, "F"), ev("VAR.S(A2:A11)/VAR.S(B2:B11)")) and close(find(t, "P(F<=f) one-tail"), ev("F.DIST.RT(VAR.S(A2:A11)/VAR.S(B2:B11),9,9)")),
+      (find(t, "F"), find(t, "P(F<=f) one-tail")))
+t, _ = analysis_ui.run_tool(win, "z-Test: Two Sample for Means", {"input": "A1:A11", "input2": "B1:B11", "labels": True, "hyp": 0, "var1": 6, "var2": 3, "alpha": 0.05})
+check("z-test: critical two-tail 1.96", close(find(t, "z Critical two-tail"), 1.959963985, 1e-6))
+t, _ = analysis_ui.run_tool(win, "Anova: Single Factor", {"input": "A1:C11", "grouped": "cols", "labels": True, "alpha": 0.05})
+row = [r for r in t if r and r[0] == "Between Groups"][0]
+check("anova: F, p and F crit", close(row[5], ev("F.DIST.RT(%r,2,27)" % row[4])) and close(row[6], ev("F.INV.RT(0.05,2,27)")), row)
+t, _ = analysis_ui.run_tool(win, "Anova: Two-Factor Without Replication", {"input": "A2:C11", "labels": False, "alpha": 0.05})
+check("anova two-factor: rows, columns, error", [r[0] for r in t if r and r[0] in ("Rows", "Columns", "Error", "Total")] == ["Rows", "Columns", "Error", "Total"])
+t, _ = analysis_ui.run_tool(win, "Anova: Two-Factor With Replication", {"input": "A1:C11", "rows": 5, "alpha": 0.05})
+check("anova with replication: interaction", any(r and r[0] == "Interaction" for r in t))
+t, _ = analysis_ui.run_tool(win, "Correlation", {"input": "A1:C11", "grouped": "cols", "labels": True})
+check("correlation matrix = CORREL", close(t[2][1], ev("CORREL(A2:A11,B2:B11)")) and t[1][1] == 1 and t[1][2] is None, t)
+t, _ = analysis_ui.run_tool(win, "Covariance", {"input": "A1:C11", "grouped": "cols", "labels": True})
+check("covariance = COVARIANCE.P", close(t[3][2], ev("COVARIANCE.P(B2:B11,C2:C11)")), t)
+t, _ = analysis_ui.run_tool(win, "Regression", {"input": "C1:C11", "input2": "A1:B11", "labels": True, "zero": False, "conf_on": False, "conf": 95,
+                                                "residuals": True, "stdres": True, "resplot": False, "fitplot": False})
+coef = [r for r in t if r and r[0] in ("Intercept", "A", "B")]
+check("regression: coefficients = LINEST", close(coef[0][1], ev("INDEX(LINEST(C2:C11,A2:B11),1,3)")) and close(coef[1][1], ev("INDEX(LINEST(C2:C11,A2:B11),1,2)"))
+      and close(coef[2][1], ev("INDEX(LINEST(C2:C11,A2:B11),1,1)")), coef)
+check("regression: R square and standard errors = LINEST", close(find(t, "R Square"), ev("INDEX(LINEST(C2:C11,A2:B11,TRUE,TRUE),3,1)"))
+      and close(coef[1][2], ev("INDEX(LINEST(C2:C11,A2:B11,TRUE,TRUE),2,2)")), (find(t, "R Square"), coef))
+check("regression: residual output", any(r[:1] == ["Observation"] for r in t))
+t, _ = analysis_ui.run_tool(win, "Histogram", {"input": "A1:A11", "bins": "", "labels": True, "pareto": True, "cumulative": True, "chart": True})
+check("histogram: frequencies add up", sum(r[1] for r in t[1:]) == 10 and t[0][:3] == ["Bin", "Frequency", "Cumulative %"], t)
+t, _ = analysis_ui.run_tool(win, "Moving Average", {"input": "A2:A11", "labels": False, "interval": 3, "chart": False, "stderr": True})
+check("moving average", t[0][0] == "#N/A" and t[1][0] == "#N/A" and close(t[2][0], (12 + 15 + 11) / 3) and t[3][1] == "#N/A" and isinstance(t[4][1], float), t[:6])
+t, _ = analysis_ui.run_tool(win, "Exponential Smoothing", {"input": "A2:A11", "damping": 0.3, "labels": False, "chart": False, "stderr": False})
+check("exponential smoothing", t[0][0] == "#N/A" and t[1][0] == 12 and close(t[2][0], 0.7 * 15 + 0.3 * 12), t[:3])
+t, _ = analysis_ui.run_tool(win, "Rank and Percentile", {"input": "A1:A11", "grouped": "cols", "labels": True})
+check("rank and percentile = RANK.EQ / PERCENTRANK.INC", t[1][1] == 19 and t[1][2] == 1 and t[1][3] == 1.0 and close(t[-1][3], ev("PERCENTRANK.INC(A2:A11,11)")), t[:3])
+t, _ = analysis_ui.run_tool(win, "Sampling", {"input": "A2:A11", "labels": False, "method": "Periodic", "period": 3, "count": 5, "seed": ""})
+check("sampling: every third", [r[0] for r in t] == [11, 16, 19], t)
+t, _ = analysis_ui.run_tool(win, "Random Number Generation", {"nvars": 2, "count": 50, "dist": "Uniform", "p1": 5, "p2": 6, "p3": 1, "p4": 1, "p5": 1, "input": "", "seed": "7"})
+check("random numbers: uniform between its bounds", len(t) == 50 and all(5 <= v <= 6 for r in t for v in r))
+t2, _ = analysis_ui.run_tool(win, "Random Number Generation", {"nvars": 2, "count": 50, "dist": "Uniform", "p1": 5, "p2": 6, "p3": 1, "p4": 1, "p5": 1, "input": "", "seed": "7"})
+check("random numbers: the same seed, the same numbers", t == t2)
+t, _ = analysis_ui.run_tool(win, "Random Number Generation", {"nvars": 1, "count": 6, "dist": "Patterned", "p1": 1, "p2": 3, "p3": 1, "p4": 2, "p5": 1, "input": "", "seed": ""})
+check("random numbers: patterned", [r[0] for r in t] == [1, 1, 2, 2, 3, 3], t)
+for i, z in enumerate(["1", "2", "3", "4"]):
+    b.set_input(SA, 20 + i, 0, z)
+t, _ = analysis_ui.run_tool(win, "Fourier Analysis", {"input": "A21:A24", "labels": False, "inverse": False})
+check("fourier: FFT of 1,2,3,4", [r[0] for r in t] == ["10", "-2+2i", "-2", "-2-2i"], t)
+DIALOG.append(lambda d: Gtk.ResponseType.OK)
+try:
+    analysis_ui.run_tool(win, "Fourier Analysis", {"input": "A21:A23", "labels": False, "inverse": False})
+    ok = False
+except analysis_ui.InputError:
+    ok = True
+DIALOG.clear()
+check("fourier: needs 2^n values", ok)
+# through the dialog, to a new sheet
+nsh = b.sheet_count
+
+
+def _pick(d):
+    d.select("Descriptive Statistics")
+    return Gtk.ResponseType.OK
+
+
+def _fill(d):
+    d.w["input"][1].set_text("$A$1:$B$11")
+    d.w["labels"][1].set_active(True)
+    d.o_sheet_e.set_text("Stats")
+    return Gtk.ResponseType.OK
+
+
+DIALOG.extend([_pick, _fill])
+got = win.run("data-analysis")
+pump(0.2)
+st = [i for i in range(b.sheet_count) if b.sheet_info(i)["name"] == "Stats"]
+check("Data Analysis dialog: output on a new sheet", b.sheet_count == nsh + 1 and st and b.display(st[0], 0, 0) == "A" and b.display(st[0], 1, 0) == "Mean",
+      (b.sheet_count, st and [b.display(st[0], r, 0) for r in range(3)]))
+check("Data Analysis: values, not formulas", st and not b.input(st[0], 1, 1).startswith("="))
+SA = [i for i in range(b.sheet_count) if b.sheet_info(i)["name"] == SA_NAME][0]
+g.set_sheet(SA)
+pump()
+ws = analysis_ui.apply(win, "Correlation", {"input": "A1:C11", "grouped": "cols", "labels": True}, ("range", "$H$2"))
+check("output range", b.display(SA, 2, 8) == "1" and b.display(SA, 1, 8) == "A", [b.display(SA, 1, c) for c in range(7, 11)])
+check("Data Analysis command wired", hasattr(win, "act_data_analysis"))
+g.set_sheet(0)
+
 # ---------------------------------------------------------------- end
 w2.book.mark_saved()
 for p in tuple(globals().get("EXTRA", ())):
