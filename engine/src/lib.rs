@@ -66,6 +66,8 @@ pub mod advfilter;
 pub mod page_view;
 pub mod chartex;
 pub mod chart_extra;
+pub mod colorsort;
+pub mod xbook;
 #[cfg(feature = "python")]
 pub mod py;
 #[cfg(test)]

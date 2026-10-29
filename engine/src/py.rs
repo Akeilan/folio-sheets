@@ -980,10 +980,49 @@ impl PyBook {
 
     // ---- data
     #[pyo3(signature = (s, rg, keys, header, by_cols=false))]
-    fn sort_range(&mut self, s: usize, rg: R4, keys: Vec<(u32, bool)>, header: bool, by_cols: bool) -> PyResult<()> {
+    fn sort_range(&mut self, s: usize, rg: R4, keys: Vec<Bound<'_, PyAny>>, header: bool, by_cols: bool) -> PyResult<()> {
         self.sheet(s)?;
-        let keys: Vec<crate::book_data::SortKey> = keys.into_iter().map(|(line, ascending)| crate::book_data::SortKey { line, ascending }).collect();
+        // (line, ascending) or (line, on_top, "cell"|"font"|"icon", colour or None, icon set, icon index)
+        let mut ks: Vec<crate::book_data::SortKey> = Vec::new();
+        for k in keys {
+            let t: Vec<Bound<'_, PyAny>> = k.extract()?;
+            let line: u32 = t[0].extract()?;
+            let ascending: bool = t[1].extract()?;
+            let on = if t.len() > 2 {
+                let kind: String = t[2].extract()?;
+                match kind.as_str() {
+                    "cell" => crate::colorsort::SortOn::Cell(t.get(3).map(|x| x.extract::<Option<u32>>()).transpose()?.flatten()),
+                    "font" => crate::colorsort::SortOn::Font(t.get(3).map(|x| x.extract::<Option<u32>>()).transpose()?.flatten()),
+                    "icon" => crate::colorsort::SortOn::Icon(t.get(4).map(|x| x.extract::<String>()).transpose()?.unwrap_or_default(),
+                                                             t.get(5).map(|x| x.extract::<u32>()).transpose()?.unwrap_or(0)),
+                    _ => crate::colorsort::SortOn::Values,
+                }
+            } else {
+                crate::colorsort::SortOn::Values
+            };
+            ks.push(crate::book_data::SortKey { line, ascending, on });
+        }
+        let keys = ks;
         self.b.sort_range(s, rect(rg), &keys, header, by_cols).map_err(verr)
+    }
+    /// The fills ("cell"), font colours ("font") or icons ("icon") shown in rg: [(colour|None, set, index)].
+    fn colors_in(&self, s: usize, rg: R4, kind: &str) -> PyResult<Vec<(Option<u32>, String, u32)>> {
+        self.sheet(s)?;
+        Ok(self.b.colors_in(s, rect(rg), kind))
+    }
+    fn shown_colors(&self, s: usize, r: u32, c: u32) -> PyResult<(Option<u32>, Option<u32>, Option<(String, u32)>)> {
+        self.sheet(s)?;
+        Ok((self.b.shown_fill(s, r, c), self.b.shown_font(s, r, c), self.b.shown_icon(s, r, c)))
+    }
+    /// Move or Copy to another workbook: a copy of other's sheet `from` goes before `at` here.
+    fn import_sheet(&mut self, other: PyRef<'_, PyBook>, from: usize, at: usize, target: &str) -> PyResult<usize> {
+        self.b.import_sheet(&other.b, from, at, target).map_err(verr)
+    }
+    /// Paste Link from another workbook into dst (top-left at r, c); the pasted area.
+    #[allow(clippy::too_many_arguments)]
+    fn paste_link_from(&mut self, other: PyRef<'_, PyBook>, target: &str, src_s: usize, src: R4, dst_s: usize, r: u32, c: u32) -> PyResult<R4> {
+        self.sheet(dst_s)?;
+        self.b.paste_link_from(&other.b, target, src_s, rect(src), dst_s, r, c).map(|x| tup(&x)).map_err(verr)
     }
     fn guess_header(&self, s: usize, rg: R4) -> PyResult<bool> {
         self.sheet(s)?;
@@ -1024,6 +1063,10 @@ impl PyBook {
                 crate::book_data::FilterKind::Top10 { top, percent, val } => {
                     f.set_item("top10", (*top, *percent, *val))?;
                 }
+                crate::book_data::FilterKind::Color { cell, dxf } => {
+                    let d = self.b.dxf(*dxf);
+                    f.set_item("color", (*cell, if *cell { d.fill } else { d.color }))?;
+                }
                 crate::book_data::FilterKind::Raw(_) => {
                     f.set_item("other", true)?;
                 }
@@ -1053,6 +1096,19 @@ impl PyBook {
                     Some(crate::book_data::FilterKind::Custom { and: get(d, "and").unwrap_or(true), conds: c })
                 } else if let Some((top, percent, val)) = get::<(bool, bool, f64)>(d, "top10") {
                     Some(crate::book_data::FilterKind::Top10 { top, percent, val })
+                } else if let Some((cell, col)) = get::<(bool, Option<u32>)>(d, "color") {
+                    // the colour goes in a dxf, as the file keeps it
+                    let mut sp = crate::cf::RuleSpec::default();
+                    let dxf = if cell {
+                        match col {
+                            Some(c) => { sp.fill = Some(c); self.b.add_dxf(&sp) }
+                            None => self.b.add_raw_dxf("<dxf><fill><patternFill/></fill></dxf>"),
+                        }
+                    } else {
+                        sp.font_color = Some(col.unwrap_or(0));
+                        self.b.add_dxf(&sp)
+                    };
+                    Some(crate::book_data::FilterKind::Color { cell, dxf })
                 } else {
                     return Err(PyValueError::new_err("unknown filter"));
                 }

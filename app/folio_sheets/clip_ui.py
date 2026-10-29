@@ -163,8 +163,16 @@ def paste(win, opts=None):
                 out = b.paste_cells(Clip.sheet, Clip.rg, g.sheet, dst, opts, Clip.cut and not opts)
             else:
                 if opts and opts.get("link"):
-                    win.dialogs.message("Links to other workbooks aren't available yet.")
-                    return False
+                    # Paste Link from another open workbook: =[1]Sheet1!$A$1 and the link to it
+                    src = Clip.window
+                    if src is None or src not in getattr(win.app, "windows", []):
+                        win.dialogs.message("Paste Link needs the other workbook to stay open.")
+                        return False
+                    out = b.paste_link_from(src.book.current, src.link_target(), Clip.sheet, Clip.rg, g.sheet, dst[0], dst[1])
+                    g.sel.ranges = [out]
+                    g.refresh()
+                    win.changed() if hasattr(win, "changed") else None
+                    return True
                 out = b.paste_from_bytes(Clip.data, g.sheet, dst, opts)
                 if Clip.cut and not opts and Clip.window is not None:
                     src = Clip.window

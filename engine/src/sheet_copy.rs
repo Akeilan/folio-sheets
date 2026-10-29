@@ -26,7 +26,7 @@ pub fn copy_name(b: &Book, name: &str) -> String {
 }
 
 /// Elements of the sheet part that point at relationships the copy doesn't have.
-fn needs_rels(tag: &str, xml: &str) -> bool {
+pub(crate) fn needs_rels(tag: &str, xml: &str) -> bool {
     tag != "hyperlinks" && (xml.contains("r:id=") || xml.contains(":id=\"rId"))
 }
 

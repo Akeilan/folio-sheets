@@ -188,12 +188,12 @@ fn sort_filter_dedupe() {
     }
     let rc = Rect::new(0, 0, 5, 2);
     assert!(b.guess_header(0, rc));
-    b.sort_range(0, rc, &[crate::book_data::SortKey { line: 1, ascending: true }], true, false).unwrap();
+    b.sort_range(0, rc, &[crate::book_data::SortKey { line: 1, ascending: true, on: Default::default() }], true, false).unwrap();
     assert_eq!(b.value(0, 1, 0), Value::str("fig"));
     assert_eq!(b.value(0, 5, 0), Value::str("kiwi")); // blank last
     assert_eq!(b.input(0, 1, 2), "=B2*2");
     assert_eq!(n(&b, 1, 2), 6.0);
-    b.sort_range(0, rc, &[crate::book_data::SortKey { line: 0, ascending: false }], true, false).unwrap();
+    b.sort_range(0, rc, &[crate::book_data::SortKey { line: 0, ascending: false, on: Default::default() }], true, false).unwrap();
     assert_eq!(b.value(0, 1, 0), Value::str("pear"));
     // filter
     b.set_autofilter(0, Some(rc)).unwrap();

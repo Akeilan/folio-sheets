@@ -86,7 +86,7 @@ fn snapshot(sh: &Sheet, src: Rect) -> Block {
 }
 
 /// A style of another workbook as a change that recreates it here.
-fn import_change(st: &Styles, xf: u32) -> Change {
+pub(crate) fn import_change(st: &Styles, xf: u32) -> Change {
     let sp = spec(st, xf);
     let mut border: Vec<(String, Option<(String, Option<u32>)>)> = Vec::new();
     for side in ["left", "right", "top", "bottom", "diagonal"] {
