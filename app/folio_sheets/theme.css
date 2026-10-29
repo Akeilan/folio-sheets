@@ -421,3 +421,24 @@ tooltip label { color: #262626; }
 .folio-dialog colorswatch, .folio-dialog colorchooser { color: #262626; }
 .folio-dialog colorchooser button, .folio-dialog colorswatch button { background-color: #fdfdfd; background-image: none; }
 .folio-dialog colorswatch:selected, .folio-dialog colorswatch:selected overlay { background-color: transparent; background-image: none; color: #ffffff; }
+
+/* ---------- X3-05: a dialog's own title bar (client-side decorations, as under Wayland), focused or not ---------- */
+.folio-dialog headerbar, .folio-dialog headerbar:backdrop, .folio-dialog .titlebar, .folio-dialog .titlebar:backdrop,
+.folio-dialog.background headerbar.default-decoration, .folio-dialog.background headerbar.default-decoration:backdrop {
+  background-color: #f3f3f3; background-image: none; color: #262626; border-color: #d6d6d6; box-shadow: none; }
+.folio-dialog headerbar label, .folio-dialog headerbar label:backdrop, .folio-dialog headerbar .title,
+.folio-dialog headerbar .title:backdrop, .folio-dialog headerbar .subtitle, .folio-dialog headerbar .subtitle:backdrop { color: #262626; }
+.folio-dialog headerbar button.titlebutton, .folio-dialog headerbar button.titlebutton:backdrop {
+  background-color: transparent; background-image: none; color: #262626; border-color: transparent; box-shadow: none; }
+.folio-dialog headerbar button.titlebutton:hover { background-color: #e1e1e1; }
+.folio-dialog headerbar button.titlebutton.close:hover { background-color: #e81123; color: #ffffff; }
+.folio-dialog:backdrop, .folio-dialog.background:backdrop, .folio-dialog notebook stack:backdrop,
+.folio-dialog notebook header:backdrop { background-color: #f6f6f6; background-image: none; color: #262626; }
+.folio-dialog label:backdrop, .folio-dialog checkbutton label:backdrop, .folio-dialog radiobutton label:backdrop { color: #262626; }
+.folio-dialog entry:backdrop, .folio-dialog textview text:backdrop, .folio-dialog spinbutton:backdrop,
+.folio-dialog spinbutton entry:backdrop { background-color: #ffffff; background-image: none; color: #262626; }
+.folio-dialog button:not(.folio-default):not(.suggested-action):not(.flat):backdrop { background-color: #fdfdfd; background-image: none; color: #262626; }
+.folio-dialog button.suggested-action:backdrop { background-color: @accent; background-image: none; color: #ffffff; }
+.folio-dialog treeview:backdrop, .folio-dialog list:backdrop { background-color: #ffffff; color: #262626; }
+.folio-dialog check:backdrop, .folio-dialog radio:backdrop { background-color: #ffffff; background-image: none; }
+.folio-dialog check:checked:backdrop, .folio-dialog radio:checked:backdrop { background-color: @accent; color: #ffffff; }
