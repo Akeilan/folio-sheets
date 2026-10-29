@@ -192,10 +192,28 @@ check("inserting rows moves the sparklines and their data", b.sparkline_at(S, 1,
       and b.sparklines(S)[b.sparkline_at(S, 1, 5)[0]]["items"][0][0].endswith("A2:C2"))
 win.run("undo")
 
-# the axis button says it isn't available
-INFO.clear()
-win.run("spark-axis")
-check("Axis says it isn't available", INFO and "Axis" in INFO[-1][0])
+# Axis (S3-08): vertical axis same for all / custom, show axis, right to left, date axis
+g.sel.active = (0, 5)
+g.sel.ranges = [(0, 5, 0, 5)]
+cur = SP.current(win)
+check("axis: a sparkline is current", cur is not None)
+win.run("spark-axis-opt:min-group")
+SP.axis_option(win, "max-custom", 50)
+win.run("spark-axis-opt:show")
+win.run("spark-axis-opt:rtl")
+SP.axis_option(win, "date", "A1:C1")
+info = SP.current(win)[1]
+check("axis: minimum same for all", info["min_type"] == "group", info)
+check("axis: custom maximum", info["max_type"] == "custom" and info["manual_max"] == 50, info)
+check("axis: show axis and right to left", info["show_axis"] and info["right_to_left"], info)
+check("axis: date axis range", info["date_range"] == "A1:C1", info)
+SP.hidden_empty(win, "zero", True)
+info = SP.current(win)[1]
+check("hidden & empty cells", info["empty_as"] == "zero" and info["show_hidden"], info)
+g.refresh()
+pump(0.2)
+win.run("spark-axis-opt:general")
+check("axis: back to a general axis", SP.current(win)[1]["date_range"] is None)
 
 # saved and read back
 path = os.path.join(tempfile.mkdtemp(), "spark.xlsx")
@@ -203,6 +221,9 @@ win.save_to(path)
 again = Book.open(path)
 sp = again.sparklines(0)
 check("saved: the groups come back", len(sp) == 2 and sorted(x["kind"] for x in sp) == ["column", "winloss"], sp)
+ax = [x for x in sp if x["min_type"] == "group"]
+check("saved: the axis settings come back", ax and ax[0]["max_type"] == "custom" and ax[0]["manual_max"] == 50 and ax[0]["show_axis"]
+      and ax[0]["right_to_left"] and ax[0]["empty_as"] == "zero", ax)
 check("with their options", any(x["high"] and x["negative"] and x["color"] == 0x00B050 for x in sp))
 
 # clear

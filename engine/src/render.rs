@@ -910,14 +910,18 @@ impl Book {
         // ---- sparklines
         let sgroups = self.sparkline_groups_cached(s);
         for gr in sgroups.iter() {
+            let shared = if gr.min_type == "group" || gr.max_type == "group" { self.group_bounds(s, gr) } else { None };
+            let xs = self.date_positions(s, gr);
+            let rg = gr.resolved(|c| self.styles.resolve(c));
             for (f, (r, c)) in &gr.items {
                 let (yy, hh) = match rows.iter().find(|x| x.0 == *r) { Some(x) => (x.1, x.2), None => continue };
                 let (xx, ww) = match cols.iter().find(|x| x.0 == *c) { Some(x) => (x.1, x.2), None => continue };
-                let vals = self.sparkline_values(s, f);
+                let vals = self.group_values(s, gr, f);
+                let range = crate::sparkline::bounds(gr, &vals, shared);
                 cairo_save(cr);
                 cairo_rectangle(cr, xx, yy, ww, hh);
                 cairo_clip(cr);
-                crate::sparkline::paint(cr, &gr.resolved(|c| self.styles.resolve(c)), &vals, xx, yy, ww, hh, z);
+                crate::sparkline::paint_with(cr, &rg, &vals, range, xs.as_deref(), xx, yy, ww, hh, z);
                 cairo_restore(cr);
             }
         }
