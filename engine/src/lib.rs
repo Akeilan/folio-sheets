@@ -68,6 +68,8 @@ pub mod chartex;
 pub mod chart_extra;
 pub mod colorsort;
 pub mod controls;
+pub mod geo;
+pub mod mapchart;
 pub mod xbook;
 #[cfg(feature = "python")]
 pub mod py;

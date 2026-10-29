@@ -529,6 +529,8 @@ def build_ribbon(win):
             ("Clustered Column - Line", "chart-combo:combo"),
             ("Clustered Column - Line on Secondary Axis", "chart-combo:combo-secondary"), None,
             ("Create Custom Combo Chart...", "chart-combo")])]],
+        B.big("Maps", "r-chart-map", None, "MP", menu=[("#", "Filled Map"), ("Filled Map", "chartex:regionmap"), None,
+                                                      ("More Map Charts...", "chart-map")]),
         B.big("PivotChart", "r-pivot-chart", "pivot-chart", "V"),
     ], launcher="charts-dialog", launcher_keytip="K")
     B.group(t, "Sparklines", [

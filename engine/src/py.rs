@@ -2052,7 +2052,38 @@ impl PyBook {
         d.set_item("own_title", cx.title.clone())?;
         d.set_item("cats", cx.cats.iter().filter_map(|c| c.f.clone()).collect::<Vec<_>>())?;
         d.set_item("values", cx.series.iter().filter_map(|c| c.val.f.clone()).collect::<Vec<_>>())?;
+        if cx.kind == "regionmap" {
+            let m = PyDict::new_bound(py);
+            m.set_item("projection", if cx.map.projection.is_empty() { "automatic" } else { &cx.map.projection })?;
+            m.set_item("area", if cx.map.area.is_empty() { "automatic" } else { &cx.map.area })?;
+            m.set_item("labels", if cx.map.labels.is_empty() { "bestFitOnly" } else { &cx.map.labels })?;
+            m.set_item("colors", cx.map.colors)?;
+            let plan = self.b.map_plan(cx);
+            m.set_item("unknown", plan.unknown)?;
+            m.set_item("found", plan.found.len())?;
+            m.set_item("states", plan.states)?;
+            m.set_item("categories", cx.color_str.is_some())?;
+            d.set_item("map", m)?;
+        }
         Ok(Some(d))
+    }
+    /// Map chart options: projection / area / labels ("automatic" etc.), colors (min, mid or
+    /// None, max) or "auto".
+    #[pyo3(signature = (s, i, projection=None, area=None, labels=None, colors=None))]
+    fn set_map_options(&mut self, s: usize, i: usize, projection: Option<String>, area: Option<String>, labels: Option<String>, colors: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.sheet(s)?;
+        let cols: Option<Option<(u32, Option<u32>, u32)>> = match colors {
+            None => None,
+            Some(c) if c.extract::<String>().map(|x| x == "auto").unwrap_or(false) => Some(None),
+            Some(c) => Some(Some(c.extract()?)),
+        };
+        let auto = |x: String, d: &str| if x == d || x == "automatic" { String::new() } else { x };
+        self.b.set_map_options(s, i, |m| {
+            if let Some(p) = projection { m.projection = auto(p, "automatic"); }
+            if let Some(a) = area { m.area = auto(a, "automatic"); }
+            if let Some(l) = labels { m.labels = auto(l, "bestFitOnly"); }
+            if let Some(c) = cols { m.colors = c; }
+        }).map_err(verr)
     }
     #[pyo3(signature = (s, i, kind=None, title=None, clear_title=false, rg=None))]
     fn set_chartex(&mut self, s: usize, i: usize, kind: Option<&str>, title: Option<String>, clear_title: bool, rg: Option<R4>) -> PyResult<()> {

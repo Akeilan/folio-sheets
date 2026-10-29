@@ -766,4 +766,20 @@ impl Book {
         self.commit();
         Ok(())
     }
+
+    /// A map chart's options (Format Data Series > Series Options), one undo step.
+    pub fn set_map_options(&mut self, s: usize, i: usize, f: impl FnOnce(&mut crate::chartex::MapOpts)) -> Result<(), String> {
+        let mut objs = self.sheets.get(s).ok_or("no such sheet")?.objects.clone();
+        let cur = objs.get(i).and_then(|o| o.chartex.clone()).ok_or("That object isn't one of the newer charts.")?;
+        if cur.kind != "regionmap" {
+            return Err("That chart isn't a map.".into());
+        }
+        let mut cx = (*cur).clone();
+        f(&mut cx.map);
+        objs[i].chartex = Some(Rc::new(cx));
+        self.begin("Format Map", s);
+        self.record(Delta::Objects(s, objs));
+        self.commit();
+        Ok(())
+    }
 }
