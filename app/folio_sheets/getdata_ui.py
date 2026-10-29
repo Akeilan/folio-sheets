@@ -1044,12 +1044,21 @@ def from_table_range(win, choice="transform"):
         if rg[2] <= rg[0]:
             win.dialogs.message("Select a cell in a table or range of data first.", "From Table/Range")
             return None
-        with b.group("Create Table"):
-            ti = b.create_table(g.sheet, rg, True, STYLE)
+        try:
+            with b.group("Create Table"):
+                ti = b.create_table(g.sheet, rg, True, STYLE)
+        except ValueError as e:
+            win.dialogs.message(str(e), "From Table/Range")
+            return None
         g.refresh()
     t = b.tables(g.sheet)[ti]
     q = {"kind": "range", "item": t["name"], "name": unique_query_name(b, t["name"])}
-    return finish(win, q, read_source(q, b), choice)
+    try:
+        res = read_source(q, b)
+    except ValueError as e:
+        win.dialogs.message(str(e), "From Table/Range")
+        return None
+    return finish(win, q, res, choice)
 
 
 def edit_query(win, q):
