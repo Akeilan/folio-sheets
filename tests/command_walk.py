@@ -105,4 +105,5 @@ print("not yet:", sorted(set(win.missing_log)))
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))
 for e in ERRORS[:10]:
     print(e)
+sys.stdout.flush()
 os._exit(1 if ERRORS or not same else 0)

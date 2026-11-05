@@ -647,4 +647,5 @@ for e in ERRORS:
     print(e)
 failed = [c for c in checks if not c[1]]
 print("%d checks, %d failed" % (len(checks), len(failed)), flush=True)
+sys.stdout.flush()
 os._exit(1 if failed or ERRORS else 0)
