@@ -488,6 +488,11 @@ def activate(win, i):
         return edit_smartart(win, i)
     if o["kind"] == "picture":
         data = _pic(win, i)
+        from . import corkembed
+        if corkembed.is_diagram(data):
+            from . import diagram_ui
+            diagram_ui.edit(win, i)      # says so when Cork isn't installed
+            return True
         if png_chunk(data, b"flSg") is not None:
             return sign(win, i)
         if png_chunk(data, b"flEm") is not None or png_chunk(data, b"flLk") is not None:
