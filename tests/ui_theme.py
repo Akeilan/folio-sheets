@@ -114,4 +114,5 @@ except Exception:
     FAILS.append("exception")
 print("%d checks, %d failed" % (len(FAILS) + 1, len(FAILS)), flush=True)
 win.book.mark_saved()
+sys.stdout.flush()
 os._exit(1 if FAILS else 0)

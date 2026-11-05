@@ -104,4 +104,5 @@ print("%d checks, %d failed" % (len(checks), sum(1 for _, ok in checks if not ok
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))
 for e in ERRORS[:5]:
     print(e)
+sys.stdout.flush()
 os._exit(1 if ERRORS or any(not ok for _, ok in checks) else 0)

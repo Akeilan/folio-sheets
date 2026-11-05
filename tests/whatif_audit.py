@@ -261,4 +261,5 @@ for e in ERRORS[:5]:
     print(e)
 bad = [n for n, ok in checks if not ok]
 print("%d checks, %d failed" % (len(checks), len(bad)))
+sys.stdout.flush()
 os._exit(1 if bad or ERRORS else 0)
