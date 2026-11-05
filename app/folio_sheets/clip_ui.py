@@ -251,7 +251,9 @@ def paste_picture(win, quiet=False):
             win.dialogs.message("There is no picture on the Clipboard.", "Paste Picture")
         return False
     pb = cb.wait_for_image()
-    data = _png_of(pb) if pb is not None else None
+    from . import corkembed
+    # K3-08: a diagram copied in Cork stays editable
+    data = (corkembed.clipboard_diagram(pb) or _png_of(pb)) if pb is not None else None
     return bool(data) and _place_picture(win, data)
 
 

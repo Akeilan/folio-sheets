@@ -2,7 +2,7 @@
 import os
 import shutil
 
-VERSION = "0.19.1"
+VERSION = "0.20.0"
 APP_NAME = "Folio Sheet"
 APP_ID = "org.folio.Sheet"
 
