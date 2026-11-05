@@ -120,7 +120,10 @@ class Editing:
             fh.write(data)
         self.stamp = os.stat(self.path).st_mtime_ns
         self.on_change, self.on_close = on_change, on_close
-        self.proc = subprocess.Popen(cork_command() + [self.path], stdin=subprocess.DEVNULL)
+        # its own session, not holding the app's output open after the app has gone
+        self.proc = subprocess.Popen(cork_command() + [self.path], stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     start_new_session=True)
         self.timer = GLib.timeout_add(400, self._poll)
 
     def _check(self):
