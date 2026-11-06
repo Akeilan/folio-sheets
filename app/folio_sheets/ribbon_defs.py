@@ -699,6 +699,7 @@ def build_ribbon(win):
                            ("From XML", "from-source:xml"), ("From JSON", "from-source:json"),
                            ("From PDF", "from-source:pdf"), ("From Folder", "from-folder")]),
             ("From Database", [("From SQLite Database", "from-source:sqlite"),
+                               ("From ODBC", "from-source:odbc"),
                                ("From SQL Server Database", "get-data-unavailable:Getting data from a database server")]),
             ("From Online Services", "get-data-unavailable:Getting data from online services"),
             ("From Other Sources", [("From Table/Range", "from-table-range"),
