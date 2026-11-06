@@ -998,18 +998,82 @@ class ItemsNavigator(Gtk.Dialog):
         self.holder.show_all()
 
 
+def _source_name(kind, path):
+    """What to call the source in a message: a file's name, or the ODBC source itself."""
+    if kind == "odbc":
+        return path.split("DSN=")[-1].split(";")[0] if "=" in path else path
+    return os.path.basename(path)
+
+
+def choose_odbc(win):
+    """From ODBC (S4-01): the sources this computer is set up for, or a connection string."""
+    from . import datasources
+    try:
+        sources = datasources.odbc_sources()
+    except ValueError as e:
+        win.dialogs.info(str(e), "From ODBC")
+        return None
+    d = Gtk.Dialog(title="From ODBC", transient_for=win, modal=True)
+    d.get_style_context().add_class("folio-dialog")
+    d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+    d.add_button("OK", Gtk.ResponseType.OK)
+    d.set_default_response(Gtk.ResponseType.OK)
+    box = d.get_content_area()
+    box.set_border_width(12)
+    box.set_spacing(8)
+    box.pack_start(Gtk.Label(label="Data source name (DSN):", xalign=0), False, False, 0)
+    store = Gtk.ListStore(str, str, str)
+    for name, driver in sources:
+        store.append([name, driver, name])
+    tv = Gtk.TreeView(model=store)
+    tv.append_column(Gtk.TreeViewColumn("Source", Gtk.CellRendererText(), text=0))
+    tv.append_column(Gtk.TreeViewColumn("Driver", Gtk.CellRendererText(), text=1))
+    sw = Gtk.ScrolledWindow()
+    sw.set_shadow_type(Gtk.ShadowType.IN)
+    sw.set_size_request(420, 180)
+    sw.add(tv)
+    box.pack_start(sw, True, True, 0)
+    if not sources:
+        note = Gtk.Label(xalign=0)
+        note.set_markup("<small>No ODBC sources are set up on this computer. They live in "
+                        "/etc/odbc.ini and ~/.odbc.ini; the drivers installed are: %s</small>"
+                        % (", ".join(datasources.odbc_drivers()) or "none"))
+        note.set_line_wrap(True)
+        box.pack_start(note, False, False, 0)
+    box.pack_start(Gtk.Label(label="Or a connection string:", xalign=0), False, False, 0)
+    e = Gtk.Entry()
+    e.set_placeholder_text("DRIVER={SQLite3};DATABASE=/home/me/sales.db")
+    e.set_activates_default(True)
+    box.pack_start(e, False, False, 0)
+    tv.get_selection().connect("changed", lambda _s: e.set_text(""))
+    d.show_all()
+    if sources:
+        tv.get_selection().select_path(Gtk.TreePath(0))
+    r = d.run()
+    typed = e.get_text().strip()
+    m, it = tv.get_selection().get_selected()
+    picked = m[it][2] if it is not None else ""
+    d.destroy()
+    if r != Gtk.ResponseType.OK:
+        return None
+    return typed or picked or None
+
+
 def from_source(win, kind, path=None, item=None, choice=None):
-    """From XML, JSON, PDF or SQLite: the Navigator, then load (tests pass item and choice)."""
+    """From XML, JSON, PDF, SQLite or ODBC: the Navigator, then load (tests pass item and choice)."""
     from . import datasources
     title, pats = datasources.TITLES[kind]
-    path = path or _choose(win, "Import Data", Gtk.FileChooserAction.OPEN, ("%s files" % title, pats))
+    if path is None and kind == "odbc":
+        path = choose_odbc(win)
+    else:
+        path = path or _choose(win, "Import Data", Gtk.FileChooserAction.OPEN, ("%s files" % title, pats))
     if not path:
         return None
     if item is None:
         try:
             d = ItemsNavigator(win, kind, path)
         except Exception as e:
-            win.dialogs.message("%s can't read '%s'.\n\n%s" % (APP_NAME, os.path.basename(path), e))
+            win.dialogs.message("%s can't read '%s'.\n\n%s" % (APP_NAME, _source_name(kind, path), e))
             return None
         r = d.run()
         choice, q = d.buttons.choice, d.query()
@@ -1021,12 +1085,18 @@ def from_source(win, kind, path=None, item=None, choice=None):
     try:
         res = datasources.READERS[kind](q)
     except Exception as e:
-        win.dialogs.message("%s can't read '%s'.\n\n%s" % (APP_NAME, os.path.basename(path), e))
+        win.dialogs.message("%s can't read '%s'.\n\n%s" % (APP_NAME, _source_name(kind, path), e))
         return None
     label = q["item"].strip("/").rsplit("/", 1)[-1].rsplit(".", 1)[-1] if kind in ("xml", "json") and q["item"] else None
     if kind == "pdf":
         label = "Table" if not q["item"].endswith("page") else "Page"
-    q["name"] = unique_query_name(win.book, label or q["item"] or os.path.splitext(os.path.basename(path))[0])
+    if kind == "odbc":
+        # a password typed in stays in this session; the saved query keeps the rest
+        q["path"] = datasources.odbc_scrub(q["path"])
+        name = q["item"].rsplit(".", 1)[-1] or _source_name(kind, path)
+    else:
+        name = label or q["item"] or os.path.splitext(os.path.basename(path))[0]
+    q["name"] = unique_query_name(win.book, name)
     return finish(win, q, res, choice or "load")
 
 
@@ -1083,8 +1153,9 @@ def edit_query(win, q):
 
 
 def not_available(win, what):
-    win.dialogs.info("%s isn't available in %s. %s gets data from files on this computer: "
-                     "Text/CSV, Excel workbooks, folders, XML, JSON, PDF and SQLite files." % (what, APP_NAME, APP_NAME), "Get Data")
+    win.dialogs.info("%s isn't available in %s. %s gets data from this computer: Text/CSV, Excel "
+                     "workbooks, folders, XML, JSON, PDF and SQLite files, and any database with "
+                     "an ODBC driver through From ODBC." % (what, APP_NAME, APP_NAME), "Get Data")
 
 
 # ------------------------------------------------------------------ Queries & Connections pane

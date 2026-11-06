@@ -1,6 +1,6 @@
-"""More local data sources for Get Data (S3-06): XML, JSON, PDF tables and SQLite files on this
-computer, and From Table/Range in this workbook. Each source lists its tables (items) for the
-Navigator and reads one into a Result."""
+"""More local data sources for Get Data (S3-06, S4-01): XML, JSON, PDF tables, SQLite files and
+ODBC sources on this computer, and From Table/Range in this workbook. Each source lists its tables
+(items) for the Navigator and reads one into a Result."""
 import json
 import os
 import sqlite3
@@ -180,6 +180,102 @@ def read_sqlite(q):
     return _res(heads, rows)
 
 
+# ------------------------------------------------------------------ ODBC (S4-01)
+ODBC_MISSING = ("Reading an ODBC source needs the python3-pyodbc package, which isn't installed. "
+                "Install it with:\n\n    sudo apt install python3-pyodbc unixodbc\n\n"
+                "The drivers themselves are set up in /etc/odbcinst.ini and /etc/odbc.ini, as "
+                "other programs on this computer use them.")
+
+
+def _pyodbc():
+    try:
+        import pyodbc
+    except ImportError:
+        raise ValueError(ODBC_MISSING) from None
+    return pyodbc
+
+
+def odbc_sources():
+    """The ODBC sources this computer is set up for: [(name, driver)], the DSNs before the drivers."""
+    p = _pyodbc()
+    out = [(n, d) for n, d in sorted((p.dataSources() or {}).items())]
+    return out
+
+
+def odbc_drivers():
+    try:
+        return sorted(_pyodbc().drivers() or [])
+    except ValueError:
+        return []
+
+
+# a password typed into a connection string is kept for this session only, never saved into the
+# workbook: {the string as the query holds it: the string as it was typed}
+_SECRETS = {}
+_SECRET_KEYS = ("pwd", "password")
+
+
+def odbc_scrub(target):
+    """The connection string without its password, which is what a saved query keeps."""
+    if "=" not in target:
+        return target
+    parts = [p for p in target.split(";") if p.strip()]
+    kept = [p for p in parts if p.split("=", 1)[0].strip().strip("{}").lower() not in _SECRET_KEYS]
+    out = ";".join(kept)
+    if len(kept) != len(parts):
+        _SECRETS[out] = target
+    return out
+
+
+def odbc_connect(target):
+    """A read-only connection. The target is a DSN name or a whole connection string."""
+    p = _pyodbc()
+    target = _SECRETS.get(target, target)
+    cs = target if "=" in target else "DSN=%s" % target
+    return p.connect(cs, readonly=True, autocommit=True, timeout=30)
+
+
+def odbc_items(target):
+    """The tables and views of the source: [(label, item)]."""
+    con = odbc_connect(target)
+    try:
+        cur = con.cursor()
+        rows = []
+        for r in cur.tables():
+            kind = (r[3] or "").upper()
+            if kind not in ("TABLE", "VIEW"):
+                continue
+            schema, name = (r[1] or ""), (r[2] or "")
+            full = "%s.%s" % (schema, name) if schema and schema.lower() not in ("", "public", "main") else name
+            rows.append((full + ("  (view)" if kind == "VIEW" else ""), full))
+        rows.sort(key=lambda t: t[1].lower())
+    finally:
+        con.close()
+    if not rows:
+        raise ValueError("That source has no tables to read.")
+    return rows
+
+
+def read_odbc(q):
+    """One table of the source, or a SELECT typed in place of a table."""
+    item = q["item"] or ""
+    con = odbc_connect(q["path"])
+    try:
+        cur = con.cursor()
+        if item.strip()[:6].upper() == "SELECT":
+            cur.execute(item)
+        else:
+            parts = [pp for pp in item.split(".") if pp]
+            name = ".".join('"%s"' % pp.replace('"', '""') for pp in parts) or '""'
+            cur.execute("SELECT * FROM %s" % name)
+        heads = [d[0] for d in cur.description or []]
+        rows = [[("" if isinstance(v, (bytes, bytearray)) else _text(v)) for v in r]
+                for r in cur.fetchmany(1048575)]
+    finally:
+        con.close()
+    return _res(heads, rows)
+
+
 # ------------------------------------------------------------------ PDF
 def _pdf_lines(page):
     """The page's text as lines of words with positions: [(y, [(x1, x2, word)])]."""
@@ -317,7 +413,10 @@ def read_range(q, book):
     raise ValueError("The table '%s' wasn't found." % q["item"])
 
 
-READERS = {"json": read_json, "xml": read_xml, "sqlite": read_sqlite, "pdf": read_pdf}
-ITEMS = {"json": json_items, "xml": xml_items, "sqlite": sqlite_items, "pdf": pdf_items}
+READERS = {"json": read_json, "xml": read_xml, "sqlite": read_sqlite, "pdf": read_pdf,
+           "odbc": read_odbc}
+ITEMS = {"json": json_items, "xml": xml_items, "sqlite": sqlite_items, "pdf": pdf_items,
+         "odbc": odbc_items}
 TITLES = {"json": ("JSON", ("*.json",)), "xml": ("XML", ("*.xml",)), "pdf": ("PDF", ("*.pdf",)),
-          "sqlite": ("SQLite Database", ("*.sqlite", "*.sqlite3", "*.db", "*.db3"))}
+          "sqlite": ("SQLite Database", ("*.sqlite", "*.sqlite3", "*.db", "*.db3")),
+          "odbc": ("ODBC Source", ())}
