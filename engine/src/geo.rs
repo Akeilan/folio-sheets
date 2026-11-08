@@ -286,4 +286,35 @@ mod tests {
         let p = Projection::Albers(29.5, 45.5, -96.0).project(-96.0, 40.0);
         assert!(p.0.abs() < 1e-9);
     }
+
+    #[test]
+    fn finds_states_in_the_other_countries_too() {
+        // S3-14: the nine countries Natural Earth covers at this scale, not just four
+        let a = atlas();
+        for (iso3, want) in [("USA", 50), ("CAN", 13), ("AUS", 8), ("BRA", 26),
+                             ("CHN", 30), ("IND", 28), ("IDN", 30), ("RUS", 80), ("ZAF", 9)] {
+            assert!(a.states_of(iso3).len() >= want, "{iso3} has {} states", a.states_of(iso3).len());
+        }
+        // by name, by local spelling, and by ISO 3166-2 code
+        let cn = a.country("China");
+        assert!(a.state("Guangdong", cn).is_some());
+        assert!(a.state("CN-GD", cn).is_some());
+        let r#in = a.country("India");
+        assert!(a.state("Kerala", r#in).is_some());
+        assert!(a.state("Tamil Nadu", r#in).is_some());
+        assert!(a.state("Gauteng", a.country("South Africa")).is_some());
+        assert!(a.state("Bali", a.country("Indonesia")).is_some());
+        // a whole column of them resolves as states, not countries
+        let (st, ids) = a.resolve(&["Karnataka".into(), "Kerala".into(), "Goa".into()], &[]);
+        assert!(st, "they are states");
+        assert!(ids.iter().all(|x| x.is_some()), "{ids:?}");
+        // every state carries a usable code: no placeholders left in the data
+        for r in a.regions.iter().filter(|r| r.state) {
+            assert!(!r.code.contains('~'), "{} has a placeholder code {}", r.name, r.code);
+        }
+        // and each one has a boundary to draw
+        for r in a.regions.iter().filter(|r| r.state) {
+            assert!(!r.rings.is_empty(), "{} has no boundary", r.name);
+        }
+    }
 }
