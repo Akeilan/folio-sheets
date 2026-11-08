@@ -206,6 +206,60 @@ if HAVE_CRYPTO:
     rb = insert_extras.check_signature(win, bi)
     check("S3-16: a signature with the name swapped does not pass", rb and not rb["valid"], rb)
 
+# ---------------------------------------------------------------- S4-02 Transform Data on combined files
+from folio_sheets import getdata_ui as G, query_ui  # noqa: E402
+
+FOLD = os.path.join(TMP, "monthly")
+os.makedirs(FOLD, exist_ok=True)
+for _m, _rows in (("jan", "Pens,10\nInk,4\n"), ("feb", "Pens,7\nPaper,0\n")):
+    with open(os.path.join(FOLD, _m + ".csv"), "w") as _f:
+        _f.write("Item,Count\n" + _rows)
+
+# the menu offers it now, and is not greyed out
+_d = G.FolderDialog(win, FOLD)
+pump()
+_items = [it for it in widgets(_d.buttons.combine_button.get_popup(), Gtk.MenuItem)]
+_labels = [(it.get_label(), it.get_sensitive()) for it in _items]
+check("S4-02: Combine & Transform Data is offered and can be chosen",
+      ("Combine & Transform Data", True) in _labels, _labels)
+_d.destroy()
+
+# combining really does hand the files to the step editor, as one table
+q = {"kind": "folder", "path": FOLD, "combine": True, "name": "Monthly"}
+base = G.read_source(q)
+check("S4-02: the files come in together", base.headers == ["Source.Name", "Item", "Count"]
+      and len(base.rows) == 4, (base.headers, len(base.rows)))
+
+# steps a person would add in the editor: drop a column, filter, change a type
+q["steps"] = [{"op": "remove", "cols": ["Source.Name"]},
+              {"op": "filter", "col": "Count", "cmp": "gt", "value": "0"},
+              {"op": "type", "col": "Count", "kind": "whole"}]
+out = G.read(q)
+check("S4-02: the chosen column is gone", out.headers == ["Item", "Count"], out.headers)
+check("S4-02: the filter dropped the empty row", len(out.rows) == 3, [r[0] for r in out.rows])
+check("S4-02: and the type was changed to a number", out.kinds[1] == "number", out.kinds)
+check("S4-02: with whole-number values", all(float(r[1]) == round(float(r[1])) for r in out.rows),
+      [r[1] for r in out.rows])
+
+# the steps are kept with the query, so Refresh does them again
+CHOICE = {"v": "combine-transform"}
+q["name"] = G.unique_query_name(b, "Monthly")
+sheet_before = len(b.sheet_names()) if hasattr(b, "sheet_names") else None
+where = G.finish(win, dict(q), out, "load")
+pump(0.2)
+check("S4-02: the transformed table lands in the workbook", where is not None, where)
+if where:
+    t = b.tables(where[0])[where[1]]
+    check("S4-02: with only the columns that were kept", t["columns"] == ["Item", "Count"], t["columns"])
+    # a new file arrives: refresh runs the same steps over it
+    with open(os.path.join(FOLD, "mar.csv"), "w") as _f:
+        _f.write("Item,Count\nGlue,5\nTape,0\n")
+    win.run("refresh-all")
+    pump(0.3)
+    loc = G.locate(b, q["name"])
+    check("S4-02: refresh re-reads the folder and applies the steps again",
+          loc and loc[2]["ref"][2] == 4, loc and loc[2]["ref"])
+
 print("%d checks, %d failed" % (len(checks), sum(1 for _, ok in checks if not ok)), flush=True)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))
 for e in ERRORS[:5]:

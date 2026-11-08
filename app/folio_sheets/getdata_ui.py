@@ -20,7 +20,6 @@ from . import text_ui
 
 PREFIX = "_folio_query_"
 STYLE = "TableStyleMedium2"
-NOT_TRANSFORM = "Combining files with Transform Data isn't available in %s. Combine & Load, then use the table." % APP_NAME
 ENCODINGS = [("65001: Unicode (UTF-8)", "utf-8-sig"), ("1252: Western European (Windows)", "cp1252"),
              ("28591: Western European (ISO)", "latin-1"), ("1200: Unicode", "utf-16"), ("20127: US-ASCII", "ascii")]
 DELIMS = [("Comma", ","), ("Semicolon", ";"), ("Tab", "\t"), ("Space", " "), ("Colon", ":"), ("Equals Sign", "="),
@@ -588,13 +587,9 @@ class _LoadButtons:
             comb = Gtk.MenuButton(label="Combine ▾")
             m = Gtk.Menu()
             for label, what in (("Combine & Load", "combine"), ("Combine & Load To...", "combine-to"),
-                                ("Combine & Transform Data", None)):
+                                ("Combine & Transform Data", "combine-transform")):
                 it = Gtk.MenuItem(label=label)
-                if what is None:
-                    it.set_sensitive(False)
-                    it.set_tooltip_text(NOT_TRANSFORM)
-                else:
-                    it.connect("activate", lambda _i, w=what: self._go(dialog, w))
+                it.connect("activate", lambda _i, w=what: self._go(dialog, w))
                 m.append(it)
             m.show_all()
             comb.set_popup(m)
@@ -944,6 +939,9 @@ def from_folder(win, path=None):
             win.dialogs.message(str(e), "Combine Files")
             return None
     q["name"] = unique_query_name(win.book, os.path.basename(os.path.normpath(path)) or "Folder")
+    # Combine & Transform Data: the files go into the step editor together, as one table
+    if choice == "combine-transform":
+        choice = "transform"
     return finish(win, q, res, choice)
 
 
