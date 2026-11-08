@@ -3008,11 +3008,22 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         from . import pivot_ui
         self.dialogs.info(pivot_ui.NOT_HERE % (what, APP_NAME) + more, "PivotTable")
 
+    def _pivot_no_levels(self, what):
+        """Drill Down and Drill Up walk a hierarchy's levels. This workbook's Data Model relates
+        tables by their key columns rather than building hierarchies, so there are no levels to
+        walk; Show Details gives the rows behind a value, which is what is usually wanted."""
+        self.dialogs.info(
+            "%s moves through the levels of a hierarchy. Folio Sheet's Data Model relates tables "
+            "by their key columns rather than building hierarchies, so a PivotTable here has no "
+            "levels to move through.\n\nTo see the rows behind a value, use Show Details — "
+            "double-click the value, or right-click it and choose Show Details." % what,
+            "PivotTable")
+
     def act_pivot_drill_down(self):
-        self._pivot_missing("Drill Down", " It works on Data Model PivotTables.")
+        self._pivot_no_levels("Drill Down")
 
     def act_pivot_drill_up(self):
-        self._pivot_missing("Drill Up", " It works on Data Model PivotTables.")
+        self._pivot_no_levels("Drill Up")
 
     def act_pivot_expand(self):
         self._pivot_missing("Expanding and collapsing fields")

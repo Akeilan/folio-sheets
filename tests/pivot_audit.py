@@ -282,9 +282,15 @@ except ValueError:
 check("rows can't be inserted through it", refused)
 # the not-available commands say so
 INFO.clear()
-for cmd in ("pivot-group", "pivot-calculated", "pivot-drill-down", "pivot-olap", "pivot-relationships"):
+for cmd in ("pivot-group", "pivot-calculated", "pivot-olap", "pivot-relationships"):
     win.run(cmd)
-check("grouping, calculated fields, OLAP say they aren't available", len(INFO) == 5 and all("isn't available" in t for _, t in INFO), INFO)
+check("grouping, calculated fields, OLAP say they aren't available", len(INFO) == 4 and all("isn't available" in t for _, t in INFO), INFO)
+# Drill Down is different (S3-18): there is a Data Model, it just has no hierarchy levels,
+# so it says that and points at Show Details rather than claiming the feature is absent
+INFO.clear()
+win.run("pivot-drill-down")
+check("Drill Down explains the Data Model has no levels, and points at Show Details",
+      len(INFO) == 1 and "no levels to move through" in INFO[0][1] and "Show Details" in INFO[0][1], INFO)
 # field list toggles
 win.run("pivot-field-list")
 check("Field List hides the pane", not win.pivot_pane.get_visible())

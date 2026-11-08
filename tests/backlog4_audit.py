@@ -260,6 +260,102 @@ if where:
     check("S4-02: refresh re-reads the folder and applies the steps again",
           loc and loc[2]["ref"][2] == 4, loc and loc[2]["ref"])
 
+# ---------------------------------------------------------------- S3-18 Data Model as Excel's own
+from folio_sheets import model_ui, pivot_ui  # noqa: E402
+
+win.run("insert-sheet")
+pump()
+DM = g.sheet
+for r, row in enumerate([("Region", "Amount"), ("East", "10"), ("West", "20"), ("East", "5"), ("North", "7")]):
+    for c, v in enumerate(row):
+        b.set_input(DM, r, c, v)
+for r, row in enumerate([("Region", "Manager"), ("East", "Ann"), ("West", "Bob"), ("North", "Cy")]):
+    for c, v in enumerate(row):
+        b.set_input(DM, r, 4 + c, v)
+b.create_table(DM, (0, 0, 4, 1), True, "TableStyleMedium2")
+b.create_table(DM, (0, 4, 3, 5), True, "TableStyleMedium2")
+_tn = [t["name"] for t in b.tables(DM)]
+SALES, REGIONS = _tn[0], _tn[1]
+
+# with nothing in the model yet, From Data Model says so instead of opening an empty dialog
+_said = {"v": None}
+_realinfo = win.dialogs.info
+win.dialogs.info = lambda msg, title="", *a, **k: _said.__setitem__("v", msg)
+pivot_ui.create(win, "model")
+win.dialogs.info = _realinfo
+check("S3-18: From Data Model says when the model is empty",
+      _said["v"] and "nothing in this workbook's Data Model" in _said["v"], _said["v"])
+
+
+def _rel(d):
+    if d.get_title() == "Manage Relationships":
+        DIALOG.insert(0, lambda dd: (dd.combos[0].set_active_id(SALES), dd.combos[1].set_active_id("Region"),
+                                     dd.combos[2].set_active_id(REGIONS), dd.combos[3].set_active_id("Region"),
+                                     Gtk.ResponseType.OK)[-1])
+        d.new()
+    return Gtk.ResponseType.CLOSE
+
+
+DIALOG.append(_rel)
+win.run("data-relationships")
+pump()
+_m = model_ui.load(win)
+check("S3-18: two tables related", _m["rels"] == [[SALES, "Region", REGIONS, "Region"]], _m)
+
+# and now From Data Model opens the dialog with the model already chosen — it used to refuse
+_seen = {}
+
+
+def _frommodel(d):
+    for w in widgets(d, Gtk.RadioButton):
+        if w.get_label() == "Use this workbook's Data Model":
+            _seen["model_on"] = w.get_active()
+            _seen["model_usable"] = w.get_sensitive()
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(_frommodel)
+pivot_ui.create(win, "model")
+pump(0.3)
+check("S3-18: From Data Model opens the dialog, not a refusal", _seen.get("model_usable"), _seen)
+check("S3-18: with the Data Model already chosen", _seen.get("model_on"), _seen)
+pi = pivot_ui.current(win)
+check("S3-18: and it makes a PivotTable", pi is not None)
+if pi is not None:
+    _p = b.pivot(pi)
+    _names = [f["name"] for f in _p["fields"]]
+    check("S3-18: whose fields come from both related tables",
+          ("%s.Manager" % REGIONS) in _names and ("%s.Amount" % SALES) in _names, _names)
+    # Show Details gives the rows behind a value, on a Data Model PivotTable too
+    _lay = pivot_ui.layout_of(_p)
+    _fm = _names.index("%s.Manager" % REGIONS)
+    _fa = _names.index("%s.Amount" % SALES)
+    _p2 = pivot_ui.with_layout(_p, pivot_ui.place(_p, pivot_ui.place(_p, _lay, _fm, "rows"), _fa, "values"))
+    b.set_pivot(pi, _p2)
+    pump(0.2)
+    _sheets_before = len(b.sheet_names()) if hasattr(b, "sheet_names") else None
+    # a value cell inside the pivot: the lowest-right cell that still belongs to it
+    _cells = [(r, c) for r in range(24) for c in range(12)
+              if b.pivot_at(g.sheet, r, c) == pi and b.display(g.sheet, r, c)]
+    _target = _cells[-1] if _cells else None
+    check("S3-18: the PivotTable is on the sheet to drill into", _target is not None, len(_cells))
+    if _target:
+        pivot_ui.show_details(win, _target[0], _target[1])
+    pump(0.3)
+    _sheets_after = len(b.sheet_names()) if hasattr(b, "sheet_names") else None
+    check("S3-18: Show Details drills to the rows behind a value",
+          _sheets_before is None or _sheets_after > _sheets_before, (_sheets_before, _sheets_after))
+
+# Drill Down says what is true of this Data Model rather than claiming it ought to work
+_said2 = {"v": None}
+_realinfo2 = win.dialogs.info
+win.dialogs.info = lambda msg, title="", *a, **k: _said2.__setitem__("v", msg)
+win.run("pivot-drill-down")
+win.dialogs.info = _realinfo2
+check("S3-18: Drill Down explains there are no hierarchy levels, and points at Show Details",
+      _said2["v"] and "no levels to move through" in _said2["v"] and "Show Details" in _said2["v"],
+      _said2["v"])
+
 print("%d checks, %d failed" % (len(checks), sum(1 for _, ok in checks if not ok)), flush=True)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))
 for e in ERRORS[:5]:
