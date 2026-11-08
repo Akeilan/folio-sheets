@@ -235,6 +235,15 @@ def _png_with_chunk(surface, tag, payload):
     return data[:k] + chunk + data[k:]
 
 
+def _png_add_chunk(data, tag, payload):
+    """The same private chunk, added to PNG bytes that are already made."""
+    if not payload or not data:
+        return data
+    chunk = struct.pack(">I", len(payload)) + tag + payload + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+    k = data.rfind(b"IEND") - 4
+    return data[:k] + chunk + data[k:]
+
+
 def _pic(win, i):
     got = win.book.picture_bytes(win.grid.sheet, i)
     return bytes(got[0]) if got else b""
@@ -329,7 +338,7 @@ def signature_setup(win):
 
 
 def sign(win, i, name=None):
-    """Sign a signature line: the signer's typed name goes on the line (no certificate)."""
+    """Sign a signature line: a typed name, or a certificate the signer points at (S3-16)."""
     import datetime
     b, g = win.book, win.grid
     data = _pic(win, i)
@@ -337,9 +346,18 @@ def sign(win, i, name=None):
     if meta is None:
         return False
     signer, title, email, _signed, _date = (meta.decode("utf-8", "replace").split("\n") + [""] * 5)[:5]
+    if png_chunk(data, SIG_CHUNK) is not None:
+        # already signed with a certificate: say what it says rather than signing over it
+        return show_signature(win, i)
     if name is None:
-        name = win.dialogs.ask_text("Sign", "Type your name to sign:", signer)
-        if not name:
+        got = sign_dialog(win, signer)
+        if got is None:
+            return True
+        kind, name, p12, password = got
+        if kind == "certificate":
+            ok, why = sign_with_certificate(win, i, p12, password)
+            if not ok:
+                win.dialogs.message(why, "Sign")
             return True
     x, y, w, h = b.objects(g.sheet)[i]["rect"]
     new = signature_png(signer, title, email, name, datetime.date.today().strftime("%m/%d/%Y"))
@@ -585,3 +603,226 @@ def activate(win, i):
         if png_chunk(data, b"flEm") is not None or png_chunk(data, b"flLk") is not None:
             return open_object(win, i) is not None
     return False
+
+
+# ------------------------------------------------------------------ S3-16 signing with a certificate
+# Excel signs with a certificate from the Windows certificate store. There is no such store here,
+# so the signer points at their own PKCS#12 file (.p12/.pfx) — the form a certificate and its
+# private key are handed out in — and types its password. Nothing leaves this computer: the
+# signing, and the checking afterwards, are done here.
+SIG_CHUNK = b"flSc"
+
+
+def _sheet_digest(win, sheet, skip=None):
+    """A digest of what is on the sheet, so a signature can be checked against it later.
+    The signature pictures themselves are left out: signing changes them."""
+    import hashlib
+    b = win.book
+    h = hashlib.sha256()
+    rows, cols = b.used_extent(sheet) or (0, 0)
+    for r in range(min(rows + 1, 4096)):
+        for c in range(min(cols + 1, 256)):
+            v = b.display(sheet, r, c)
+            if v:
+                h.update(("%d:%d:%s\n" % (r, c, v)).encode("utf-8"))
+    for k, o in enumerate(b.objects(sheet)):
+        if skip is not None and k == skip:
+            continue
+        h.update(("obj%d:%s\n" % (k, o.get("kind", ""))).encode("utf-8"))
+    return h.hexdigest()
+
+
+def certificate_of(p12_path, password):
+    """(private key, certificate) out of a PKCS#12 file, or an error message."""
+    try:
+        from cryptography.hazmat.primitives.serialization import pkcs12
+    except ImportError:
+        return None, "This computer has no python3-cryptography, so certificates can't be used."
+    try:
+        with open(p12_path, "rb") as fh:
+            blob = fh.read()
+        key, cert, _chain = pkcs12.load_key_and_certificates(blob, (password or "").encode("utf-8"))
+    except Exception as e:                                  # a wrong password lands here too
+        return None, "That certificate file couldn't be opened: %s" % e
+    if key is None or cert is None:
+        return None, "That file has no certificate and private key in it."
+    return (key, cert), None
+
+
+def _name_of(x509name, default=""):
+    from cryptography.x509.oid import NameOID
+    for oid in (NameOID.COMMON_NAME, NameOID.ORGANIZATION_NAME):
+        got = x509name.get_attributes_for_oid(oid)
+        if got:
+            return got[0].value
+    return default
+
+
+def sign_with_certificate(win, i, p12_path, password):
+    """Sign a signature line with a certificate. Returns (True, signer) or (False, why)."""
+    import base64
+    import datetime
+    got, err = certificate_of(p12_path, password)
+    if err:
+        return False, err
+    key, cert = got
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+
+    b, g = win.book, win.grid
+    data = _pic(win, i)
+    meta = png_chunk(data, b"flSg")
+    if meta is None:
+        return False, "That isn't a signature line."
+    signer, title, email, _s, _d = (meta.decode("utf-8", "replace").split("\n") + [""] * 5)[:5]
+    who = _name_of(cert.subject, signer or "the certificate holder")
+    when = datetime.date.today().strftime("%m/%d/%Y")
+    digest = _sheet_digest(win, g.sheet, skip=i)
+    payload = "\n".join((signer, title, email, who, when, digest)).encode("utf-8")
+    try:
+        if isinstance(key, rsa.RSAPrivateKey):
+            sig = key.sign(payload, padding.PKCS1v15(), hashes.SHA256())
+            algo = "RSA-SHA256"
+        elif isinstance(key, ec.EllipticCurvePrivateKey):
+            sig = key.sign(payload, ec.ECDSA(hashes.SHA256()))
+            algo = "ECDSA-SHA256"
+        else:
+            return False, "That certificate's key is of a kind Folio Sheet can't sign with."
+    except Exception as e:
+        return False, "The certificate couldn't sign this: %s" % e
+    from cryptography.hazmat.primitives.serialization import Encoding
+    record = "\n".join((algo, who, _name_of(cert.issuer, "unknown"),
+                        cert.not_valid_before.strftime("%Y-%m-%d"), cert.not_valid_after.strftime("%Y-%m-%d"),
+                        digest, base64.b64encode(sig).decode(),
+                        base64.b64encode(cert.public_bytes(Encoding.DER)).decode()))
+    x, y, w, h = b.objects(g.sheet)[i]["rect"]
+    new = signature_png(signer, title, email, who, when)
+    new = _png_add_chunk(new, SIG_CHUNK, record.encode("utf-8"))
+    b.begin_group("Sign")
+    try:
+        b.delete_objects(g.sheet, [i])
+        k = b.insert_picture(g.sheet, new, x, y, w, h)
+        b.set_object_rect(g.sheet, k, x, y, w, h, "Sign")
+        b.set_object_props(g.sheet, [k], {"name": "Signature Line %d" % (k + 1),
+                                          "descr": "Signed by %s with a certificate" % who}, "Sign")
+    finally:
+        b.end_group()
+    g.sel_objects = [k]
+    g.refresh()
+    win.update_title()
+    return True, who
+
+
+def check_signature(win, i):
+    """What a certificate signature says, and whether it still holds.
+    Returns a dict, or None when this object carries no certificate signature."""
+    import base64
+    import datetime
+    data = _pic(win, i)
+    rec = png_chunk(data, SIG_CHUNK)
+    if rec is None:
+        return None
+    f = (rec.decode("utf-8", "replace").split("\n") + [""] * 8)[:8]
+    algo, who, issuer, start, end, digest, sig_b64, cert_b64 = f
+    out = {"algorithm": algo, "signer": who, "issuer": issuer, "from": start, "to": end,
+           "valid": False, "unchanged": False, "expired": False, "why": ""}
+    meta = png_chunk(data, b"flSg")
+    signer, title, email, signed_by, when = (meta.decode("utf-8", "replace").split("\n") + [""] * 5)[:5] \
+        if meta else ("", "", "", who, "")
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+    except ImportError:
+        out["why"] = "This computer has no python3-cryptography, so the signature can't be checked."
+        return out
+    try:
+        cert = x509.load_der_x509_certificate(base64.b64decode(cert_b64))
+        payload = "\n".join((signer, title, email, who, when, digest)).encode("utf-8")
+        pub = cert.public_key()
+        sig = base64.b64decode(sig_b64)
+        if isinstance(pub, rsa.RSAPublicKey):
+            pub.verify(sig, payload, padding.PKCS1v15(), hashes.SHA256())
+        elif isinstance(pub, ec.EllipticCurvePublicKey):
+            pub.verify(sig, payload, ec.ECDSA(hashes.SHA256()))
+        else:
+            out["why"] = "The certificate's key is of a kind Folio Sheet can't check."
+            return out
+        out["valid"] = True
+    except Exception as e:
+        out["why"] = "The signature doesn't match: %s" % e
+        return out
+    out["unchanged"] = (_sheet_digest(win, win.grid.sheet, skip=i) == digest)
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    out["expired"] = bool(end) and end < today
+    if not out["unchanged"]:
+        out["why"] = "The sheet has been changed since it was signed."
+    elif out["expired"]:
+        out["why"] = "The certificate had expired on %s." % end
+    return out
+
+
+def sign_dialog(win, suggested=""):
+    """Ask how to sign: a typed name, or a certificate file. Returns
+    (kind, name, p12 path, password) or None."""
+    d = Gtk.Dialog(title="Sign", transient_for=win, modal=True)
+    d.get_style_context().add_class("folio-dialog")
+    d.add_button("Sign", Gtk.ResponseType.OK)
+    d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+    box = d.get_content_area()
+    box.set_border_width(12)
+    grid = Gtk.Grid(column_spacing=8, row_spacing=6)
+    typed = Gtk.RadioButton.new_with_label_from_widget(None, "Type your name:")
+    name = Gtk.Entry()
+    name.set_text(suggested)
+    name.set_hexpand(True)
+    grid.attach(typed, 0, 0, 1, 1)
+    grid.attach(name, 1, 0, 2, 1)
+    cert = Gtk.RadioButton.new_with_label_from_widget(typed, "Sign with a certificate:")
+    fc = Gtk.FileChooserButton(title="Certificate (.p12 or .pfx)", action=Gtk.FileChooserAction.OPEN)
+    pw = Gtk.Entry()
+    pw.set_visibility(False)
+    pw.set_placeholder_text("Password")
+    grid.attach(cert, 0, 1, 1, 1)
+    grid.attach(fc, 1, 1, 1, 1)
+    grid.attach(pw, 2, 1, 1, 1)
+    box.pack_start(grid, False, False, 0)
+    note = Gtk.Label(xalign=0, label="The certificate and its password stay on this computer.")
+    note.set_margin_top(8)
+    box.pack_start(note, False, False, 0)
+    d.typed, d.name, d.cert, d.fc, d.pw = typed, name, cert, fc, pw
+    d.show_all()
+    r = d.run()
+    out = None
+    if r == Gtk.ResponseType.OK:
+        if cert.get_active() and fc.get_filename():
+            out = ("certificate", "", fc.get_filename(), pw.get_text())
+        elif name.get_text().strip():
+            out = ("typed", name.get_text().strip(), None, None)
+    d.destroy()
+    return out
+
+
+def show_signature(win, i):
+    """What a certificate signature on this line says."""
+    r = check_signature(win, i)
+    if r is None:
+        return False
+    if r["valid"] and r["unchanged"] and not r["expired"]:
+        head = "This signature is good."
+    elif r["valid"]:
+        head = "This signature matches, but:"
+    else:
+        head = "This signature does not match."
+    lines = [head, "",
+             "Signed by: %s" % r["signer"],
+             "Certificate issued by: %s" % r["issuer"],
+             "Certificate good from %s to %s" % (r["from"], r["to"]),
+             "Signed using: %s" % r["algorithm"]]
+    if r["why"]:
+        lines += ["", r["why"]]
+    lines += ["", "Folio Sheet checks that the signature matches the certificate and that the",
+              "sheet has not changed since. It does not say whether the certificate itself",
+              "comes from someone you should trust."]
+    win.dialogs.message("\n".join(lines), "Signature")
+    return True
