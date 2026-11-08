@@ -128,6 +128,84 @@ if kinds:
     check("S3-17: and it is still there in the saved workbook",
           again and insert_extras.png_chunk(bytes(again[0]), b"flEm") is not None)
 
+# ---------------------------------------------------------------- S3-16 Signature Line with a certificate
+# A certificate made here, so the test needs nothing from outside.
+P12 = os.path.join(TMP, "signer.p12")
+HAVE_CRYPTO = True
+try:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12 as _pkcs12
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    import datetime as _dt
+
+    _key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _sub = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Ron Shillings"),
+                      x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Folio")])
+    _cert = (x509.CertificateBuilder().subject_name(_sub).issuer_name(_sub)
+             .public_key(_key.public_key()).serial_number(x509.random_serial_number())
+             .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
+             .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=365))
+             .sign(_key, hashes.SHA256()))
+    with open(P12, "wb") as fh:
+        fh.write(_pkcs12.serialize_key_and_certificates(
+            b"signer", _key, _cert, None,
+            serialization.BestAvailableEncryption(b"secret")))
+except Exception as _e:
+    HAVE_CRYPTO = False
+    print("no cryptography here: %s" % _e, flush=True)
+
+if HAVE_CRYPTO:
+    win.run("insert-sheet")
+    pump()
+    SS = g.sheet
+    for r, row in enumerate([("Item", "Amount"), ("Freight", "1200"), ("Fuel", "640")]):
+        for c, v in enumerate(row):
+            b.set_input(SS, r, c, v)
+    pump()
+    DIALOG.append(lambda d: ([e.set_text(t) for e, t in zip(d.entries, ("Ron Shillings", "Owner", "ron@example.org", ""))],
+                             Gtk.ResponseType.OK)[1])
+    win.run("signature-line")
+    pump(0.2)
+    si = g.sel_objects[0]
+    check("S3-16: a signature line to sign", insert_extras.png_chunk(insert_extras._pic(win, si), b"flSg") is not None)
+
+    # the wrong password is refused, and says so
+    ok, why = insert_extras.sign_with_certificate(win, si, P12, "wrong")
+    check("S3-16: a wrong password is refused", not ok and "couldn't be opened" in why, why)
+
+    ok, who = insert_extras.sign_with_certificate(win, si, P12, "secret")
+    check("S3-16: signed with the certificate", ok and who == "Ron Shillings", (ok, who))
+    si = g.sel_objects[0]
+    r = insert_extras.check_signature(win, si)
+    check("S3-16: and the signature checks out", r and r["valid"] and r["unchanged"] and not r["expired"], r)
+    check("S3-16: it names the certificate it was signed with",
+          r and r["signer"] == "Ron Shillings" and r["issuer"] == "Ron Shillings" and r["algorithm"] == "RSA-SHA256", r)
+
+    # change the sheet underneath it: the signature must notice
+    b.set_input(SS, 1, 1, "9999")
+    pump()
+    r2 = insert_extras.check_signature(win, si)
+    check("S3-16: changing the sheet is noticed", r2 and r2["valid"] and not r2["unchanged"], r2)
+    check("S3-16: and it says why", r2 and "changed since it was signed" in r2["why"], r2 and r2["why"])
+    b.set_input(SS, 1, 1, "1200")          # what was actually there: Freight 1200
+    pump()
+    check("S3-16: putting it back makes it good again",
+          (insert_extras.check_signature(win, si) or {}).get("unchanged"))
+
+    # a signature that was tampered with does not pass
+    pic = insert_extras._pic(win, si)
+    rec = insert_extras.png_chunk(pic, insert_extras.SIG_CHUNK).decode().split("\n")
+    rec[1] = "Someone Else"
+    bad = insert_extras._png_add_chunk(
+        insert_extras.signature_png("Ron Shillings", "Owner", "ron@example.org", "Someone Else", "01/01/2026"),
+        insert_extras.SIG_CHUNK, "\n".join(rec).encode())
+    x, y, w, h = b.objects(SS)[si]["rect"]
+    bi = b.insert_picture(SS, bad, x + 300, y, w, h)
+    rb = insert_extras.check_signature(win, bi)
+    check("S3-16: a signature with the name swapped does not pass", rb and not rb["valid"], rb)
+
 print("%d checks, %d failed" % (len(checks), sum(1 for _, ok in checks if not ok)), flush=True)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))
 for e in ERRORS[:5]:
