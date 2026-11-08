@@ -299,9 +299,21 @@ def _run(win, dlg, title):
 
 
 def create(win, arg=None):
-    if arg in ("external", "model"):
-        win.dialogs.info(NOT_HERE % ("PivotTables from %s" % ("external data sources" if arg == "external" else "the Data Model"),
-                                     APP_NAME) + " Use a table or range in the workbook.", "PivotTable")
+    if arg == "external":
+        win.dialogs.info(NOT_HERE % ("PivotTables from external data sources", APP_NAME)
+                         + " Use a table or range in the workbook.", "PivotTable")
+        return
+    if arg == "model":
+        # Insert > PivotTable > From Data Model: the dialog, with the model already chosen
+        from . import model_ui
+        if not model_ui.load(win)["tables"]:
+            win.dialogs.info("There is nothing in this workbook's Data Model yet. Add a table to it "
+                             "when you make a PivotTable, or relate two tables with Data > Relationships.",
+                             "PivotTable")
+            return
+        dlg = CreateDialog(win)
+        dlg.r_model.set_active(True)
+        _run(win, dlg, "PivotTable")
         return
     g = win.grid
     r, c = g.sel.active
