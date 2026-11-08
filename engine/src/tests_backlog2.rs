@@ -162,3 +162,31 @@ fn region_map_round_trip() {
     let back = r.sheets[0].objects.iter().find_map(|o| o.chartex.clone()).unwrap();
     assert!(back.color_str.is_some());
 }
+
+#[test]
+fn a_map_chart_draws_with_no_network_at_all(/* S3-15 */) {
+    // Excel's filled maps call Bing for the shapes. Ours carry their own, so a map must
+    // draw on a machine with no network: the test run itself is done inside `unshare -n`
+    // by tools/offline-maps.sh, and nothing here is allowed to reach out.
+    let mut b = blank();
+    for (r, row) in [["State", "Sales"], ["Guangdong", "40"],
+                     ["Kerala", "12"], ["Gauteng", "7"],
+                     ["Bali", "3"]].iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            b.set_input(0, r as u32, c as u32, v).unwrap();
+        }
+    }
+    let i = b.insert_chartex(0, Rect::new(0, 0, 4, 1), "regionmap", 320.0, 220.0).unwrap();
+    let cx = b.chartex(0, i).unwrap();
+    let plan = b.map_plan(&cx);
+    // every one of them is a state in a country we only learned about in S3-14
+    assert!(plan.states, "they resolve as states; found {} unknown {:?}", plan.found.len(), plan.unknown);
+    assert_eq!(plan.found.len(), 4, "unknown: {:?}", plan.unknown);
+    assert!(plan.unknown.is_empty(), "{:?}", plan.unknown);
+    assert!(!plan.drawn.is_empty(), "there are regions to draw");
+    // and the sheet renders with the map on it
+    let p = crate::view::ViewParams { width: 640.0, height: 420.0, ..Default::default() };
+    crate::render::render_png(&b, 0, &p, "/tmp/map_offline.png").unwrap();
+    let png = std::fs::metadata("/tmp/map_offline.png").unwrap();
+    assert!(png.len() > 2000, "the picture has something in it ({} bytes)", png.len());
+}

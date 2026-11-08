@@ -385,6 +385,47 @@ def _icon_png(name, payload, tag):
     return _png_with_chunk(surf, tag, payload)
 
 
+
+# ---------------------------------------------------------------- Insert > Object > Create New
+# There is no OLE here, so "Create New" offers the kinds of document the Folio apps on this
+# computer can make: each ships a blank template, and a new object starts as a copy of it.
+# Once embedded it behaves like any other object — double-clicking opens it in its own app.
+NEW_OBJECT_KINDS = [
+    ("Folio Sheet Workbook", "folio-sheet", "Blank.xlsx", "Workbook"),
+    ("Folio Page Document", "folio-page", "Normal-A4.docx", "Document"),
+    ("Folio Show Presentation", "folio-show", "Blank.pptx", "Presentation"),
+]
+
+
+def _template_path(pkg, leaf):
+    """The blank template of another Folio app, wherever it is installed."""
+    here = os.path.dirname(__file__)
+    for p in (os.path.join("/usr/share", pkg, "templates", leaf),
+              os.path.join("/usr/local/share", pkg, "templates", leaf),
+              os.path.join(here, "..", "..", "..", pkg.replace("folio-page", "folio-writer")
+                           .replace("folio-show", "folio-deliver").replace("folio-sheet", "folio-sheets"),
+                           "share", "templates", leaf)):
+        if os.path.exists(p):
+            return os.path.abspath(p)
+    return None
+
+
+def new_object_kinds():
+    """The object types this computer can actually make, newest-looking first."""
+    out = []
+    for label, pkg, leaf, stem in NEW_OBJECT_KINDS:
+        t = _template_path(pkg, leaf)
+        if t:
+            out.append((label, t, stem, os.path.splitext(leaf)[1]))
+    return out
+
+
+def _new_object_body(template, stem, ext, n=1):
+    """A blank document of that kind, and the name it goes in under."""
+    with open(template, "rb") as fh:
+        return "%s%d%s" % (stem, n, ext), fh.read()
+
+
 def insert_object(win, path=None, link=False):
     """Insert > Object > Create from File (embedded or linked); Create New needs programs this
     desktop doesn't have, so it says so."""
@@ -396,10 +437,37 @@ def insert_object(win, path=None, link=False):
         box = d.get_content_area()
         box.set_border_width(12)
         nb = Gtk.Notebook()
-        new = Gtk.Label(label="Creating a new object needs a program that makes embedded objects;\n"
-                              "there are none on this desktop. Use Create from File.", xalign=0)
-        new.set_margin_top(12)
-        nb.append_page(new, Gtk.Label(label="Create New"))
+        kinds = new_object_kinds()
+        nbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        nbox.set_border_width(8)
+        if kinds:
+            nbox.pack_start(Gtk.Label(label="Object type:", xalign=0), False, False, 0)
+            store = Gtk.ListBox()
+            store.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            for label, _t, _stem, _ext in kinds:
+                row = Gtk.ListBoxRow()
+                lab = Gtk.Label(label=label, xalign=0)
+                lab.set_margin_start(6)
+                lab.set_margin_top(3)
+                lab.set_margin_bottom(3)
+                row.add(lab)
+                store.add(row)
+            sw = Gtk.ScrolledWindow()
+            sw.set_min_content_height(110)
+            sw.add(store)
+            nbox.pack_start(sw, True, True, 0)
+            nicon = Gtk.CheckButton(label="Display as icon")
+            nicon.set_active(True)
+            nicon.set_sensitive(False)
+            nbox.pack_start(nicon, False, False, 0)
+            store.select_row(store.get_row_at_index(0))
+            d.kinds, d.kindlist = kinds, store
+        else:
+            nbox.pack_start(Gtk.Label(label="No other Folio app is installed here, so there is\n"
+                                            "nothing to make a new object with. Use Create from File.",
+                                      xalign=0), False, False, 0)
+            d.kinds, d.kindlist = [], None
+        nb.append_page(nbox, Gtk.Label(label="Create New"))
         fbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         fbox.set_border_width(8)
         fbox.pack_start(Gtk.Label(label="File name:", xalign=0), False, False, 0)
@@ -415,11 +483,26 @@ def insert_object(win, path=None, link=False):
         box.pack_start(nb, True, True, 0)
         d.chooser, d.link = fc, lk
         d.show_all()
-        nb.set_current_page(1)
+        nb.set_current_page(1 if not d.kinds else 0)
         r = d.run()
+        page = nb.get_current_page()
         path, link = fc.get_filename(), lk.get_active()
+        made = None
+        if r == Gtk.ResponseType.OK and page == 0 and d.kinds and d.kindlist is not None:
+            row = d.kindlist.get_selected_row()
+            if row is not None:
+                label, template, stem, ext = d.kinds[row.get_index()]
+                n = 1 + sum(1 for j in range(len(win.book.objects(win.grid.sheet)))
+                            if (object_file(win, j) or ("", None, None))[0].startswith(stem))
+                made = _new_object_body(template, stem, ext, n)
         d.destroy()
-        if r != Gtk.ResponseType.OK or not path:
+        if r != Gtk.ResponseType.OK:
+            return None
+        if made is not None:
+            name, body = made
+            data = _icon_png(name, name.encode("utf-8") + b"\x00" + body, b"flEm")
+            return _place_object(win, data, "New " + name)
+        if not path:
             return None
     name = os.path.basename(path)
     try:
@@ -432,11 +515,15 @@ def insert_object(win, path=None, link=False):
     except OSError as e:
         win.dialogs.message(str(e), "Object")
         return None
+    return _place_object(win, data, ("Linked file " if link else "Embedded file ") + name)
+
+
+def _place_object(win, data, descr="Embedded file"):
+    """Put a made object on the sheet at the cursor, as Create from File does."""
     b, g = win.book, win.grid
     r, c = g.sel.active
     i = b.insert_picture(g.sheet, data, b.col_x(g.sheet, c), b.row_y(g.sheet, r), 96.0, 96.0)
-    b.set_object_props(g.sheet, [i], {"name": "Object %d" % (i + 1), "descr": ("Linked file " if link else "Embedded file ") + name},
-                       "Insert Object")
+    b.set_object_props(g.sheet, [i], {"name": "Object %d" % (i + 1), "descr": descr}, "Insert Object")
     g.sel_objects = [i]
     g.refresh()
     win.update_title()
