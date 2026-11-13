@@ -17,6 +17,9 @@ if [ -z "${INSTALLED_ONLY:-}" ]; then
 fi
 echo "== deb"
 sh $R/build-deb.sh /home/claude/out && ls -la /home/claude/out/folio-sheet_${V}_amd64.deb
+echo "== X4-05: against the app it replaces"
+bash /home/claude/folio-suite/tools/compare-release.sh folio-sheet /home/claude/folio-sheets /home/claude/out/folio-sheet_${V}_amd64.deb || \
+  echo "X4-05 FAILED: this candidate shows less than the app it replaces"
 echo "== installed"
 bash $R/tools/release_installed.sh $V $XD
 exit 0
