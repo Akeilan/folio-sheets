@@ -10,6 +10,9 @@ V=$(sed -n 's/^Version: //p' $R/packaging/DEBIAN/control)
 pgrep -x Xvfb -a | grep -q ":$XD " || { rm -f /tmp/.X$XD-lock /tmp/.X11-unix/X$XD; setsid -f Xvfb :$XD -screen 0 1600x1000x24 -nolisten tcp </dev/null >/dev/null 2>&1; sleep 1; }
 rm -rf /srv/jammy/tmp/fs && mkdir -p /srv/jammy/tmp/fs && rsync -a --exclude .git $R/ /srv/jammy/tmp/fs/
 if [ -z "${INSTALLED_ONLY:-}" ]; then
+  echo "== engine (Rust): built fresh, so the package cannot ship an older one"
+  bash $R/engine/build.sh 2>&1 | grep -E "test result|^error|engine:" | tail -3
+  bash $R/engine/sync_app.sh >/dev/null 2>&1
   echo "== engine (Rust)"
   chroot /srv/jammy bash -c "cd /tmp/fs/engine && cargo test -q --no-default-features --lib 2>&1 | grep -E 'test result|^error|FAILED'"
   echo "== audits and the walk (source)"

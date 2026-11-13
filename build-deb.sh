@@ -15,6 +15,15 @@ mkdir -p "$STAGE/usr/lib/folio-sheet"
 cp -a "$HERE/app/folio_sheets" "$STAGE/usr/lib/folio-sheet/"
 find "$STAGE/usr/lib/folio-sheet" -name '__pycache__' -prune -exec rm -rf {} +
 ENGINE="${FOLIO_SHEETS_ENGINE:-$HERE/engine/out/folio_sheets_core.so}"
+[ -f "$ENGINE" ] || { echo "no engine at $ENGINE: run engine/build.sh" >&2; exit 1; }
+# The engine is a built binary and the data it needs is compiled into it (geo.rs include_str!s
+# data/maps.txt). A package built from an engine older than its own source ships work that was
+# written weeks ago and never reached anyone: S3-14's provinces sat in the data for five days
+# while every package carried an engine from before them. Refuse it rather than ship it.
+STALE="$(find "$HERE/engine/src" "$HERE/engine/data" "$HERE/engine/Cargo.toml" -newer "$ENGINE" 2>/dev/null | head -5)"
+[ -z "$STALE" ] || { echo "the engine binary is older than its own source:" >&2
+  echo "$STALE" | sed 's#^#  #' >&2
+  echo "run engine/build.sh first (or set FOLIO_SHEETS_ENGINE)" >&2; exit 1; }
 install -m 644 "$ENGINE" "$STAGE/usr/lib/folio-sheet/folio_sheets_core.so"
 mkdir -p "$STAGE/DEBIAN"
 cp "$HERE/packaging/DEBIAN/"* "$STAGE/DEBIAN/"

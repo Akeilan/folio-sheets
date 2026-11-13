@@ -157,6 +157,21 @@ impl Atlas {
         }
     }
 
+    /// The countries whose states and provinces are in the atlas, named as a person would read
+    /// them: taken from the data rather than written out, so the list cannot go stale when more
+    /// are added (S3-14).
+    pub fn with_states(&self) -> Vec<String> {
+        let mut codes: Vec<&str> = self.regions.iter().filter(|r| r.state)
+            .map(|r| r.country.as_str()).collect();
+        codes.sort_unstable();
+        codes.dedup();
+        let mut out: Vec<String> = codes.iter()
+            .filter_map(|c| self.regions.iter().find(|r| !r.state && r.code == **c))
+            .map(|r| r.name.clone()).collect();
+        out.sort();
+        out
+    }
+
     /// The states of a country.
     pub fn states_of(&self, iso3: &str) -> Vec<usize> {
         (0..self.regions.len()).filter(|&i| self.regions[i].state && self.regions[i].country == iso3).collect()
