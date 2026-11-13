@@ -74,11 +74,23 @@ if not HAVE:
     check("and reading one stops politely", out is None)
     check("the chooser says the same", getdata_ui.choose_odbc(win) is None)
 else:
-    ini = os.path.join(TMP, "odbc.ini")
     drv = sorted((d for d in datasources.odbc_drivers() if "sqlite" in d.lower()),
                  key=lambda d: ("3" not in d, d))     # SQLite3 before the older SQLite2 driver
+
+if HAVE and not drv:
+    # pyodbc is here but this computer has no SQLite driver to talk to. Sheet asks for neither:
+    # the package Recommends pyodbc and unixodbc and leaves the drivers to whoever set the
+    # computer up, so a machine without extras has none and that is not a fault. What is worth
+    # checking is that Sheet says so rather than falling over.
+    check("with no driver on this computer, the list is simply empty",
+          datasources.odbc_drivers() == [] or not drv, datasources.odbc_drivers())
+    check("and the chooser says there is nothing to choose", getdata_ui.choose_odbc(win) is None)
+    out = getdata_ui.from_source(win, "odbc", "DSN=nothing")
+    check("and reading one stops politely", out is None)
+elif HAVE:
+    ini = os.path.join(TMP, "odbc.ini")
     open(ini, "w").write("[folio_test]\nDescription=Folio test\nDriver=%s\nDatabase=%s\n"
-                         % (drv[0] if drv else "SQLite3", dbp))
+                         % (drv[0], dbp))
     os.environ["ODBCINI"] = ini
     check("the SQLite ODBC driver is one of the drivers listed", bool(drv), datasources.odbc_drivers())
     names = [n for n, _d in datasources.odbc_sources()]
@@ -91,7 +103,7 @@ else:
           and res.rows[2] == ["East", "41", "1430.25"], (res.headers, res.rows))
     res2 = datasources.read_odbc({"path": "folio_test", "item": "select region from sales where units > 25".upper()})
     check("a SELECT reads too", [r[0] for r in res2.rows] == ["North", "East"], res2.rows)
-    cs = "DRIVER={%s};DATABASE=%s" % (drv[0] if drv else "SQLite3", dbp)
+    cs = "DRIVER={%s};DATABASE=%s" % (drv[0], dbp)
     res3 = datasources.read_odbc({"path": cs, "item": "sales"})
     check("a whole connection string works as well as a DSN", len(res3.rows) == 3, res3.rows)
     with_pw = cs + ";PWD=hunter2;UID=me"
