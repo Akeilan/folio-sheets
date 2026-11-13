@@ -32,6 +32,15 @@ pub struct MapPlan {
     pub projection: Projection,
 }
 
+/// "A, B and C" — the way a person reads a list.
+fn join_names(v: &[String]) -> String {
+    match v.len() {
+        0 => "no country yet".to_string(),
+        1 => v[0].clone(),
+        _ => format!("{} and {}", v[..v.len() - 1].join(", "), v[v.len() - 1]),
+    }
+}
+
 impl Book {
     /// A new Filled Map from the selected cells: the text columns name the places (the broadest
     /// first, as Country, State), the number column — or a last text column — is what colours them.
@@ -70,7 +79,10 @@ impl Book {
         }
         let plan = self.map_plan(&cx);
         if plan.found.is_empty() {
-            return Err("None of the places in the selection were found. Name countries, or states and provinces of the United States, Canada, Brazil or Australia.".into());
+            let have = crate::geo::atlas().with_states();
+            return Err(format!(
+                "None of the places in the selection were found. Name countries, or states and provinces of {}.",
+                join_names(&have)));
         }
         Ok(cx)
     }
