@@ -94,6 +94,8 @@ class SheetsApp(Gtk.Application):
     # ------------------------------------------------------------ life cycle
     def do_startup(self):
         Gtk.Application.do_startup(self)
+        from . import regional
+        regional.apply()
         css = Gtk.CssProvider()
         css.load_from_path(os.path.join(os.path.dirname(__file__), "theme.css"))
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css,
@@ -172,7 +174,9 @@ class SheetsApp(Gtk.Application):
         for f in files:
             path = f.get_path()
             if path:
-                win = self.open_path(path)
+                # a template opened from the file manager or the command line starts a new
+                # workbook based on it; File > Open edits the template itself
+                win = self.open_path(path, as_new=True)
         if win is not None:
             self._maybe_script(win)
 
@@ -183,8 +187,12 @@ class SheetsApp(Gtk.Application):
         win.present()
         return win
 
-    def open_path(self, path, from_window=None):
+    def open_path(self, path, from_window=None, as_new=False):
         path = os.path.abspath(path)
+        if as_new and os.path.splitext(path)[1].lower() in (".xltx", ".xltm"):
+            win = self.new_window()
+            win.load(path, as_new=True)
+            return win
         for w in self.windows:
             if w.path == path:
                 w.present()

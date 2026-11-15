@@ -219,6 +219,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     # ------------------------------------------------------------ books
     def new_book(self):
+        self.save_kind = None
         tpl = self.app.blank_template()
         if tpl is None:
             raise RuntimeError("the blank workbook template is missing")
@@ -227,7 +228,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.untitled = self.app.next_untitled()
         self._after_load()
 
-    def load(self, path):
+    def load(self, path, as_new=False):
         ext = os.path.splitext(path)[1].lower()
         from . import encryption
         password = None
@@ -278,6 +279,15 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return
         self.book = self._wrap(book)
         self.book.open_password = password
+        self.save_kind = None
+        if as_new and ext in (".xltx", ".xltm") and self.path is not None:
+            # a new workbook based on the template: Budget.xltx opens as Budget1, and Save
+            # asks where to keep it (as a workbook, macro-enabled when the template was)
+            self.path = None
+            self.save_kind = "xlsm" if ext == ".xltm" else "xlsx"
+            self.untitled = os.path.splitext(os.path.basename(path))[0] + "1"
+            self._after_load()
+            return
         if self.path is None:
             self.untitled = os.path.splitext(os.path.basename(path))[0]
         self.app.add_recent(path)
@@ -319,10 +329,13 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def _import_text(self, path):
         """CSV/TSV: values typed into a blank workbook (the Text Import
         Wizard with its column types comes later)."""
+        from .text_ui import decode_text
         book = Book.open(self.app.blank_template())
-        with open(path, newline="", encoding="utf-8-sig", errors="replace") as f:
-            sample = f.read(65536)
-            f.seek(0)
+        with open(path, "rb") as fb:
+            text, _enc = decode_text(fb.read())
+        f = io.StringIO(text, newline=None)
+        if True:
+            sample = text[:65536]
             delim = "\t" if path.lower().endswith(".tsv") else ","
             try:
                 delim = csv.Sniffer().sniff(sample, delimiters=",;\t").delimiter
@@ -1073,6 +1086,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         d.set_do_overwrite_confirmation(True)
         filters = [("Excel Workbook (*.xlsx)", "*.xlsx", "xlsx"), ("Excel Macro-Enabled Workbook (*.xlsm)", "*.xlsm", "xlsm"),
                    ("Excel Template (*.xltx)", "*.xltx", "xltx"), ("Excel Macro-Enabled Template (*.xltm)", "*.xltm", "xltm"),
+                   ("CSV UTF-8 (Comma delimited) (*.csv)", "*.csv", "csvutf8"),
+                   ("Text (Tab delimited) (*.txt)", "*.txt", "txt"),
                    ("CSV (Comma delimited) (*.csv)", "*.csv", "csv")]
         fobjs = {}
         for name, pat, key in filters:
@@ -1082,11 +1097,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             d.add_filter(f)
             fobjs[key] = f
         cur = os.path.splitext(self.path)[1].lower().lstrip(".") if self.path else ""
-        want = fmt or (cur if cur in ("xlsm", "xltx", "xltm") else "xlsx")
+        want = fmt or (cur if cur in ("xlsm", "xltx", "xltm") else getattr(self, "save_kind", None) or "xlsx")
         self._save_filters = fobjs
         d.set_filter(fobjs[want])
         base = os.path.splitext(self.doc_name())[0]
-        d.set_current_name(base + "." + want)
+        d.set_current_name(base + "." + {"csvutf8": "csv"}.get(want, want))
         if self.path:
             d.set_current_folder(os.path.dirname(self.path))
         r = d.run()
@@ -1096,12 +1111,16 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if not p:
             return False
         kind = next((k for k, f in fobjs.items() if f is chosen), "xlsx")
-        if p.lower().endswith(".csv"):
+        low = p.lower()
+        if low.endswith(".csv") and kind not in ("csv", "csvutf8"):
             kind = "csv"
-        if kind == "csv":
-            if not p.lower().endswith(".csv"):
-                p += ".csv"
-            return self.save_csv(p)
+        elif low.endswith(".txt") and kind != "txt":
+            kind = "txt"
+        if kind in ("csv", "csvutf8", "txt"):
+            ext = ".txt" if kind == "txt" else ".csv"
+            if not low.endswith(ext):
+                p += ext
+            return self.save_csv(p, kind)
         ext = os.path.splitext(p)[1].lower()
         if ext not in NATIVE:
             p += "." + kind
@@ -1192,23 +1211,47 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.status.extra.set_text("A password is now required to open this workbook." if pw
                                    else "The password to open this workbook was removed.")
 
-    def save_csv(self, path):
-        """The active sheet's displayed values, as the original writes CSV."""
+    def save_csv(self, path, kind="csv"):
+        """The active sheet's displayed values, as the original writes them: "csv" in the
+        Windows code page, "csvutf8" in UTF-8 with a byte-order mark, "txt" tab-delimited in
+        the Windows code page. Where the region writes decimal commas, CSV fields are
+        separated by semicolons (the region's list separator), as there."""
+        from . import regional
         g = self.grid
         ext = self.book.used_extent(g.sheet)
         buf = io.StringIO()
-        w = csv.writer(buf, lineterminator="\r\n")
+        delim = "\t" if kind == "txt" else regional.list_separator()
+        w = csv.writer(buf, delimiter=delim, lineterminator="\r\n")
         if ext:
             for r in range(ext[0] + 1):
-                w.writerow([self.book.display(g.sheet, r, c) for c in range(ext[1] + 1)])
+                row = [self.book.display(g.sheet, r, c) for c in range(ext[1] + 1)]
+                while row and row[-1] == "" and kind == "txt":
+                    row.pop()
+                w.writerow(row)
+        text = buf.getvalue()
+        lost = False
+        if kind == "csvutf8":
+            data = b"\xef\xbb\xbf" + text.encode("utf-8")
+        else:
+            try:
+                data = text.encode("cp1252")
+            except UnicodeEncodeError:
+                data = text.encode("cp1252", errors="replace")
+                lost = True
         try:
-            with open(path, "w", encoding="utf-8", newline="") as f:
-                f.write(buf.getvalue())
+            with open(path, "wb") as f:
+                f.write(data)
         except OSError as e:
             self.dialogs.message("The file couldn't be saved.\n\n%s" % e)
             return False
+        notes = []
         if self.book.sheet_count > 1:
-            self.status.extra.set_text("Only the active sheet was saved to the CSV file.")
+            notes.append("Only the active sheet was saved.")
+        if lost:
+            notes.append("Some characters can't be kept in this file type and were saved as ?; "
+                         "CSV UTF-8 keeps them.")
+        if notes:
+            self.status.extra.set_text(" ".join(notes))
         return True
 
     def store_view_state(self):
@@ -1977,7 +2020,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return
         self.apply_number_format(code)
 
-    def act_accounting(self, cur="$"):
+    def act_accounting(self, cur=None):
+        from . import regional
+        if cur is None:
+            # the button itself: the region's currency
+            return self.apply_number_format(regional.accounting_format())
         self.apply_number_format(self.ACCOUNTING.get(cur, self.ACCOUNTING["$"]))
 
     def act_percent(self):

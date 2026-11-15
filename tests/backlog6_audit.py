@@ -172,6 +172,135 @@ with _z.ZipFile(_b, "w", _z.ZIP_STORED) as _zz:
 _big = _b.getvalue()
 check("S6-30: a 9 MB package encrypts and decrypts", encryption.decrypt(encryption.encrypt(_big, "p"), "p") == _big)
 
+# ------------------------------------------------------------------ S6-28 / S6-31 text files
+win.new_book()
+pump(0.1)
+b = win.book
+cp = os.path.join(TMP, "ansi.csv")
+open(cp, "wb").write("Naam,Bedrag\r\nJosé,12\r\nCrème brûlée,€ 3\r\n".encode("cp1252"))
+win.load(cp)
+pump(0.1)
+check("S6-28: a Windows-1252 CSV keeps its accents", win.book.display(0, 1, 0) == "José" and win.book.display(0, 2, 0) == "Crème brûlée",
+      (win.book.display(0, 1, 0), win.book.display(0, 2, 0)))
+up = os.path.join(TMP, "unicode.csv")
+open(up, "wb").write("\ufeffa\tb\r\nŻółw\t1\r\n".encode("utf-16-le"))
+win.load(up)
+pump(0.1)
+check("S6-28: a UTF-16 (Unicode Text) file opens as text", win.book.display(0, 1, 0) == "Żółw" and win.book.display(0, 1, 1) == "1",
+      (win.book.display(0, 1, 0), win.book.display(0, 1, 1)))
+from folio_sheets.text_ui import detect_encoding
+check("S6-28: encodings are recognised (UTF-8, BOM, UTF-16 without a mark, Windows-1252)",
+      detect_encoding("é".encode()) == "utf-8-sig" and detect_encoding(b"\xef\xbb\xbfx") == "utf-8-sig"
+      and detect_encoding("ab,cd\r\n".encode("utf-16-le")) == "utf-16-le" and detect_encoding("é".encode("cp1252")) == "cp1252")
+
+win.new_book()
+pump(0.1)
+win.book.set_input(0, 0, 0, "José")
+win.book.set_input(0, 0, 1, "1.5")
+win.book.set_input(0, 1, 0, "a,b")
+win.book.set_input(0, 1, 1, "Żółw")
+c1 = os.path.join(TMP, "out.csv")
+win.save_csv(c1, "csv")
+raw = open(c1, "rb").read()
+check("S6-28: CSV (Comma delimited) is written in the Windows code page", raw.startswith("José,1.5".encode("cp1252")), raw[:20])
+check("S6-28: characters it can't hold become ? and the status bar says CSV UTF-8 keeps them",
+      b"?" in raw and "CSV UTF-8" in win.status.extra.get_text(), win.status.extra.get_text())
+c2 = os.path.join(TMP, "out8.csv")
+win.save_csv(c2, "csvutf8")
+raw = open(c2, "rb").read()
+check("S6-28: CSV UTF-8 starts with a byte-order mark and keeps every character",
+      raw.startswith(b"\xef\xbb\xbf") and "Żółw".encode() in raw and b'"a,b"' in raw, raw[:30])
+t1 = os.path.join(TMP, "out.txt")
+win.save_csv(t1, "txt")
+raw = open(t1, "rb").read()
+check("S6-31: Text (Tab delimited) separates fields with tabs", raw.split(b"\r\n")[0] == "José\t1.5".encode("cp1252"), raw[:30])
+win.backstage.open()
+win.backstage.nav("export")
+pump(0.2)
+blabels = [x.get_label() for x in widgets(win.backstage, Gtk.Button)]
+check("S6-31: File > Export offers Text (Tab delimited) and CSV UTF-8",
+      any("Text (Tab delimited)" in (l or "") for l in blabels) and any("CSV UTF-8" in (l or "") for l in blabels), blabels)
+win.backstage.close()
+
+# ------------------------------------------------------------------ S6-29 templates
+tp = os.path.join(TMP, "Budget.xltx")
+win.new_book()
+pump(0.1)
+win.book.set_input(0, 0, 0, "Template text")
+win.save_to(tp)
+w2 = win.app.open_path(tp, as_new=True)
+pump(0.3)
+check("S6-29: a template opened from outside starts a new workbook (Budget1)",
+      w2.path is None and w2.untitled == "Budget1" and w2.book.display(0, 0, 0) == "Template text", (w2.path, w2.untitled))
+check("S6-29: its Save As suggests a workbook, not the template", getattr(w2, "save_kind", None) == "xlsx")
+nb = os.path.join(TMP, "Budget1.xlsx")
+w2.save_to(nb)
+ct = zipfile.ZipFile(nb).read("[Content_Types].xml").decode()
+check("S6-29: saved as a workbook, its content type is a workbook's", "sheet.main+xml" in ct and "template.main" not in ct)
+check("S6-29: the template itself is untouched", zipfile.ZipFile(tp).read("[Content_Types].xml").decode().count("template.main") == 1)
+w2.book.mark_saved()
+w2.destroy()
+pump(0.2)
+w3 = win.app.open_path(tp, win)
+pump(0.2)
+check("S6-29: File > Open of a template edits the template itself", w3.path == os.path.abspath(tp), w3.path)
+
+# ------------------------------------------------------------------ S6-32 region
+from folio_sheets import regional
+from folio_sheets.core import _c
+NL = {"decimal": ",", "group": ".", "date_order": "DMY", "short_date": "d-m-yyyy",
+      "currency": "\u20ac", "currency_before": True, "currency_space": True}
+US = regional.current()
+win.new_book()
+pump(0.1)
+b = win.book
+regional.apply(NL)
+b.set_input(0, 0, 0, "1,5")
+b.set_input(0, 1, 0, "1.234,5")
+b.set_input(0, 2, 0, "15-11-2026")
+b.set_input(0, 3, 0, "\u20ac 12,50")
+b.set_input(0, 4, 0, "=A1*2")
+b.set_input(0, 5, 0, "12%")
+check("S6-32: NL: 1,5 is a number shown as 1,5", b.value(0, 0, 0) == 1.5 and b.display(0, 0, 0) == "1,5", (b.value(0, 0, 0), b.display(0, 0, 0)))
+check("S6-32: NL: 1.234,5 is 1234.5", b.value(0, 1, 0) == 1234.5, b.value(0, 1, 0))
+check("S6-32: NL: 15-11-2026 is a date shown day first", b.value(0, 2, 0) == 46341 and b.display(0, 2, 0) == "15-11-2026",
+      (b.value(0, 2, 0), b.display(0, 2, 0)))
+check("S6-32: NL: \u20ac 12,50 is currency", b.value(0, 3, 0) == 12.5 and b.display(0, 3, 0).replace("\xa0", " ") == "\u20ac 12,50", b.display(0, 3, 0))
+check("S6-32: NL: a formula result shows a decimal comma; the formula stays as typed", b.display(0, 4, 0) == "3" and b.input(0, 4, 0) == "=A1*2",
+      (b.display(0, 4, 0), b.input(0, 4, 0)))
+check("S6-32: NL: the cell's edit text uses the decimal comma", b.input(0, 0, 0) == "1,5", b.input(0, 0, 0))
+cur = dict(regional.refresh_presets() or __import__("folio_sheets.ribbon_defs", fromlist=["x"]).NUMBER_FORMATS)["Currency"]
+b.set_number_format(0, [(1, 0, 1, 0)], cur)
+check("S6-32: NL: the ribbon's Currency format is in euros", b.display(0, 1, 0).replace("\xa0", " ") == "\u20ac 1.234,50", b.display(0, 1, 0))
+c3 = os.path.join(TMP, "nl.csv")
+win.save_csv(c3, "csv")
+first = open(c3, "rb").read().split(b"\r\n")[0].decode("cp1252")
+check("S6-32: NL: CSV uses semicolons", first == "1,5", first)
+lines = open(c3, "rb").read().decode("cp1252").split("\r\n")
+check("S6-32: NL: CSV rows keep decimal commas without quoting", lines[1].replace("\xa0", " ") in ("\u20ac 1.234,50", "1234,5", "1.234,5"), lines[1])
+nlx = os.path.join(TMP, "nl.xlsx")
+win.save_to(nlx)
+regional.apply(US)
+regional.refresh_presets()
+win.load(nlx)
+pump(0.1)
+check("S6-32: the file stays region-neutral: opened in the US it shows 1.5 and 11/15/2026",
+      win.book.display(0, 0, 0) == "1.5" and win.book.display(0, 2, 0) == "11/15/2026", (win.book.display(0, 0, 0), win.book.display(0, 2, 0)))
+try:
+    import locale as _loc
+    _loc.setlocale(_loc.LC_TIME, "nl_NL.UTF-8")
+    _have_nl = True
+except Exception:
+    _have_nl = False
+if _have_nl:
+    det = regional.detect({"FOLIO_SHEET_REGION": "nl_NL.UTF-8"})
+    check("S6-32: the Dutch system region is read as Excel reads it",
+          det["decimal"] == "," and det["group"] == "." and det["date_order"] == "DMY" and det["currency"] == "\u20ac", det)
+    regional.detect({})
+else:
+    print("NOTE nl_NL locale not generated here; detection check skipped")
+regional.apply(regional.detect({"FOLIO_SHEET_REGION": "default"}))
+
 # ------------------------------------------------------------------ END
 print("%d checks, %d failed" % (len(checks), sum(1 for _, ok in checks if not ok)), flush=True)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))

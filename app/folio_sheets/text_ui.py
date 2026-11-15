@@ -584,20 +584,47 @@ def _confirm(win, text):
     return r == Gtk.ResponseType.OK
 
 
-def read_lines(path, encoding):
+def detect_encoding(raw):
+    """The encoding of a text file, as the original guesses it: a byte-order mark first
+    (UTF-8, UTF-16), then UTF-8 when the bytes are valid UTF-8, else the Windows code page."""
+    if raw[:3] == b"\xef\xbb\xbf":
+        return "utf-8-sig"
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return "utf-16"
+    # UTF-16 without a mark: every other byte zero in a run of ASCII
+    head = raw[:4000]
+    if len(head) >= 4 and head[1::2].count(0) > len(head) // 4 and head[0::2].count(0) == 0:
+        return "utf-16-le"
+    try:
+        raw.decode("utf-8")
+        return "utf-8-sig"
+    except UnicodeDecodeError:
+        return "cp1252"
+
+
+def decode_text(raw, encoding=None):
+    """(text, encoding) for a file's bytes."""
+    enc = encoding or detect_encoding(raw)
+    try:
+        return raw.decode(enc), enc
+    except UnicodeDecodeError:
+        return raw.decode(enc, errors="replace"), enc
+
+
+def read_lines(path, encoding=None):
     with open(path, "rb") as f:
         raw = f.read()
-    try:
-        text = raw.decode(encoding)
-    except UnicodeDecodeError:
-        text = raw.decode(encoding, errors="replace")
+    text, _enc = decode_text(raw, encoding)
     return text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n").split("\n")
 
 
 def import_wizard(win, path, into_book=None):
     """The Text Import Wizard for a file. Returns the Options, or None when cancelled."""
-    lines = read_lines(path, "utf-8-sig")
+    with open(path, "rb") as f:
+        enc = detect_encoding(f.read())
+    lines = read_lines(path, enc)
     opts = Options()
+    opts.encoding = {"utf-16-le": "utf-16"}.get(enc, enc)
     if path.lower().endswith(".csv"):
         opts.delims = ","
     elif looks_delimited(lines):

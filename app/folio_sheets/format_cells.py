@@ -22,6 +22,13 @@ FRACTION_CODES = [("Up to one digit (1/4)", "# ?/?"), ("Up to two digits (21/25)
 SPECIAL_CODES = [("Zip Code", "00000"), ("Zip Code + 4", "00000-0000"),
                  ("Phone Number", "[<=9999999]###-####;(###) ###-####"),
                  ("Social Security Number", "000-00-0000")]
+def _region_sym():
+    """The Currency and Accounting categories start on the region's currency (S6-32)."""
+    from . import regional
+    c = regional.current().get("currency", "$")
+    return c if c in dict(SYMBOLS) else "$"
+
+
 SYMBOLS = [("None", ""), ("$", '"$"'), ("€", '"€"'), ("£", '"£"'), ("¥", '"¥"'), ("₹", '"₹"'), ("CHF", '"CHF"')]
 CUSTOM_LIST = ["General", "0", "0.00", "#,##0", "#,##0.00", "#,##0_);(#,##0)", "#,##0_);[Red](#,##0)",
                "#,##0.00_);(#,##0.00)", "#,##0.00_);[Red](#,##0.00)", '"$"#,##0_);\\("$"#,##0\\)',
@@ -352,7 +359,7 @@ def number_code(cat, o):
     if cat == "Text":
         return "@"
     if cat in ("Number", "Currency"):
-        sym = dict(SYMBOLS).get(o.get("sym", "$"), "") if cat == "Currency" else ""
+        sym = dict(SYMBOLS).get(o.get("sym", _region_sym()), "") if cat == "Currency" else ""
         sep = cat == "Currency" or o.get("sep")
         base = sym + ("#,##0" if sep else "0") + frac
         neg = int(o.get("neg", 0))
@@ -364,7 +371,7 @@ def number_code(cat, o):
             return base + "_);(" + base + ")"
         return base + "_);[Red](" + base + ")"
     if cat == "Accounting":
-        sym = dict(SYMBOLS).get(o.get("sym", "$"), "")
+        sym = dict(SYMBOLS).get(o.get("sym", _region_sym()), "")
         s = (sym + "* ") if sym else "* "
         q = "?" * dec
         return '_(%s#,##0%s_);_(%s\\(#,##0%s\\);_(%s"-"%s_);_(@_)' % (
@@ -669,7 +676,7 @@ class FormatCells(Gtk.Dialog):
         self.num_cat = cat
         self.num_o = dict(opts)
         self.num_o.setdefault("dec", 2)
-        self.num_o.setdefault("sym", "$")
+        self.num_o.setdefault("sym", _region_sym())
         self.num_o.setdefault("custom", self.spec["numfmt"])
         self.orig_code = self.spec["numfmt"]
         _select_row(self.cat_tv, cat)
@@ -711,7 +718,7 @@ class FormatCells(Gtk.Dialog):
             for s, _ in SYMBOLS:
                 cb.append_text(s)
             names = [s for s, _ in SYMBOLS]
-            cb.set_active(names.index(o.get("sym", "$")) if o.get("sym", "$") in names else 1)
+            cb.set_active(names.index(o.get("sym", _region_sym())) if o.get("sym", _region_sym()) in names else 1)
 
             def ch(c):
                 o["sym"] = c.get_active_text()
@@ -724,7 +731,7 @@ class FormatCells(Gtk.Dialog):
         def neg_list():
             opts.pack_start(Gtk.Label(label="Negative numbers:", xalign=0), False, False, 0)
             store = Gtk.ListStore(str, str)
-            sym = dict(SYMBOLS).get(o.get("sym", "$"), "").strip('"') if cat == "Currency" else ""
+            sym = dict(SYMBOLS).get(o.get("sym", _region_sym()), "").strip('"') if cat == "Currency" else ""
             for text, red in NEGATIVE:
                 t = text.replace("1,234", "1234") if (cat == "Number" and not o.get("sep")) else text
                 t = t.replace("1", sym + "1", 1)

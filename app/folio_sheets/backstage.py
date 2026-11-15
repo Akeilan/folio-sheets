@@ -352,6 +352,8 @@ class Backstage(Gtk.Box):
     def page_export(self):
         box = self._page("Export")
         for label, cmd in (("Create PDF Document", "export-pdf"),
+                           ("Change File Type: CSV UTF-8 (Comma delimited)", "save-as:csvutf8"),
+                           ("Change File Type: Text (Tab delimited)", "save-as:txt"),
                            ("Change File Type: CSV (Comma delimited)", "save-as:csv")):
             b = Gtk.Button(label=label)
             b.set_halign(Gtk.Align.START)
