@@ -51,6 +51,11 @@ def Ev(x, y, kind=Gdk.EventType.BUTTON_PRESS):
 
 
 def center(r, c):
+    for _ in range(50):
+        if b.cell_rect(S, r, c, g.params()):
+            break
+        g.ensure_visible(r, c)
+        pump(0.02)
     x, y, w, h = b.cell_rect(S, r, c, g.params())
     return x + w / 2, y + h / 2
 
@@ -60,6 +65,11 @@ g.sel.ranges = [(0, 0, 1, 3)]
 g.sel.active = (0, 0)
 g.refresh()
 pump(0.1)
+for _ in range(50):
+    if b.cell_rect(S, 1, 3, g.params()):
+        break
+    g.ensure_visible(1, 3)
+    pump(0.02)
 x, y, w, h = b.cell_rect(S, 1, 3, g.params())
 hx, hy = x + w - 1, y + h - 1
 check("the fill handle is under the corner", b.hit(S, hx, hy, g.params())[0] == "fill", b.hit(S, hx, hy, g.params()))

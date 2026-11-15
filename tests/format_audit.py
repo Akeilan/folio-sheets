@@ -569,11 +569,15 @@ class _Ev:
 
 
 def _drag(r0, c0, r1, c1):
-    g.ensure_visible(r1, c1)
-    g.ensure_visible(r0, c0)
-    pump(0.02)
-    a = b.cell_rect(S, r0, c0, g.params())
-    z = b.cell_rect(S, r1, c1, g.params())
+    a = z = None
+    for _ in range(50):
+        g.ensure_visible(r1, c1)
+        g.ensure_visible(r0, c0)
+        pump(0.02)
+        a = b.cell_rect(S, r0, c0, g.params())
+        z = b.cell_rect(S, r1, c1, g.params())
+        if a and z:
+            break
     g.on_press(g.area, _Ev(a[0] + 4, a[1] + 4))
     g._drag_to(z[0] + 4, z[1] + 4)
     pumped = g.border_drag

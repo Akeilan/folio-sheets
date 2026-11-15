@@ -193,9 +193,18 @@ class SheetsApp(Gtk.Application):
                 # first configure can come after the delay)
                 import time as _t
                 end = _t.time() + 15
-                while _t.time() < end and (not win.get_mapped() or win.grid.area.get_allocated_height() < 300):
+                # wait until the window is mapped and its grid has kept one size for half a second
+                # (a Wayland compositor can resize the window just after mapping it)
+                last, since = None, _t.time()
+                while _t.time() < end:
                     while Gtk.events_pending():
                         Gtk.main_iteration_do(False)
+                    a = win.grid.area
+                    size = (a.get_allocated_width(), a.get_allocated_height()) if win.get_mapped() else None
+                    if size != last:
+                        last, since = size, _t.time()
+                    elif size and size[1] >= 300 and _t.time() - since >= 0.5:
+                        break
                     _t.sleep(0.02)
                 ns = {"app": self, "win": win, "GLib": GLib, "Gtk": Gtk, "Gdk": Gdk}
                 try:
