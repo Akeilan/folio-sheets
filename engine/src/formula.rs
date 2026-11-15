@@ -981,8 +981,12 @@ fn is_lambda_call(e: &Expr) -> bool {
 
 /// What to do with the references in a formula.
 pub enum Adjust<'a> {
-    /// copy/fill: move relative parts by (dr, dc)
+    /// move relative parts by (dr, dc), wrapping round the sheet's edge (internal moves that
+    /// are undone again, such as a clipboard's own bookkeeping)
     Shift(i64, i64),
+    /// copy, paste and fill: relative parts move by (dr, dc); a reference pushed off the sheet
+    /// becomes #REF!, as the original does (S6-18)
+    Copy(i64, i64),
     /// rows inserted (n > 0) or deleted (n < 0) at `at` on sheet `sheet`;
     /// `here` is the sheet the formula lives on
     Rows { sheet: &'a str, here: &'a str, at: u32, n: i64 },
@@ -1056,8 +1060,43 @@ pub fn adjust_ref(mut r: RefTok, how: &Adjust) -> String {
         return r.write();
     }
     match how {
+        Adjust::Copy(dr, dc) => {
+            let mv = |v: u32, d: i64, max: u32| -> Option<u32> { shift_coord(v, d, max) };
+            let mut ok = true;
+            if r.kind != RefKind::Cols {
+                if !r.ra1 {
+                    match mv(r.r1, *dr, MAX_ROWS) { Some(x) => r.r1 = x, None => ok = false }
+                }
+                if !r.ra2 {
+                    match mv(r.r2, *dr, MAX_ROWS) { Some(x) => r.r2 = x, None => ok = false }
+                }
+            }
+            if r.kind != RefKind::Rows {
+                if !r.ca1 {
+                    match mv(r.c1, *dc, MAX_COLS) { Some(x) => r.c1 = x, None => ok = false }
+                }
+                if !r.ca2 {
+                    match mv(r.c2, *dc, MAX_COLS) { Some(x) => r.c2 = x, None => ok = false }
+                }
+            }
+            if !ok {
+                r.kind = RefKind::Err;
+                return r.write();
+            }
+            if r.kind == RefKind::Area || r.kind == RefKind::Cols || r.kind == RefKind::Rows {
+                if r.r1 > r.r2 {
+                    std::mem::swap(&mut r.r1, &mut r.r2);
+                    std::mem::swap(&mut r.ra1, &mut r.ra2);
+                }
+                if r.c1 > r.c2 {
+                    std::mem::swap(&mut r.c1, &mut r.c2);
+                    std::mem::swap(&mut r.ca1, &mut r.ca2);
+                }
+            }
+            r.write()
+        }
         Adjust::Shift(dr, dc) => {
-            // a shift past the sheet edge wraps around, as the original does
+            // an internal move past the sheet edge wraps around (and back again)
             let wrap = |v: u32, d: i64, max: u32| -> u32 { ((v as i64 + d).rem_euclid(max as i64)) as u32 };
             if r.kind != RefKind::Cols {
                 if !r.ra1 {
@@ -1379,6 +1418,10 @@ mod tests {
     #[test]
     fn shifting() {
         assert_eq!(adjust("A1+$B$2+B$3+Sheet1!C4", &Adjust::Shift(2, 1)), "B3+$B$2+C$3+Sheet1!D6");
+        // S6-18: copied off the sheet, a reference is #REF!
+        assert_eq!(adjust("A1+B1", &Adjust::Copy(0, -2)), "#REF!+#REF!");
+        assert_eq!(adjust("C1+$A$1+SUM(B1:D1)", &Adjust::Copy(0, -2)), "A1+$A$1+SUM(#REF!)");
+        assert_eq!(adjust("A2", &Adjust::Copy(-1, 0)), "A1");
         assert_eq!(adjust("SUM(A1:A10)", &Adjust::Rows { sheet: "S", here: "S", at: 4, n: 2 }), "SUM(A1:A12)");
         assert_eq!(adjust("A5", &Adjust::Rows { sheet: "S", here: "S", at: 4, n: -1 }), "#REF!");
         assert_eq!(adjust("SUM(A1:A10)", &Adjust::Rows { sheet: "S", here: "S", at: 4, n: -2 }), "SUM(A1:A8)");

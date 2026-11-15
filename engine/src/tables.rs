@@ -1352,7 +1352,7 @@ impl Book {
         }
         for rr in d.r1..=d.r2 {
             if rr != r {
-                let text = formula::adjust(&f.text, &formula::Adjust::Shift(rr as i64 - r as i64, 0));
+                let text = formula::adjust(&f.text, &formula::Adjust::Copy(rr as i64 - r as i64, 0));
                 self.fill_calc_cell(s, &t, rr, c, &text);
             }
         }

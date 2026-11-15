@@ -405,6 +405,28 @@ for k in NEW:
         print("render", k, e)
 check("S6-34: every new kind draws", _ok)
 
+# ------------------------------------------------------------------ S6-18 references copied off the sheet
+win.new_book()
+pump(0.1)
+b = win.book
+g = win.grid
+b.set_input(0, 0, 2, "=A1+B1")
+g.select_cell(0, 2)
+win.run("copy")
+g.select_cell(0, 0)
+win.run("paste")
+check("S6-18: =A1+B1 copied from C1 to A1 gives #REF!", b.input(0, 0, 0) == "=#REF!+#REF!" and b.display(0, 0, 0) == "#REF!", b.input(0, 0, 0))
+b.set_input(0, 5, 3, "=SUM(D1:D5)")
+data = bytes(b.copy_to_bytes(0, (5, 3, 5, 3)))
+b.paste_from_bytes(data, 0, (2, 3, 2, 3))
+check("S6-18: a range pushed past the top is #REF! too (between workbooks)", b.input(0, 2, 3) == "=SUM(#REF!)", b.input(0, 2, 3))
+b.paste_from_bytes(data, 0, (9, 6, 9, 6))
+check("S6-18: an ordinary paste still moves the references", b.input(0, 9, 6) == "=SUM(G5:G9)", b.input(0, 9, 6))
+b.set_input(0, 1, 5, "=F1*2")
+g.select_range((0, 5, 1, 5))
+win.run("fill-up")
+check("S6-18: Fill Up past the top gives #REF!", b.input(0, 0, 5) == "=#REF!*2", b.input(0, 0, 5))
+
 # ------------------------------------------------------------------ window behaviour
 from gi.repository import Gdk
 

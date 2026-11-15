@@ -309,7 +309,7 @@ impl Book {
                             let mut x = srccell.clone().unwrap_or_default();
                             if let Some(f) = &x.f {
                                 let mut nf = (**f).clone();
-                                nf.text = formula::adjust(&f.text, &Adjust::Shift(r as i64 - sr as i64, c as i64 - sc as i64));
+                                nf.text = formula::adjust(&f.text, &Adjust::Copy(r as i64 - sr as i64, c as i64 - sc as i64));
                                 nf.expr = formula::parse(&nf.text).ok();
                                 if let crate::sheet::FKind::Array(_) = nf.kind {
                                     nf.kind = crate::sheet::FKind::Dynamic;

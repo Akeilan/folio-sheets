@@ -1847,6 +1847,7 @@ pub fn is_volatile(e: &Expr) -> bool {
 pub fn rebase<'a>(how: &Adjust<'a>, here: &'a str) -> Adjust<'a> {
     match how {
         Adjust::Shift(a, b) => Adjust::Shift(*a, *b),
+        Adjust::Copy(a, b) => Adjust::Copy(*a, *b),
         Adjust::Rows { sheet, at, n, .. } => Adjust::Rows { sheet, here, at: *at, n: *n },
         Adjust::Cols { sheet, at, n, .. } => Adjust::Cols { sheet, here, at: *at, n: *n },
         Adjust::RowsIn { sheet, at, n, c1, c2, .. } => Adjust::RowsIn { sheet, here, at: *at, n: *n, c1: *c1, c2: *c2 },

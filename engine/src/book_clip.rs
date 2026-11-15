@@ -64,6 +64,9 @@ struct Block {
     widths: Vec<Option<f64>>,
     src: Rect,
     src_sheet_name: String,
+    /// where each row's and the first column's formulas were written (a clipboard workbook
+    /// keeps them as written in the cells they were copied from)
+    origin: Option<(Vec<u32>, u32)>,
 }
 
 fn snapshot(sh: &Sheet, src: Rect) -> Block {
@@ -82,7 +85,7 @@ fn snapshot(sh: &Sheet, src: Rect) -> Block {
     let styles = (src.r1..=src.r2).map(|r| (src.c1..=src.c2).map(|c| sh.style_at(r, c)).collect()).collect();
     let merges = sh.merges.iter().filter(|m| src.contains_rect(m)).map(|m| Rect::new(m.r1 - src.r1, m.c1 - src.c1, m.r2 - src.r1, m.c2 - src.c1)).collect();
     let widths = (src.c1..=src.c2).map(|c| sh.col_span(c).and_then(|s| s.width)).collect();
-    Block { h: src.rows(), w: src.cols(), cells, styles, merges, widths, src, src_sheet_name: sh.name.clone() }
+    Block { h: src.rows(), w: src.cols(), cells, styles, merges, widths, src, src_sheet_name: sh.name.clone(), origin: None }
 }
 
 /// A style of another workbook as a change that recreates it here.
@@ -224,6 +227,14 @@ impl Book {
         }
         let src = other.clip_rect(src_s, src);
         let mut block = snapshot(&other.sheets[src_s], src);
+        // a clipboard workbook says where its formulas were written
+        if let Some(o) = other.names.iter().find(|n| n.name == "__origin").and_then(|n| crate::cellref::parse_range(n.text.trim_start_matches('=').replace('$', "").as_str())) {
+            let rows: Vec<u32> = match other.sheets.iter().find(|x| x.name == "__rows") {
+                Some(rs) => (0..block.h).map(|i| match rs.value(src.r1 + i, 0) { Value::Num(x) => x as u32, _ => o.r1 + src.r1 + i }).collect(),
+                None => (0..block.h).map(|i| o.r1 + src.r1 + i).collect(),
+            };
+            block.origin = Some((rows, o.c1 + src.c1));
+        }
         // a clipboard workbook keeps the values the formulas had where they were copied
         if matches!(o.what, What::Values | What::ValuesNumfmt) {
             if let Some(vs) = other.sheets.iter().find(|x| x.name == "__values") {
@@ -340,10 +351,14 @@ impl Book {
                                             n.v = Value::Empty;
                                         }
                                     } else {
-                                        let dr = r as i64 - (b.src.r1 + i) as i64;
-                                        let dc = c as i64 - (b.src.c1 + j) as i64;
+                                        let (sr, sc) = match &b.origin {
+                                            Some((rows, c0)) => (rows.get(i as usize).copied().unwrap_or(rows.last().copied().unwrap_or(0) + i), c0 + j),
+                                            None => (b.src.r1 + i, b.src.c1 + j),
+                                        };
+                                        let dr = r as i64 - sr as i64;
+                                        let dc = c as i64 - sc as i64;
                                         let mut nf = (**f).clone();
-                                        nf.text = formula::adjust(&f.text, &Adjust::Shift(dr, dc));
+                                        nf.text = formula::adjust(&f.text, &Adjust::Copy(dr, dc));
                                         nf.expr = formula::parse(&nf.text).ok();
                                         if let FKind::Array(_) = nf.kind {
                                             nf.kind = FKind::Dynamic;
@@ -613,13 +628,6 @@ impl Book {
             let mut cells = HashMap::new();
             for ((i, j), cell) in block.cells.drain() {
                 if let Some(&n) = map.get(&i) {
-                    let mut cell = cell;
-                    if let Some(f) = &cell.f {
-                        let mut nf = (**f).clone();
-                        nf.text = formula::adjust(&f.text, &Adjust::Shift(n as i64 - i as i64, 0));
-                        nf.expr = formula::parse(&nf.text).ok();
-                        cell.f = Some(Rc::new(nf));
-                    }
                     cells.insert((n, j), cell);
                 }
             }
@@ -641,14 +649,13 @@ impl Book {
         for ((i, j), cell) in block.cells.iter() {
             let mut cell = cell.clone();
             if let Some(f) = &cell.f {
-                // relative references stay relative to the block's corner
-                let mut nf = (**f).clone();
-                nf.text = formula::adjust(&f.text, &Adjust::Shift(-(rc.r1 as i64), -(rc.c1 as i64)));
-                if let FKind::Array(_) = nf.kind {
+                // formulas stay as written where they were copied from; the clipboard keeps
+                // that place (__origin, __rows) so pasting moves each one from its own cell
+                if let FKind::Array(_) = f.kind {
+                    let mut nf = (**f).clone();
                     nf.kind = FKind::Dynamic;
+                    cell.f = Some(Rc::new(nf));
                 }
-                nf.expr = formula::parse(&nf.text).ok();
-                cell.f = Some(Rc::new(nf));
             }
             t.put(*i, *j, Some(cell));
         }
@@ -674,7 +681,16 @@ impl Book {
                 vals.put(*i, *j, Some(Cell { v: cell.v.clone(), ..Default::default() }));
             }
         }
-        b.sheets = vec![t, vals];
+        let mut sheets = vec![t, vals];
+        if let Some(keep) = keep {
+            let mut rows = Sheet::new(3, "__rows");
+            for (n, r) in keep.iter().filter(|r| **r >= rc.r1 && **r <= rc.r2).enumerate() {
+                rows.put(n as u32, 0, Some(Cell { v: Value::Num(*r as f64), ..Default::default() }));
+            }
+            sheets.push(rows);
+        }
+        b.sheets = sheets;
+        b.names.push(crate::book::Name::new("__origin", None, &format!("${}${}", crate::cellref::col_name(rc.c1), rc.r1 + 1)));
         // the size of what was copied (trailing blank cells included)
         b.names.push(crate::book::Name::new("__clip", None, &Rect::new(0, 0, rows_out - 1, rc.cols() - 1).a1()));
         b.to_bytes()

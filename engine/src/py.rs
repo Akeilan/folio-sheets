@@ -1626,7 +1626,7 @@ impl PyBook {
         self.b.names.iter().find(|n| n.name.eq_ignore_ascii_case(name) && n.scope == scope).and_then(|n| n.comment.clone())
     }
     fn shift_formula(&self, text: &str, dr: i64, dc: i64) -> String {
-        crate::formula::adjust(text, &crate::formula::Adjust::Shift(dr, dc))
+        crate::formula::adjust(text, &crate::formula::Adjust::Copy(dr, dc))
     }
     fn format_number(&self, v: f64, code: &str) -> String {
         crate::numfmt::format_number(v, code, self.b.date1904)

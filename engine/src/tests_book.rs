@@ -238,7 +238,8 @@ fn clipboard() {
     // transpose
     b.paste_cells(0, Rect::new(0, 0, 1, 1), 0, Rect::cell(10, 0), PasteOpts { transpose: true, ..Default::default() }, false).unwrap();
     assert_eq!(b.input(0, 10, 1), "2");
-    assert_eq!(b.input(0, 11, 0), "=XFD12*10");
+    // the reference runs off the left edge: #REF!, as the original gives (S6-18)
+    assert_eq!(b.input(0, 11, 0), "=#REF!*10");
     // tiling: copy A1 into A20:A22
     b.paste_cells(0, Rect::cell(0, 0), 0, Rect::new(19, 0, 21, 0), PasteOpts::default(), false).unwrap();
     assert_eq!(b.input(0, 21, 0), "1");
