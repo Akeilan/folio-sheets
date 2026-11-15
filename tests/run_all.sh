@@ -14,6 +14,7 @@ for t in ${@:-tests/*_audit.py tests/command_walk.py}; do
   extra=""
   if [ "$(basename $t)" = command_walk.py ]; then extra=" $(echo "$out" | grep -E '^ran |^not yet|^ERRORS' | tr '\n' ' ')"; fi
   echo "$(basename $t .py) rc=$rc pass=$p fail=$f$extra"
-  if [ $rc != 0 ] || [ $f != 0 ]; then FAIL=1; echo "$out" | grep -E '^FAIL|^ERROR|Traceback|Error' | head -8; fi
+  if [ $rc != 0 ] || [ $f != 0 ]; then FAIL=1; echo "$out" | grep -E '^FAIL|^ERROR' | head -8
+    echo "$out" | grep -vE 'dbind|dconf-WARNING' | grep -A12 '^Traceback' | head -14; fi
 done
 exit $FAIL

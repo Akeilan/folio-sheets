@@ -59,7 +59,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.goto_history = []
         self.missing_log = []
         self._alt_alone = False
-        geo = app.settings.get("window", {})
+        # a test run starts from the default (maximised) window, not whatever size the last run left
+        geo = {} if os.environ.get("FOLIO_TEST_SCRIPT") else app.settings.get("window", {})
         self.set_default_size(geo.get("w", 1280), geo.get("h", 820))
         if geo.get("max", True):
             self.maximize()
