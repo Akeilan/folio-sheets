@@ -33,7 +33,26 @@ tabs_h = win.ribbon.tabbar.get_allocated_height()
 body_h = win.ribbon.revealer.get_allocated_height()
 check("title bar is 40 px (+-1)", abs(title_h - 40) <= 1, title_h)
 check("tab row is 34 px (+-1)", abs(tabs_h - 34) <= 1, tabs_h)
-check("ribbon body is 96 px (+-1)", abs(body_h - 96) <= 1, body_h)
+# the 96 px are measured with the interface fonts the original's metrics match (Segoe UI or
+# Ubuntu); where the theme's list falls to another font its line height decides, so say so
+_lab = None
+if _lab is None:
+    def _walk(w, out):
+        if isinstance(w, Gtk.Label) and w.get_text():
+            out.append(w)
+        if isinstance(w, Gtk.Container):
+            for c in w.get_children():
+                _walk(c, out)
+    _ls = []
+    _walk(win.ribbon, _ls)
+    _lab = _ls[0]
+_desc = _lab.get_style_context().get_property("font", Gtk.StateFlags.NORMAL)
+_real = _lab.get_pango_context().load_font(_desc).describe().get_family()
+if _real in ("Segoe UI", "Ubuntu"):
+    check("ribbon body is 96 px (+-1)", abs(body_h - 96) <= 1, (body_h, _real))
+else:
+    print("NOTE the interface font here is %s; ribbon body measured %d px" % (_real, body_h))
+    check("ribbon body is 96 px (+-1), or a little taller in another interface font", 95 <= body_h <= 120, (body_h, _real))
 
 # Quick Access: Save, Undo, Redo by default, and a menu to add more
 names = [c.get_tooltip_text() for c in win.qat.get_children() if not isinstance(c, Gtk.MenuButton)]

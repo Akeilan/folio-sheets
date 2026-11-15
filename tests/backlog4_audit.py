@@ -108,8 +108,13 @@ check("S3-15: and nothing tried to connect", not _blocked, _blocked)
 from folio_sheets import insert_extras  # noqa: E402
 
 kinds = insert_extras.new_object_kinds()
-check("S3-17: Create New offers the kinds this computer can make", len(kinds) >= 1,
-      [k[0] for k in kinds])
+_possible = [k for k in insert_extras.NEW_OBJECT_KINDS if insert_extras._template_path(k[1], k[2])]
+if _possible:
+    check("S3-17: Create New offers the kinds this computer can make", len(kinds) == len(_possible) and len(kinds) >= 1,
+          [k[0] for k in kinds])
+else:
+    print("NOTE no other Folio app is installed here; Create New has nothing to offer")
+    check("S3-17: Create New offers nothing where no other Folio app is installed", kinds == [], kinds)
 if kinds:
     label, template, stem, ext = kinds[0]
     name, body = insert_extras._new_object_body(template, stem, ext)
