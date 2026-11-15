@@ -728,6 +728,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 fn(arg) if arg is not None else fn()
         except NotImplementedError:
             self.not_yet(cmd)
+        except ValueError as e:
+            # a cell command on a chart sheet: said in the status bar, as the original greys it out
+            if "worksheets only" not in str(e):
+                raise
+            self.status.extra.set_text(str(e))
         if guard:
             protect_ui.after_command(self, base, h0)
 
