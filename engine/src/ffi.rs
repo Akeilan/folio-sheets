@@ -86,6 +86,11 @@ extern "C" {
     pub fn cairo_set_source_surface(cr: *mut cairo_t, s: *mut cairo_surface_t, x: c_double, y: c_double);
     pub fn cairo_surface_flush(s: *mut cairo_surface_t);
     pub fn cairo_surface_write_to_png(s: *mut cairo_surface_t, path: *const c_char) -> c_int;
+    pub fn cairo_pattern_create_for_surface(s: *mut cairo_surface_t) -> *mut cairo_pattern_t;
+    pub fn cairo_pattern_set_extend(p: *mut cairo_pattern_t, e: c_int);
+    pub fn cairo_pattern_set_filter(p: *mut cairo_pattern_t, f: c_int);
+    pub fn cairo_pattern_create_radial(cx0: c_double, cy0: c_double, r0: c_double, cx1: c_double, cy1: c_double, r1: c_double) -> *mut cairo_pattern_t;
+    pub fn cairo_surface_mark_dirty(s: *mut cairo_surface_t);
     pub fn cairo_pattern_create_linear(x0: c_double, y0: c_double, x1: c_double, y1: c_double) -> *mut cairo_pattern_t;
     pub fn cairo_pattern_add_color_stop_rgb(p: *mut cairo_pattern_t, off: c_double, r: c_double, g: c_double, b: c_double);
     pub fn cairo_pattern_destroy(p: *mut cairo_pattern_t);
@@ -100,6 +105,8 @@ extern "C" {
     pub fn pango_layout_set_width(l: *mut PangoLayout, w: c_int);
     pub fn pango_layout_set_wrap(l: *mut PangoLayout, w: c_int);
     pub fn pango_layout_set_alignment(l: *mut PangoLayout, a: c_int);
+    pub fn pango_layout_set_justify(l: *mut PangoLayout, j: c_int);
+    pub fn pango_layout_set_justify_last_line(l: *mut PangoLayout, j: c_int);
     pub fn pango_cairo_layout_path(cr: *mut cairo_t, l: *mut PangoLayout);
     pub fn pango_layout_set_attributes(l: *mut PangoLayout, a: *mut PangoAttrList);
     pub fn pango_layout_get_pixel_size(l: *mut PangoLayout, w: *mut c_int, h: *mut c_int);

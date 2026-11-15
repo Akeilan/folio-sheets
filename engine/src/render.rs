@@ -51,6 +51,31 @@ fn mix(a: u32, b: u32, t: f64) -> u32 {
     out
 }
 
+/// The 8x8 tiles of the pattern fills (bit set = pattern colour), as the original draws them.
+pub(crate) fn pattern_bits(p: &str) -> Option<[u8; 8]> {
+    let r = |a: u8, b: u8| [a, b, a, b, a, b, a, b];
+    Some(match p {
+        "gray0625" => [0x80, 0x00, 0x08, 0x00, 0x80, 0x00, 0x08, 0x00],
+        "gray125" => [0x88, 0x00, 0x22, 0x00, 0x88, 0x00, 0x22, 0x00],
+        "lightGray" => r(0x88, 0x22),
+        "mediumGray" => r(0xAA, 0x55),
+        "darkGray" => r(0x77, 0xDD),
+        "darkHorizontal" => [0xFF, 0xFF, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00],
+        "lightHorizontal" => [0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00],
+        "darkVertical" => [0xCC; 8],
+        "lightVertical" => [0x88; 8],
+        "darkDown" => [0xCC, 0x66, 0x33, 0x99, 0xCC, 0x66, 0x33, 0x99],
+        "lightDown" => [0x88, 0x44, 0x22, 0x11, 0x88, 0x44, 0x22, 0x11],
+        "darkUp" => [0x33, 0x66, 0xCC, 0x99, 0x33, 0x66, 0xCC, 0x99],
+        "lightUp" => [0x11, 0x22, 0x44, 0x88, 0x11, 0x22, 0x44, 0x88],
+        "darkGrid" => [0x99, 0x66, 0x66, 0x99, 0x99, 0x66, 0x66, 0x99],
+        "darkTrellis" => [0x99, 0xFF, 0x66, 0xFF, 0x99, 0xFF, 0x66, 0xFF],
+        "lightGrid" => [0xFF, 0x88, 0x88, 0x88, 0xFF, 0x88, 0x88, 0x88],
+        "lightTrellis" => [0x88, 0x55, 0x22, 0x55, 0x88, 0x55, 0x22, 0x55],
+        _ => return None,
+    })
+}
+
 pub(crate) struct Pen {
     pub(crate) layout: *mut PangoLayout,
     pub(crate) fonts: HashMap<(String, u64, bool, bool, u8), crate::layout::FontDesc>,
@@ -84,6 +109,8 @@ impl Pen {
                 }
                 None => pango_layout_set_width(l, -1),
             }
+            pango_layout_set_justify(l, 0);
+            pango_layout_set_justify_last_line(l, 0);
             set_text(l, text);
             let mut ink = PangoRectangle::default();
             let mut lg = PangoRectangle::default();
@@ -105,6 +132,14 @@ impl Pen {
 
     pub(crate) fn set_align(&mut self, a: i32) {
         unsafe { pango_layout_set_alignment(self.layout, a) }
+    }
+
+    /// Distributed alignment: every line, the last one too, runs edge to edge.
+    pub(crate) fn set_justify(&mut self, on: bool) {
+        unsafe {
+            pango_layout_set_justify(self.layout, on as i32);
+            pango_layout_set_justify_last_line(self.layout, on as i32);
+        }
     }
 }
 
@@ -1056,6 +1091,60 @@ impl Book {
         cairo_restore(cr);
     }
 
+    /// A pattern or gradient fill, drawn as itself (S6-33).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn paint_fill(&self, cr: *mut cairo_t, f: &crate::styles::Fill, x: f64, y: f64, w: f64, h: f64, z: f64) {
+        let ch = |c: u32, k: u32| ((c >> k) & 255) as f64 / 255.0;
+        if let Some(g) = &f.gradient {
+            let pat = if g.path {
+                let cx = x + w * (g.left + g.right) / 2.0;
+                let cy = y + h * (g.top + g.bottom) / 2.0;
+                let far = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)].iter().map(|(a, b)| ((a - cx).powi(2) + (b - cy).powi(2)).sqrt()).fold(1.0f64, f64::max);
+                cairo_pattern_create_radial(cx, cy, 0.0, cx, cy, far)
+            } else {
+                let a = g.degree.to_radians();
+                let (dx, dy) = (a.cos(), a.sin());
+                let half = (w * dx.abs() + h * dy.abs()) / 2.0;
+                let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+                cairo_pattern_create_linear(cx - dx * half, cy - dy * half, cx + dx * half, cy + dy * half)
+            };
+            for (pos, c) in &g.stops {
+                let v = self.styles.rgb(c, 0xFFFFFF);
+                cairo_pattern_add_color_stop_rgb(pat, *pos, ch(v, 16), ch(v, 8), ch(v, 0));
+            }
+            cairo_set_source(cr, pat);
+            rect(cr, x, y, w, h);
+            cairo_pattern_destroy(pat);
+            return;
+        }
+        let bits = match pattern_bits(&f.pattern) {
+            Some(b) => b,
+            None => return,
+        };
+        let fg = f.fg.as_ref().map(|c| self.styles.rgb(c, 0x000000)).unwrap_or(0x000000);
+        let bg = f.bg.as_ref().map(|c| self.styles.rgb(c, 0xFFFFFF)).unwrap_or(0xFFFFFF);
+        let k = (z.round() as usize).clamp(1, 4);
+        let n = 8 * k;
+        let mut data: Vec<u32> = vec![0; n * n];
+        for (yy, row) in data.chunks_mut(n).enumerate() {
+            let b = bits[(yy / k) % 8];
+            for (xx, px) in row.iter_mut().enumerate() {
+                let on = b & (0x80 >> ((xx / k) % 8)) != 0;
+                *px = 0xFF00_0000 | if on { fg } else { bg };
+            }
+        }
+        let surf = cairo_image_surface_create_for_data(data.as_mut_ptr() as *mut u8, 0 /* ARGB32 */, n as i32, n as i32, (n * 4) as i32);
+        cairo_surface_mark_dirty(surf);
+        let pat = cairo_pattern_create_for_surface(surf);
+        cairo_pattern_set_extend(pat, 1 /* REPEAT */);
+        cairo_pattern_set_filter(pat, 3 /* NEAREST */);
+        cairo_set_source(cr, pat);
+        rect(cr, x, y, w, h);
+        cairo_pattern_destroy(pat);
+        cairo_surface_destroy(surf);
+        drop(data);
+    }
+
     pub fn fill_color(&self, xf: &Xf) -> Option<u32> {
         let f = self.styles.fill(xf.fill);
         let fg = f.fg.as_ref().map(|c| self.styles.rgb(c, 0x000000));
@@ -1143,8 +1232,13 @@ impl Book {
                 if let Some(col) = cf_fill.or_else(|| self.fill_color(self.styles.xf(xf))).or(t_fill) {
                     filled.insert((r, c), col);
                     if merge_of(r, c).map(|m| (m.r1.max(rmin), m.c1.max(cmin)) == (r, c)).unwrap_or(true) {
-                        rgb(cr, col);
-                        rect(cr, fx, fy, fw, fh);
+                        let own = self.styles.fill(self.styles.xf(xf).fill);
+                        if cf_fill.is_none() && self.fill_color(self.styles.xf(xf)).is_some() && (own.gradient.is_some() || pattern_bits(&own.pattern).is_some()) {
+                            self.paint_fill(cr, own, fx, fy, fw, fh, z);
+                        } else {
+                            rgb(cr, col);
+                            rect(cr, fx, fy, fw, fh);
+                        }
                     }
                 }
             }
@@ -1716,7 +1810,10 @@ impl Book {
         }
         let wrap = xf.wrap || halign == "justify" || halign == "distributed" || xf.valign == "justify";
         if wrap {
-            let w = bw - 2.0 * pad - indent;
+            let rot = xf.rotation;
+            let steep = rot != 0 && rot != 255 && (if rot <= 90 { rot } else { rot - 90 }) >= 45;
+            // rotated text wraps along its own direction: the row's height when it stands up
+            let w = if steep { bh - 2.0 * pad } else { bw - 2.0 * pad - indent };
             let (tw, th) = pen.set(&text, &font, z, Some(w));
             let _ = tw;
             let y = match xf.valign.as_str() {
@@ -1725,15 +1822,32 @@ impl Book {
                 _ => by + bh - th - 1.0,
             };
             let align = match halign.as_str() {
-                "center" | "centerContinuous" => PANGO_ALIGN_CENTER,
+                "center" | "centerContinuous" | "distributed" => PANGO_ALIGN_CENTER,
                 "right" => PANGO_ALIGN_RIGHT,
                 _ => PANGO_ALIGN_LEFT,
             };
-            return Some(TextJob { text, font, zoom: z, color, x: bx + pad + if halign == "left" { indent } else { 0.0 }, y, clip: (bx, by, bw, bh), wrap: Some(w), align, covers: (c, c), fill: None, rotate: 0 });
+            let (x, w) = if halign == "distributed" { (bx + pad + indent, w - indent) } else { (bx + pad + if halign == "left" { indent } else { 0.0 }, w) };
+            return Some(TextJob { text, font, zoom: z, color, x, y, clip: (bx, by, bw, bh), wrap: Some(w.max(1.0)), align, covers: (c, c), fill: None,
+                                  rotate: if rot == 255 { 0 } else { rot }, justify: halign == "distributed" || halign == "justify" });
         }
         let one_line = text.replace('\n', " ");
-        let (mut tw, th) = pen.set(&one_line, &font, z, None);
+        let (mut tw, mut th) = pen.set(&one_line, &font, z, None);
         let avail = bw - 2.0 * pad - indent;
+        if xf.shrink && tw > avail && avail > 1.0 && xf.rotation == 0 {
+            // Shrink to Fit: the font gets smaller until the text fits the cell
+            font.size = (font.size * avail / tw).max(1.0);
+            let (w2, h2) = pen.set(&one_line, &font, z, None);
+            tw = w2;
+            th = h2;
+            let mut guard = 0;
+            while tw > avail && font.size > 1.0 && guard < 8 {
+                font.size = (font.size * 0.95).max(1.0);
+                let (w3, h3) = pen.set(&one_line, &font, z, None);
+                tw = w3;
+                th = h3;
+                guard += 1;
+            }
+        }
         let mut text = one_line;
         // numbers and dates that don't fit show #
         if hash && !matches!(v, Value::Str(_)) && tw > bw - 2.0 && !(p.show_formulas && is_formula) {
@@ -1805,7 +1919,7 @@ impl Book {
         }
         // gridlines to hide: between the covered cells
         let covers = if covers.0 < covers.1 { (covers.0, covers.1) } else { (c, c) };
-        Some(TextJob { text, font, zoom: z, color, x, y, clip, wrap: None, align: PANGO_ALIGN_LEFT, covers, fill: None, rotate })
+        Some(TextJob { text, font, zoom: z, color, x, y, clip, wrap: None, align: PANGO_ALIGN_LEFT, covers, fill: None, rotate, justify: false })
     }
 
     unsafe fn paint_overlays(&self, s: usize, cr: *mut cairo_t, p: &ViewParams, g: &Geometry, rows: &[(u32, f64, f64)], cols: &[(u32, f64, f64)]) {
@@ -2042,6 +2156,7 @@ struct TextJob {
     covers: (u32, u32),
     fill: Option<char>,
     rotate: u32,
+    justify: bool,
 }
 
 impl TextJob {
@@ -2053,6 +2168,9 @@ impl TextJob {
         rgb(cr, self.color);
         let (tw, th) = pen.set(&self.text, &self.font, self.zoom, self.wrap);
         pen.set_align(self.align);
+        if self.justify && self.wrap.is_some() {
+            pen.set_justify(true);
+        }
         let mut y = self.y;
         if self.font.vert == 1 {
             y -= th * 0.35;
@@ -2075,6 +2193,7 @@ impl TextJob {
             pen.show(cr, self.x, y);
         }
         pen.set_align(PANGO_ALIGN_LEFT);
+        pen.set_justify(false);
         let _ = self.fill;
         cairo_restore(cr);
     }

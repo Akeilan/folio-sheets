@@ -301,6 +301,57 @@ else:
     print("NOTE nl_NL locale not generated here; detection check skipped")
 regional.apply(regional.detect({"FOLIO_SHEET_REGION": "default"}))
 
+# ------------------------------------------------------------------ S6-33 drawing cell formats
+import cairo
+from folio_sheets.core import Book as _Book
+_d = _Book.open(os.path.abspath("tests/data/drawing_s633.xlsx"))
+_png = os.path.join(TMP, "s633.png")
+_d.render_png(0, _png, {"width": 520, "height": 420, "zoom": 1.0})
+_img = cairo.ImageSurface.create_from_png(_png)
+_W, _H, _st = _img.get_width(), _img.get_height(), _img.get_stride()
+_px = bytes(_img.get_data())
+
+
+def pix(x, y):
+    o = y * _st + x * 4
+    return (_px[o + 2], _px[o + 1], _px[o])
+
+
+def region(x0, y0, x1, y1):
+    return [pix(x, y) for y in range(max(0, y0), min(_H, y1)) for x in range(max(0, x0), min(_W, x1))]
+
+
+_vp = {"width": 520, "height": 420, "zoom": 1.0}
+
+
+def cell(r, c):
+    x, y, w, h = _d.cell_rect(0, r, c, _vp)
+    return int(x), int(y), int(x + w), int(y + h)
+
+
+ax0, ay0, ax1, ay1 = cell(0, 0)
+a_cell = region(ax0 + 4, ay0 + 3, ax1 - 3, ay1 - 3)
+reds = sum(1 for p in a_cell if p[0] > 200 and p[1] < 80)
+yell = sum(1 for p in a_cell if p[0] > 200 and p[1] > 200)
+check("S6-33: a pattern fill is drawn as a pattern (both colours show)", reds > 20 and yell > 5, (reds, yell))
+cx0, cy0, cx1, cy1 = cell(0, 2)
+g = (pix(cx0 + 3, (cy0 + cy1) // 2), pix(cx1 - 4, (cy0 + cy1) // 2))
+check("S6-33: a gradient fill runs from its first colour to its last", g[0][0] > 200 and g[0][2] < 80 and g[1][2] > 200 and g[1][0] < 80, g)
+sx0, sy0, sx1, sy1 = cell(4, 2)
+spill = [p for p in region(sx1 + 2, sy0 + 2, sx1 + 40, sy1 - 2) if sum(p) < 400]
+inside = [p for p in region(sx0 + 2, sy0 + 2, sx1 - 2, sy1 - 2) if sum(p) < 400]
+check("S6-33: Shrink to Fit keeps the text inside its cell", inside and not spill, (len(inside), len(spill)))
+rx0, ry0, rx1, ry1 = cell(5, 2)
+dark = [(x, y) for y in range(ry0 + 2, ry1 - 2) for x in range(rx0 + 2, rx1 - 2) if sum(pix(x, y)) < 300]
+tall = (max(y for _, y in dark) - min(y for _, y in dark)) if dark else 0
+wide = (max(x for x, _ in dark) - min(x for x, _ in dark)) if dark else 0
+check("S6-33: rotated text with Wrap Text on stands up, in more than one line", tall > 60 and 20 < wide < 60, (tall, wide))
+dx0, dy0, dx1, dy1 = cell(7, 2)
+lastline = [x for y in range((dy0 + dy1) // 2, dy1 - 2) for x in range(dx0 + 2, dx1 - 2) if sum(pix(x, y)) < 300]
+check("S6-33: Distributed runs the last line edge to edge", lastline and max(lastline) > dx1 - 12 and min(lastline) < dx0 + 10,
+      (min(lastline or [0]), max(lastline or [0]), dx0, dx1))
+print("NOTE drawing picture at %s" % _png)
+
 # ------------------------------------------------------------------ END
 print("%d checks, %d failed" % (len(checks), sum(1 for _, ok in checks if not ok)), flush=True)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))

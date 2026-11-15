@@ -74,6 +74,20 @@ pub struct Fill {
     pub pattern: String,
     pub fg: Option<Color>,
     pub bg: Option<Color>,
+    /// a gradient fill (S6-33): drawn as itself; fg holds its first colour for sorting
+    pub gradient: Option<Gradient>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gradient {
+    /// "linear" (at `degree`) or "path" (rings out from the rectangle left..right, top..bottom)
+    pub path: bool,
+    pub degree: f64,
+    pub left: f64,
+    pub right: f64,
+    pub top: f64,
+    pub bottom: f64,
+    pub stops: Vec<(f64, Color)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -221,14 +235,22 @@ impl Fill {
             let fg = p.child("fgColor").map(Color::from_el);
             let bg = p.child("bgColor").map(Color::from_el);
             let pattern = p.attr("patternType").map(|s| s.to_string()).unwrap_or_else(|| if fg.is_some() { "solid".into() } else { "none".into() });
-            return Fill { pattern, fg, bg };
+            return Fill { pattern, fg, bg, gradient: None };
         }
         if let Some(g) = e.child("gradientFill") {
-            // drawn as its first stop colour
-            let c = g.elems_named("stop").next().and_then(|s| s.child("color")).map(Color::from_el);
-            return Fill { pattern: "solid".into(), fg: c, bg: None };
+            let num = |k: &str| g.attr(k).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+            let mut stops: Vec<(f64, Color)> = g.elems_named("stop")
+                .filter_map(|st| Some((st.attr("position").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0).clamp(0.0, 1.0), st.child("color").map(Color::from_el)?)))
+                .collect();
+            stops.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            let c = stops.first().map(|x| x.1.clone());
+            let gradient = if stops.is_empty() { None } else {
+                Some(Gradient { path: g.attr("type") == Some("path"), degree: num("degree"), left: num("left"), right: num("right"),
+                                top: num("top"), bottom: num("bottom"), stops })
+            };
+            return Fill { pattern: "solid".into(), fg: c, bg: None, gradient };
         }
-        Fill { pattern: "none".into(), fg: None, bg: None }
+        Fill { pattern: "none".into(), fg: None, bg: None, gradient: None }
     }
 }
 
