@@ -23,7 +23,7 @@
 /* ---------- chrome typeface: compact, like a desktop office suite ---------- */
 .folio-ribbon, .folio-tabs, .folio-status, .folio-titlebar, .folio-backstage,
 .folio-pane, .folio-dialog, .folio-eqbar, popover, menu, .folio-menu {
-  font-family: "Segoe UI", "Noto Sans", "Open Sans", "Ubuntu", sans-serif;
+  font-family: "Segoe UI", "Carlito", sans-serif;
   font-size: 9pt;
 }
 .folio-tab { font-size: 9.5pt; }
@@ -289,7 +289,7 @@ popover.folio-keytip-pop { padding: 0; border: none; background: transparent; bo
 tooltip, tooltip.background { background-color: #ffffff; color: #262626;
   border: 1px solid #c6c6c6; border-radius: 0; box-shadow: 1px 2px 4px rgba(0,0,0,0.18); }
 tooltip label { color: #262626; padding: 3px 4px; font-size: 9pt;
-  font-family: "Segoe UI", "Noto Sans", "Open Sans", "Ubuntu", sans-serif; }
+  font-family: "Segoe UI", "Carlito", sans-serif; }
 tooltip * { background-color: transparent; }
 
 .folio-layoutopts { background: #ffffff; border: 1px solid #c8c8c8; border-radius: 2px;

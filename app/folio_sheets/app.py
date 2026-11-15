@@ -102,6 +102,7 @@ class SheetsApp(Gtk.Application):
         css.load_from_path(os.path.join(os.path.dirname(__file__), "theme.css"))
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css,
                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._pin_chrome_font()
         extra = os.path.join(os.path.dirname(__file__), "sheets.css")
         if os.path.exists(extra):
             css2 = Gtk.CssProvider()
@@ -147,6 +148,32 @@ class SheetsApp(Gtk.Application):
                 if hasattr(w, fn):
                     getattr(w, fn)()
             w.queue_draw()
+
+    # Segoe UI where it is installed, else Carlito, which the package depends on
+    CHROME_FONTS = ("Segoe UI", "Carlito")
+
+    def _pin_chrome_font(self):
+        """The interface font, chosen here rather than left to the font system: given a list
+        whose first font is missing, the font system's pick depends on the machine (Carlito on
+        one, Noto Sans on another), and the ribbon came out 97 px on one and 108 px on the
+        other."""
+        try:
+            gi.require_version("PangoCairo", "1.0")
+            from gi.repository import PangoCairo
+            have = {f.get_name() for f in PangoCairo.FontMap.get_default().list_families()}
+        except (ValueError, ImportError):
+            return None
+        fam = next((f for f in self.CHROME_FONTS if f in have), None)
+        self.chrome_font = fam
+        if fam is None:
+            return None
+        css = Gtk.CssProvider()
+        sel = (".folio-ribbon, .folio-tabs, .folio-status, .folio-titlebar, .folio-backstage, "
+               ".folio-pane, .folio-dialog, .folio-eqbar, popover, menu, .folio-menu, tooltip label")
+        css.load_from_data(('%s { font-family: "%s"; }' % (sel, fam)).encode())
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css,
+                                                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        return fam
 
     def do_activate(self):
         if self.windows:

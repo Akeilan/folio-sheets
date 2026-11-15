@@ -164,6 +164,21 @@ undo = answers(["Other1"])
 win.load(theirs)
 undo()
 check("S6-30: a workbook in Excel 2007's Standard encryption opens", win.book.display(0, 0, 0) == "Secret value")
+# files that Microsoft Office encrypted (2007: Standard; 2010 and 2013: Agile) and LibreOffice's own
+import glob as _glob
+for _f in sorted(_glob.glob("tests/data/encrypted/Encrypted_*_abc.docx")):
+    _d = open(_f, "rb").read()
+    try:
+        _x = encryption.decrypt(_d, "abc")
+        _ok = "word/document.xml" in zipfile.ZipFile(io.BytesIO(_x)).namelist()
+    except Exception as e:
+        _ok = repr(e)
+    try:
+        encryption.decrypt(_d, "abd")
+        _bad = False
+    except encryption.WrongPassword:
+        _bad = True
+    check("S6-30: %s decrypts with its password and refuses a wrong one" % os.path.basename(_f), _ok is True and _bad, _ok)
 # a large workbook (past 109 allocation sectors) round-trips
 import zipfile as _z
 _b = io.BytesIO()

@@ -1,0 +1,4 @@
+Encrypted documents made by Microsoft Office 2007, 2010 and 2013 and by LibreOffice, all with
+the password "abc". They come from LibreOffice's own test files (sw/qa/extras/ooxmlexport/data in
+the libreoffice 7.3.7 source package of the Ubuntu archive), licensed MPL-2.0. Sheet's test uses
+them to check its decryption against files that Office itself encrypted (S6-30).

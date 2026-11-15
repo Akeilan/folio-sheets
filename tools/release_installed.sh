@@ -6,7 +6,10 @@
 # run, and on 24.04 the same theme run under Wayland.
 V=$1; D=${2:-98}
 # the release before this one, to upgrade from
-OLD=${OLD_DEB:-$(ls -t /home/claude/out/folio-sheet_*_amd64.deb 2>/dev/null | grep -v "_${V}_" | head -1)}
+# (the build folder first, then the packages Folio Studio last published)
+OLD=${OLD_DEB:-$(ls -t /home/claude/out/folio-sheet_*_amd64.deb /home/claude/suite-debs/folio-sheet_*_amd64.deb 2>/dev/null | grep -v "_${V}_" | head -1)}
+[ -f "$OLD" ] || echo "FAIL no earlier release to upgrade from"
+echo "upgrading from: $(basename "${OLD:-none}")"
 /home/claude/mounts.sh
 for m in ${MACHINES:-/srv/jammy /srv/nolo /srv/noble}; do
   cp /home/claude/out/folio-sheet_${V}_amd64.deb /home/claude/out/folio-sheets_${V}_all.deb $m/tmp/
@@ -18,6 +21,7 @@ for m in ${MACHINES:-/srv/jammy /srv/nolo /srv/noble}; do
     dpkg -r folio-sheet >/dev/null 2>&1; dpkg -r folio-sheets >/dev/null 2>&1
     if [ -f /tmp/old-folio-sheets.deb ]; then dpkg -i /tmp/old-folio-sheets.deb >/dev/null 2>&1 || apt-get -y -f install >/dev/null 2>&1; fi
     echo \"before: \$(dpkg-query -W -f='\${Package} \${Version}' folio-sheet 2>/dev/null)\"
+    [ \"\$(dpkg-query -W -f='\${Version}' folio-sheet 2>/dev/null)\" != \"${V}\" ] || echo 'FAIL the upgrade started from the new version itself'
     apt-get install -y --no-install-recommends /tmp/folio-sheet_${V}_amd64.deb /tmp/folio-sheets_${V}_all.deb >/tmp/up.log 2>&1 || echo 'FAIL upgrade (see /tmp/up.log)'
     [ \"\$(dpkg-query -W -f='\${Version}' folio-sheet)\" = \"${V}\" ] || echo 'FAIL the new version is not the one installed'
     echo \"after: \$(dpkg-query -W -f='\${Package} \${Version} \${Status}; ' folio-sheet folio-sheets 2>/dev/null)\"
