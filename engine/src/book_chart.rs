@@ -416,6 +416,74 @@ impl Book {
         Ok(at)
     }
 
+    /// Move Chart: to a new chart sheet called `new_sheet` (inserted before the chart's sheet),
+    /// or as an object onto worksheet `to` at (x, y). A chart sheet left empty goes. Returns the
+    /// index of the sheet the chart is on afterwards.
+    pub fn move_chart(&mut self, s: usize, i: usize, new_sheet: Option<&str>, to: Option<usize>, x: f64, y: f64) -> Result<usize, String> {
+        let sh = self.sheets.get(s).ok_or("no such sheet")?;
+        let obj = sh.objects.get(i).cloned().ok_or("no such chart")?;
+        if obj.chart.is_none() {
+            return Err("That object isn't a chart.".into());
+        }
+        let from_chart_sheet = sh.kind == "chart";
+        let mut rest = sh.objects.clone();
+        rest.remove(i);
+        if let Some(name) = new_sheet {
+            if let Some(m) = self.check_sheet_name(name, None) {
+                return Err(m);
+            }
+            let id = self.sheets.iter().map(|x| x.id).max().unwrap_or(0) + 1;
+            let mut ns = crate::sheet::Sheet::new(id, name);
+            ns.kind = "chart".into();
+            let mut o = obj;
+            o.anchor = Anchor::Abs { x: 0, y: 0, cx: 8_670_000, cy: 6_300_000 };
+            ns.objects = vec![o];
+            self.begin("Move Chart", s);
+            if from_chart_sheet {
+                self.record(Delta::RemoveSheet(s));
+            } else {
+                self.record(Delta::Objects(s, rest));
+            }
+            self.record(Delta::AddSheet(s, Box::new(ns)));
+            self.commit();
+            return Ok(s);
+        }
+        let t = to.ok_or("Choose the sheet the chart goes on.")?;
+        if t >= self.sheets.len() || self.sheets[t].kind != "work" {
+            return Err("A chart can be placed as an object on a worksheet only.".into());
+        }
+        if t == s {
+            return Ok(s);
+        }
+        let (w, h) = match obj.anchor {
+            Anchor::Abs { cx, cy, .. } if from_chart_sheet => ((cx as f64 / 9525.0).min(720.0).max(240.0) * 0.6, (cy as f64 / 9525.0).min(540.0).max(160.0) * 0.6),
+            _ => self.object_size_px(s, i).unwrap_or((480.0, 288.0)),
+        };
+        let like = Anchor::Two { from: Default::default(), to: Default::default(), edit_as: None };
+        let mut o = obj;
+        o.anchor = self.anchor_at(t, &like, x, y, w, h);
+        let mut dst = self.sheets[t].objects.clone();
+        dst.push(o);
+        self.begin("Move Chart", t);
+        self.record(Delta::Objects(t, dst));
+        let at = if from_chart_sheet {
+            self.record(Delta::RemoveSheet(s));
+            if t > s { t - 1 } else { t }
+        } else {
+            self.record(Delta::Objects(s, rest));
+            t
+        };
+        self.commit();
+        Ok(at)
+    }
+
+    /// A chart's size on screen at 100% (pixels), from its anchor.
+    fn object_size_px(&self, s: usize, i: usize) -> Option<(f64, f64)> {
+        let p = crate::view::ViewParams::default();
+        let r = self.object_screen_rect(s, i, &p)?;
+        Some((r.2.max(120.0), r.3.max(80.0)))
+    }
+
     /// A chart of the selection, placed at (x, y).
     pub fn insert_chart(&mut self, s: usize, rc: Rect, kind: &str, x: f64, y: f64) -> Result<usize, String> {
         let ch = self.chart_from_range(s, rc, kind)?;

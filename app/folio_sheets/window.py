@@ -403,6 +403,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.macro_bar.show_for(self.book)
         self.grid.set_book(self.book)
         self.tabs.rebuild()
+        self.chart_sheet_sensitivity()
         self.sheet_changed()
         self.update_title()
 
@@ -436,10 +437,36 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def focus_document(self):
         self.grid.area.grab_focus()
 
+    # what still works on a chart sheet (the rest of the ribbon is greyed out there)
+    CHART_SHEET_OK = ("chart-format", "chart-change-type", "chart-select-data", "chart-switch-row-col",
+                      "chart-add-element", "chart-colors", "chart-move", "save", "open", "new", "close",
+                      "print", "export", "send-", "encrypt", "help", "undo", "redo", "zoom-100", "zoom-dialog",
+                      "insert-sheet", "delete-sheet", "rename-sheet", "move-sheet", "hide-sheet", "unhide-sheet",
+                      "tab-color", "new-window", "arrange-all", "hide-window", "unhide-window", "side-by-side",
+                      "sync-scroll", "reset-window", "switch", "themes", "theme-", "page-setup", "margins",
+                      "orientation", "paper-size", "options")
+
+    def chart_sheet_sensitivity(self):
+        """On a chart sheet the commands that need cells are greyed out, as in the original."""
+        chart = self.book is not None and self.book.sheet_info(self.grid.sheet)["kind"] == "chart"
+        if chart == getattr(self, "_chart_sheet_grey", False):
+            return
+        self._chart_sheet_grey = chart
+        for c in getattr(self.ribbon, "controls", []):
+            act = getattr(c, "action", None)
+            if not isinstance(act, str) or act.startswith(".uno:"):
+                continue
+            ok = not chart or act.startswith(self.CHART_SHEET_OK)
+            try:
+                c.set_sensitive(ok)
+            except AttributeError:
+                pass
+
     def sheet_changed(self):
         self.tabs.mark_active()
         if self.book is not None:
             self.on_object_selection()
+            self.chart_sheet_sensitivity()
         st = self.grid.state()
         self.status.show_zoom(st.zoom * 100)
         self.sync_checks()
@@ -675,13 +702,35 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         book = self.book
         mark = (book.can_undo, (book.undo_labels() or [""])[0] if book is not None and book.can_undo else "",
                 len(book.undo_labels()) if book is not None else 0) if book is not None else None
-        res = self._run(cmd)
+        outer = getattr(self, "_restyle_log", None) is None
+        if outer:
+            self._restyle_log = []
+        try:
+            res = self._run(cmd)
+        finally:
+            log = self._restyle_log if outer else None
+            if outer:
+                self._restyle_log = None
         base = cmd.split(":", 1)[0]
-        if self.book is book and book is not None and base not in self.NO_REPEAT and not base.startswith(("select-", "paste")):
+        if outer and self.book is book and book is not None and base not in self.NO_REPEAT and not base.startswith(("select-", "paste")):
             after = (book.can_undo, (book.undo_labels() or [""])[0] if book.can_undo else "", len(book.undo_labels()))
             if after != mark and book.can_undo:
-                self.last_cmd = cmd
+                # formatting chosen in a dialog repeats as that formatting, without the dialog
+                self.last_cmd = ("restyle", log) if log else cmd
         return res
+
+    def repeat_last(self):
+        """F4 / Ctrl+Y: the last action again, on the selection."""
+        last = getattr(self, "last_cmd", None)
+        if not last:
+            return False
+        if isinstance(last, tuple):
+            with self.book.group(last[1][0][0] if last[1] else "Repeat"):
+                for label, ops in last[1]:
+                    self.restyle(label, ops)
+            return True
+        self.run(last)
+        return True
 
     def _run(self, cmd):
         if cmd is None:
@@ -1397,7 +1446,44 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         return False
 
     def act_options(self):
-        self.dialogs.info("Options will be available in a later version.", "Options")
+        """File > Options: the settings this version has (Save: AutoRecover)."""
+        from . import autorecover
+        st = self.app.settings
+        d = Gtk.Dialog(title="Folio Sheet Options", transient_for=self, modal=True)
+        d.add_button("OK", Gtk.ResponseType.OK)
+        d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        d.set_default_response(Gtk.ResponseType.OK)
+        box = d.get_content_area()
+        box.set_border_width(12)
+        box.set_spacing(8)
+        h = Gtk.Label(xalign=0)
+        h.set_markup("<b>Save workbooks</b>")
+        box.pack_start(h, False, False, 0)
+        row = Gtk.Box(spacing=6)
+        on = Gtk.CheckButton.new_with_mnemonic("Save _AutoRecover information every")
+        on.set_active(st.get("autorecover_on", True))
+        mins = Gtk.SpinButton.new_with_range(1, 120, 1)
+        mins.set_value(int(st.get("autorecover_minutes", autorecover.DEFAULT_MINUTES)))
+        row.pack_start(on, False, False, 0)
+        row.pack_start(mins, False, False, 0)
+        row.pack_start(Gtk.Label(label="minutes"), False, False, 0)
+        box.pack_start(row, False, False, 0)
+        loc = Gtk.Label(label="AutoRecover file location: " + autorecover.folder(), xalign=0, selectable=True)
+        loc.get_style_context().add_class("dim-label")
+        box.pack_start(loc, False, False, 0)
+        on.connect("toggled", lambda b: mins.set_sensitive(b.get_active()))
+        mins.set_sensitive(on.get_active())
+        d.on_check, d.minutes = on, mins
+        d.show_all()
+        r = d.run()
+        if r == Gtk.ResponseType.OK:
+            st["autorecover_on"] = on.get_active()
+            st["autorecover_minutes"] = int(mins.get_value())
+            self.app.save_settings()
+            ar = getattr(self.app, "autorecover", None)
+            if ar is not None:
+                ar.set_interval(st["autorecover_minutes"] * 60 if st["autorecover_on"] else 0)
+        d.destroy()
 
     def act_help(self):
         p = None
@@ -1422,7 +1508,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def act_redo(self):
         if not self.book.can_redo and getattr(self, "last_cmd", None):
             # with nothing to redo, Ctrl+Y repeats the last action (as F4 does)
-            return self.run(self.last_cmd)
+            return self.repeat_last()
         s = self.book.redo_sheet()
         if self.book.redo() is None:
             return
@@ -2749,7 +2835,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def object_menu(self, ev, i):
         items = [("Cut", "chart-cut"), ("Copy", "chart-copy"), None, ("Delete", "chart-delete"), None,
-                 ("Change Chart Type...", "chart-change-type"), ("Select Data...", "chart-select-data"),
+                 ("Change Chart Type...", "chart-change-type"), ("Select Data...", "chart-select-data"), ("Move Chart...", "chart-move"),
                  ("Switch Row/Column", "chart-switch-row-col"), None, ("Format Chart...", "chart-format")]
         kind = self.book.objects(self.grid.sheet)[i]["kind"]
         if kind in ("slicer", "timeline"):
@@ -2773,6 +2859,35 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if i is None:
             self.status.extra.set_text("Select a chart first.")
         return i
+
+    def act_chart_move(self):
+        """Chart Design > Move Chart: to a new chart sheet, or as an object onto a worksheet."""
+        from . import chart_ui
+        g = self.grid
+        i = self._chart_index()
+        if i is None:
+            return False
+        where = chart_ui.move_chart_dialog(self, i)
+        if where is None:
+            return False
+        kind, val = where
+        try:
+            if kind == "new":
+                at = self.book.move_chart(g.sheet, i, new_sheet=val)
+            else:
+                x, y = chart_ui._visible_center(self) if self.book.sheet_info(g.sheet)["kind"] == "work" and val == g.sheet else (64.0, 40.0)
+                at = self.book.move_chart(g.sheet, i, to=val, x=x, y=y)
+        except ValueError as e:
+            self.dialogs.message(str(e), "Move Chart")
+            return False
+        self.tabs.rebuild()
+        g.set_sheet(at)
+        if self.book.sheet_info(at)["kind"] == "work":
+            g.select_object(len(self.book.objects(at)) - 1)
+        self.sheet_changed()
+        self.on_object_selection(switch_tab=True)
+        self.update_title()
+        return True
 
     def act_chart_sheet(self):
         """F11: a chart of the selection (or the data around the active cell) on a sheet of its own."""
@@ -4127,9 +4242,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 self.run("chart-sheet")
                 return True
             if kv == Gdk.KEY_F4:
-                last = getattr(self, "last_cmd", None)
-                if last:
-                    self.run(last)
+                self.repeat_last()
                 return True
         return False
 

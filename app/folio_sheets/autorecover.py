@@ -9,7 +9,9 @@ import time
 
 from gi.repository import GLib, Gtk
 
-INTERVAL = int(os.environ.get("FOLIO_AUTORECOVER_SECONDS", "600"))
+# the original's default: every 10 minutes (File > Options > Save changes it)
+DEFAULT_MINUTES = 10
+INTERVAL = os.environ.get("FOLIO_AUTORECOVER_SECONDS")
 
 
 def folder():
@@ -30,8 +32,21 @@ class AutoRecover:
         self.app = app
         self.files = {}          # id(workbook) -> copy path
         self.n = 0
-        if INTERVAL > 0:
-            GLib.timeout_add_seconds(INTERVAL, self.tick)
+        self._source = 0
+        st = getattr(app, "settings", {}) or {}
+        if INTERVAL is not None:
+            self.set_interval(int(INTERVAL))
+        else:
+            self.set_interval(int(st.get("autorecover_minutes", DEFAULT_MINUTES)) * 60 if st.get("autorecover_on", True) else 0)
+
+    def set_interval(self, seconds):
+        """How often copies are written (0: never)."""
+        if self._source:
+            GLib.source_remove(self._source)
+            self._source = 0
+        self.seconds = max(0, int(seconds))
+        if self.seconds > 0:
+            self._source = GLib.timeout_add_seconds(self.seconds, self.tick)
 
     def tick(self):
         for w in list(self.app.windows):

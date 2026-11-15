@@ -87,6 +87,9 @@ class FormattingMixin:
             self._approved = True
         try:
             changed = self.book.restyle(g.sheet, [tuple(r) for r in ranges], ops, label)
+            if changed and getattr(self, "_restyle_log", None) is not None:
+                # what F4 repeats: the formatting itself, not the dialog that chose it
+                self._restyle_log.append((label, ops))
         except ValueError as e:
             self.dialogs.message(str(e))
             return False
@@ -602,6 +605,8 @@ class FormattingMixin:
             with self.book.group("Format Cells"):
                 if ops:
                     self.book.restyle(g.sheet, ranges, ops, "Format Cells")
+                    if getattr(self, "_restyle_log", None) is not None:
+                        self._restyle_log.append(("Format Cells", ops))
                 if merge is not None:
                     if merge:
                         self.book.set_merges(g.sheet, keep + [rg for rg in ranges if rg[0:2] != rg[2:4]], "Format Cells")

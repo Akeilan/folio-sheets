@@ -2889,6 +2889,11 @@ impl PyBook {
         unsafe { self.b.paint_chart_at(&ch, ctx, 0.0, 0.0, w, h, zoom) };
         Ok(())
     }
+    /// Move Chart: to a new chart sheet, or onto worksheet `to` at (x, y).
+    #[pyo3(signature = (s, i, new_sheet=None, to=None, x=0.0, y=0.0))]
+    fn move_chart(&mut self, s: usize, i: usize, new_sheet: Option<&str>, to: Option<usize>, x: f64, y: f64) -> PyResult<usize> {
+        self.b.move_chart(s, i, new_sheet, to, x, y).map_err(verr)
+    }
     /// A chart sheet of the spec, inserted at `at` (F11).
     fn add_chart_sheet_spec(&mut self, at: usize, spec: &Bound<'_, PyDict>) -> PyResult<usize> {
         let ch = self.b.chart_of_spec(&dict_spec(spec)?).map_err(verr)?;

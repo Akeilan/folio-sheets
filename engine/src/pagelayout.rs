@@ -104,6 +104,8 @@ impl Book {
 
     pub fn page_setup(&self, s: usize) -> PageSetup {
         let mut p = PageSetup::default();
+        // a chart sheet prints across the page unless it says otherwise
+        p.landscape = self.sheets.get(s).map(|x| x.kind == "chart").unwrap_or(false);
         if let Some(m) = self.piece_el(s, "pageMargins") {
             for (k, n) in ["left", "right", "top", "bottom", "header", "footer"].iter().enumerate() {
                 if let Some(v) = m.attr(n).and_then(|v| v.parse().ok()) {
@@ -361,6 +363,11 @@ impl Book {
     /// The pages a sheet prints on, in order.
     pub fn pages(&self, s: usize) -> Vec<Page> {
         let p = self.page_setup(s);
+        if self.sheets.get(s).map(|x| x.kind == "chart").unwrap_or(false) {
+            // a chart sheet: its chart, on one page
+            let has = self.sheets[s].objects.iter().any(|o| o.chart.is_some());
+            return if has { vec![Page { rows: (0, 0), cols: (0, 0), number: p.first_page.unwrap_or(1) }] } else { vec![] };
+        }
         let sc = self.print_scale(s, &p);
         let (pw, ph) = self.printable(&p);
         // content space in pixels at 100 %
@@ -425,6 +432,25 @@ impl Book {
         let pages = self.pages(s);
         let pg = pages.get(k).ok_or("no such page")?.clone();
         let p = self.page_setup(s);
+        if self.sheets[s].kind == "chart" {
+            let (paper_w, paper_h) = p.paper_size();
+            let m = p.margins;
+            let (pw, ph) = self.printable(&p);
+            cairo_save(cr);
+            cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+            cairo_rectangle(cr, 0.0, 0.0, paper_w, paper_h);
+            cairo_fill(cr);
+            if let Some(ch) = self.sheets[s].objects.iter().find_map(|o| o.chart.clone()) {
+                // the chart fills the printable area (drawn at screen size, scaled to points)
+                cairo_translate(cr, m[0] * 72.0, m[2] * 72.0);
+                cairo_scale(cr, 0.75, 0.75);
+                self.paint_chart_at(&ch, cr, 0.0, 0.0, pw / 0.75, ph / 0.75, 1.0);
+            }
+            cairo_restore(cr);
+            let _ = pg;
+            let _ = file_name;
+            return Ok(());
+        }
         let sc = self.print_scale(s, &p);
         let (paper_w, paper_h) = p.paper_size();
         let m = p.margins;

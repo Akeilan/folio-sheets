@@ -981,7 +981,8 @@ pub fn of_split(p: &Plot, n: usize) -> usize {
     if n < 2 {
         return 0;
     }
-    let k = if p.split > 0 { p.split as usize } else { ((n as f64) / 3.0).round().max(1.0) as usize };
+    // the original moves the last three points by default
+    let k = if p.split > 0 { p.split as usize } else { 3 };
     k.min(n - 1)
 }
 

@@ -888,6 +888,7 @@ def build_ribbon(win):
         B.big("Select\nData", "r-chart-select-data", "chart-select-data", "E"),
     ])
     B.group(t, "Type", [B.big("Change\nChart Type", "r-chart-change-type", "chart-change-type", "C")])
+    B.group(t, "Location", [B.big("Move\nChart", "r-chart-move", "chart-move", "M")])
     r.add_tab(t)
     r.show_contextual("Chart Design", False)
     from . import table_ui

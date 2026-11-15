@@ -859,6 +859,138 @@ if pv is not None or b.pivot_at(0, 1, 4) is not None:
 else:
     print("NOTE no PivotTable API for the GETPIVOTDATA check")
 
+# ------------------------------------------------------------------ chart sheets: Move Chart, printing, greying
+win.new_book()
+pump(0.1)
+b = win.book
+g = win.grid
+for r, row in enumerate([["", "A", "B"], ["x", 1, 2], ["y", 3, 4]]):
+    for c, v in enumerate(row):
+        if v != "":
+            b.set_input(0, r, c, str(v))
+g.select_range((0, 0, 2, 2))
+win.run("chart-column:col")
+pump(0.1)
+check("chart sheets: a chart on the worksheet to move", len(b.objects(0)) == 1)
+
+
+def _move_to_new(d):
+    d.new_rb.set_active(True)
+    d.name_entry.set_text("Sales Chart")
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(_move_to_new)
+win.run("chart-move")
+pump(0.2)
+cs = g.sheet
+check("Move Chart: to a new sheet makes a chart sheet called as asked, before the worksheet",
+      b.sheet_info(cs)["kind"] == "chart" and b.sheet_info(cs)["name"] == "Sales Chart" and cs == 0 and b.objects(1) == [],
+      (b.sheet_info(cs), b.objects(1)))
+_buttons = [c for c in win.ribbon.controls if isinstance(getattr(c, "action", None), str)]
+_bold = next((c for c in _buttons if c.action == "bold"), None)
+_fmt = next((c for c in _buttons if c.action == "chart-format"), None)
+check("chart sheets: cell commands are greyed out, chart commands are not",
+      _bold is not None and not _bold.get_sensitive() and (_fmt is None or _fmt.get_sensitive()),
+      (_bold and _bold.get_sensitive(), _fmt and _fmt.get_sensitive()))
+import cairo as _c2
+_pdf = os.path.join(TMP, "chartsheet.pdf")
+from folio_sheets import print_ui
+_n = print_ui.write_pdf(win, _pdf)
+ps = b.page_setup(cs)
+check("chart sheets: print as one landscape page", _n == 1 and ps["landscape"] and os.path.getsize(_pdf) > 1000, (_n, ps.get("landscape")))
+
+
+def _move_to_object(d):
+    d.obj_rb.set_active(True)
+    d.combo.set_active(0)
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(_move_to_object)
+win.run("chart-move")
+pump(0.2)
+check("Move Chart: back onto the worksheet as an object; the empty chart sheet goes",
+      b.sheet_count == 1 and b.sheet_info(g.sheet)["kind"] == "work" and len(b.objects(0)) == 1 and b.objects(0)[0]["kind"] == "chart",
+      (b.sheet_count, b.objects(0)))
+_bold = next((c for c in win.ribbon.controls if getattr(c, "action", None) == "bold"), None)
+check("chart sheets: the commands come back on the worksheet", _bold is None or _bold.get_sensitive())
+win.run("undo")
+pump(0.1)
+check("Move Chart: Undo puts the chart sheet back", b.sheet_count == 2 and b.sheet_info(0)["kind"] == "chart", b.sheet_count)
+mc = os.path.join(TMP, "moved.xlsx")
+win.save_to(mc)
+rb2 = _Book.open(mc)
+check("Move Chart: the chart sheet saves and opens again", rb2.sheet_info(0)["kind"] == "chart" and rb2.objects(0), rb2.sheet_info(0))
+g.set_sheet(1)
+win.sheet_changed()
+
+# F4 repeats Format Cells' formatting without the dialog
+win.new_book()
+pump(0.1)
+b = win.book
+g = win.grid
+g.select_cell(0, 0)
+
+
+def _fc(d):
+    return Gtk.ResponseType.OK
+
+
+_real_fc = None
+from folio_sheets import format_cells as _fcm
+_orig_run = _fcm.FormatCells.run_dialog
+_fcm.FormatCells.run_dialog = lambda self: {"font": {"italic": True, "color": 0xC00000}}
+win.run("format-cells")
+_fcm.FormatCells.run_dialog = lambda self: (_ for _ in ()).throw(AssertionError("the dialog opened again"))
+g.select_cell(1, 0)
+key(Gdk.KEY_F4)
+_fcm.FormatCells.run_dialog = _orig_run
+st = b.cell_style(0, 1, 0)
+check("F4: after Format Cells it repeats the formatting, without the dialog", st.get("italic") and st.get("color") == 0xC00000, st)
+
+# File > Options: the AutoRecover interval
+
+
+def _opts(d):
+    d.minutes.set_value(3)
+    d.on_check.set_active(True)
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(_opts)
+win.run("options")
+check("Options: AutoRecover every 3 minutes", win.app.autorecover.seconds == 180 and win.app.settings.get("autorecover_minutes") == 3,
+      win.app.autorecover.seconds)
+
+
+def _opts_off(d):
+    d.on_check.set_active(False)
+    return Gtk.ResponseType.OK
+
+
+DIALOG.append(_opts_off)
+win.run("options")
+check("Options: AutoRecover can be turned off", win.app.autorecover.seconds == 0)
+win.app.settings["autorecover_on"] = True
+win.app.settings["autorecover_minutes"] = 10
+win.app.autorecover.set_interval(600)
+
+# pie-of-pie: the last three points go to the second plot, as in the original
+win.new_book()
+pump(0.1)
+b = win.book
+for r in range(6):
+    b.set_input(0, r, 0, "c%d" % r)
+    b.set_input(0, r, 1, str(r + 1))
+sp = b.range_spec(0, (0, 0, 5, 1), "col")
+sp["kind"] = "pie-of-pie"
+_i = b.add_chart_spec(0, sp, 10, 10)
+_pp = os.path.join(TMP, "pieofpie.xlsx")
+win.save_to(_pp)
+_xml = [zipfile.ZipFile(_pp).read(n).decode() for n in zipfile.ZipFile(_pp).namelist() if n.startswith("xl/charts/chart")][0]
+check("pie-of-pie: the last three points go to the second plot", '<c:splitPos val="3"/>' in _xml, _xml[_xml.find("splitPos") - 20:_xml.find("splitPos") + 30])
+
 # ------------------------------------------------------------------ END
 print("%d checks, %d failed" % (len(checks), sum(1 for _, ok in checks if not ok)), flush=True)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))

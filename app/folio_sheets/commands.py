@@ -10,7 +10,7 @@ command is missing here or raises when run.
 # method on SheetWindow; the audit checks that.
 LABELS = {
     # file / QAT
-    "new": "New", "open": "Open", "save": "Save", "save-as": "Save As", "encrypt-password": "Encrypt with Password", "chart-sheet": "Chart Sheet", "close": "Close",
+    "new": "New", "open": "Open", "save": "Save", "save-as": "Save As", "encrypt-password": "Encrypt with Password", "chart-sheet": "Chart Sheet", "chart-move": "Move Chart", "close": "Close",
     "print": "Print", "export-pdf": "Export to PDF", "options": "Options",
     "undo": "Undo", "redo": "Redo",
     # clipboard

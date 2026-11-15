@@ -546,3 +546,53 @@ def set_colors(win, i, n):
     b.set_chart_spec(s, i, spec, "Change Colors")
     win.grid.refresh()
     win.update_title()
+
+
+def move_chart_dialog(win, i):
+    """Choose where the chart should be placed: ("new", name) or ("object", sheet index), or None."""
+    b = win.book
+    s = win.grid.sheet
+    d = Gtk.Dialog(title="Move Chart", transient_for=win, modal=True)
+    d.add_button("OK", Gtk.ResponseType.OK)
+    d.add_button("Cancel", Gtk.ResponseType.CANCEL)
+    d.set_default_response(Gtk.ResponseType.OK)
+    box = d.get_content_area()
+    box.set_border_width(12)
+    box.set_spacing(8)
+    box.pack_start(Gtk.Label(label="Choose where you want the chart to be placed:", xalign=0), False, False, 0)
+    grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+    k = 1
+    names = [b.sheet_info(n)["name"] for n in range(b.sheet_count)]
+    while "Chart%d" % k in names:
+        k += 1
+    new_rb = Gtk.RadioButton.new_with_mnemonic(None, "_New sheet:")
+    obj_rb = Gtk.RadioButton.new_with_mnemonic_from_widget(new_rb, "_Object in:")
+    name = Gtk.Entry()
+    name.set_text("Chart%d" % k)
+    name.set_activates_default(True)
+    works = [n for n in range(b.sheet_count) if b.sheet_info(n)["kind"] == "work"]
+    combo = Gtk.ComboBoxText()
+    for n in works:
+        combo.append_text(b.sheet_info(n)["name"])
+    on_chart_sheet = b.sheet_info(s)["kind"] == "chart"
+    combo.set_active(works.index(s) if s in works else 0)
+    (obj_rb if not on_chart_sheet else new_rb).set_active(True)
+    if not on_chart_sheet:
+        new_rb.set_active(False)
+        obj_rb.set_active(True)
+    grid.attach(new_rb, 0, 0, 1, 1)
+    grid.attach(name, 1, 0, 1, 1)
+    grid.attach(obj_rb, 0, 1, 1, 1)
+    grid.attach(combo, 1, 1, 1, 1)
+    box.pack_start(grid, False, False, 0)
+    d.new_rb, d.obj_rb, d.name_entry, d.combo = new_rb, obj_rb, name, combo
+    d.show_all()
+    r = d.run()
+    out = None
+    if r == Gtk.ResponseType.OK:
+        if new_rb.get_active():
+            out = ("new", name.get_text().strip() or "Chart%d" % k)
+        elif works:
+            out = ("object", works[max(combo.get_active(), 0)])
+    d.destroy()
+    return out
