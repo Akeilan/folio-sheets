@@ -47,11 +47,20 @@ S = g.sheet
 
 def px(r, c):
     pump(0.2)
-    w = area.get_window()
-    img = cairo.ImageSurface(cairo.FORMAT_ARGB32, w.get_width(), w.get_height())
-    cr = cairo.Context(img)
-    Gdk.cairo_set_source_window(cr, w, 0, 0)
-    cr.paint()
+    if os.environ.get("WAYLAND_DISPLAY"):
+        # Wayland has no window contents to read back: the window draws itself (the cells and
+        # what lies over them) into the picture, moved so the area's corner is at (0, 0)
+        img = cairo.ImageSurface(cairo.FORMAT_ARGB32, area.get_allocated_width(), area.get_allocated_height())
+        cr = cairo.Context(img)
+        ox, oy = area.translate_coordinates(win, 0, 0)
+        cr.translate(-ox, -oy)
+        win.draw(cr)
+    else:
+        w = area.get_window()
+        img = cairo.ImageSurface(cairo.FORMAT_ARGB32, w.get_width(), w.get_height())
+        cr = cairo.Context(img)
+        Gdk.cairo_set_source_window(cr, w, 0, 0)
+        cr.paint()
     img.flush()
     x, y, ww, hh = b().cell_rect(S, r, c, g.params())
     d = img.get_data()

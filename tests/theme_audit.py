@@ -44,8 +44,12 @@ def grab():
     gw = win.get_window()
     img = cairo.ImageSurface(cairo.FORMAT_ARGB32, gw.get_width(), gw.get_height())
     cr = cairo.Context(img)
-    Gdk.cairo_set_source_window(cr, gw, 0, 0)
-    cr.paint()
+    if os.environ.get("WAYLAND_DISPLAY"):
+        # Wayland has no window contents to read back: the window draws itself into the picture
+        win.draw(cr)
+    else:
+        Gdk.cairo_set_source_window(cr, gw, 0, 0)
+        cr.paint()
     img.flush()
     return img
 

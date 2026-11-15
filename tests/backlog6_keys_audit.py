@@ -1,7 +1,7 @@
 # Run inside Folio Sheet (FOLIO_TEST_SCRIPT): Backlog 6 editing behaviour driven with real X input (xdotool).
 import shutil as _sh
-if _sh.which("xdotool") is None:
-    print("NOTE xdotool is not installed; real-input checks skipped")
+if _sh.which("xdotool") is None or not __import__("os").environ.get("DISPLAY"):
+    print("NOTE no X display or no xdotool (Wayland, or xdotool not installed); real-input checks skipped")
     import os as _os; _os._exit(0)
 import os, sys, time, subprocess, traceback
 from gi.repository import Gtk, Gdk, GLib

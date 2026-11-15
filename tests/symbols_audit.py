@@ -108,34 +108,50 @@ def walk(w):
 walk(pop)
 check("Screenshot ▾ has Available Windows and Screen Clipping", "Available Windows" in labels and "Screen Clipping" in labels, labels)
 check("no other windows open: No Available Windows", pop.windows_shown > 0 or "No Available Windows" in labels)
-pb = SC.window_picture(win.get_window().get_xid())
-check("a window's picture can be taken", pb is not None and pb.get_width() > 100)
+if hasattr(win.get_window(), "get_xid"):
+    pb = SC.window_picture(win.get_window().get_xid())
+    check("a window's picture can be taken", pb is not None and pb.get_width() > 100)
+else:
+    print("NOTE Wayland: other windows' pictures can't be taken here, so this check is skipped")
 
-n0 = len(b.objects(S))
-SC.screen_clipping(win)
-pump(0.6)
-cw = getattr(win, "_clip_window", None)
-check("Screen Clipping hides the workbook and greys the screen", cw is not None and not win.get_visible() and cw.get_visible())
+if SC.is_x11():
+    n0 = len(b.objects(S))
+    SC.screen_clipping(win)
+    pump(0.6)
+    cw = getattr(win, "_clip_window", None)
+    check("Screen Clipping hides the workbook and greys the screen", cw is not None and not win.get_visible() and cw.get_visible())
 
 
-class Ev:
-    def __init__(self, x, y):
-        self.x, self.y = float(x), float(y)
+    class Ev:
+        def __init__(self, x, y):
+            self.x, self.y = float(x), float(y)
 
 
-cw.on_press(cw.area, Ev(100, 120))
-cw.on_motion(cw.area, Ev(300, 220))
-cw.on_release(cw.area, Ev(300, 220))
-pump(0.4)
-objs = b.objects(S)
-check("dragging out a part puts it on the sheet as a picture", len(objs) == n0 + 1 and objs[-1].get("kind") == "picture", objs[-1:])
-check("and the workbook comes back", win.get_visible())
-SC.screen_clipping(win)
-pump(0.6)
-cw = win._clip_window
-cw.on_key(cw.area, type("K", (), {"keyval": Gdk.KEY_Escape})())
-pump(0.3)
-check("Esc cancels the clipping", len(b.objects(S)) == n0 + 1 and win.get_visible())
+    cw.on_press(cw.area, Ev(100, 120))
+    cw.on_motion(cw.area, Ev(300, 220))
+    cw.on_release(cw.area, Ev(300, 220))
+    pump(0.4)
+    objs = b.objects(S)
+    check("dragging out a part puts it on the sheet as a picture", len(objs) == n0 + 1 and objs[-1].get("kind") == "picture", objs[-1:])
+    check("and the workbook comes back", win.get_visible())
+    SC.screen_clipping(win)
+    pump(0.6)
+    cw = win._clip_window
+    cw.on_key(cw.area, type("K", (), {"keyval": Gdk.KEY_Escape})())
+    pump(0.3)
+    check("Esc cancels the clipping", len(b.objects(S)) == n0 + 1 and win.get_visible())
+
+else:
+    # Wayland: the desktop's screenshot tool chooses the area; with no tool to ask, it says so
+    _said = []
+    _real_info = win.dialogs.info
+    win.dialogs.info = lambda t, *a, **k: _said.append(t)
+    _started = SC.screen_clipping(win)
+    pump(0.3)
+    win.dialogs.info = _real_info
+    check("Wayland: Screen Clipping asks the desktop's screenshot tool, or says it can't",
+          _started is True or (_said and "isn't available here" in _said[0]), (_started, _said))
+    check("Wayland: the workbook stays", win.get_visible())
 
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))
 for e in ERRORS[:5]:

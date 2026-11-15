@@ -44,21 +44,33 @@ S = g.sheet
 
 def dark_pixels(i):
     pump(0.2)
-    w = area.get_window()
-    img = cairo.ImageSurface(cairo.FORMAT_ARGB32, w.get_width(), w.get_height())
-    cr = cairo.Context(img)
-    Gdk.cairo_set_source_window(cr, w, 0, 0)
-    cr.paint()
+    if os.environ.get("WAYLAND_DISPLAY"):
+        # Wayland has no window contents to read back: the window draws itself (the cells and
+        # what lies over them) into the picture, moved so the area's corner is at (0, 0)
+        img = cairo.ImageSurface(cairo.FORMAT_ARGB32, area.get_allocated_width(), area.get_allocated_height())
+        cr = cairo.Context(img)
+        ox, oy = area.translate_coordinates(win, 0, 0)
+        cr.translate(-ox, -oy)
+        win.draw(cr)
+    else:
+        w = area.get_window()
+        img = cairo.ImageSurface(cairo.FORMAT_ARGB32, w.get_width(), w.get_height())
+        cr = cairo.Context(img)
+        Gdk.cairo_set_source_window(cr, w, 0, 0)
+        cr.paint()
     img.flush()
     x, y, ww, hh = b.object_screen_rect(S, i, g.params())
     d = img.get_data()
     st = img.get_stride()
     n = 0
+    rows = set()
     for yy in range(int(y) + 2, int(y + hh) - 2):
         for xx in range(int(x) + 2, int(x + ww) - 2):
             o = yy * st + xx * 4
             if d[o] < 90 and d[o + 1] < 90 and d[o + 2] < 90:
                 n += 1
+                rows.add(yy)
+    dark_pixels.span = (max(rows) - min(rows) + 1) if rows else 0
     return n
 
 
@@ -86,7 +98,11 @@ pump(0.2)
 i = 0
 check("Enter puts the equation in its box", b.equation_linear(S, i) == "x=(−b±√(b^2−4ac))/2a", b.equation_linear(S, i))
 check("the editor closes", win.equation_editor is None)
-check("the equation is drawn built up", dark_pixels(i) > 60, dark_pixels(i))
+_n = dark_pixels(i)
+print("INFO equation ink: %d dark pixels over %d rows" % (_n, dark_pixels.span))
+# built up: the fraction stands on two levels, so its ink runs over about two lines of text
+# (counting dark pixels alone depended on how the picture was taken)
+check("the equation is drawn built up", _n > 20 and dark_pixels.span >= 24, (_n, dark_pixels.span))
 r1 = b.object_screen_rect(S, i, g.params())
 check("its box fits the equation (a fraction is taller than a line of text)", r1[3] > 40 and r1[2] > 100, r1)
 
