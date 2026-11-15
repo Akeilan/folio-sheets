@@ -189,6 +189,14 @@ class SheetsApp(Gtk.Application):
         script = os.environ.get("FOLIO_TEST_SCRIPT")
         if script:
             def run_script():
+                # the window laid out at its full size first (under Wayland the compositor's
+                # first configure can come after the delay)
+                import time as _t
+                end = _t.time() + 15
+                while _t.time() < end and (not win.get_mapped() or win.grid.area.get_allocated_height() < 300):
+                    while Gtk.events_pending():
+                        Gtk.main_iteration_do(False)
+                    _t.sleep(0.02)
                 ns = {"app": self, "win": win, "GLib": GLib, "Gtk": Gtk, "Gdk": Gdk}
                 try:
                     with open(script) as f:

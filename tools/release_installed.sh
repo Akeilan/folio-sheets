@@ -34,6 +34,6 @@ for m in ${MACHINES:-/srv/jammy /srv/nolo /srv/noble}; do
   if [ "$m" = /srv/noble ]; then
     echo "== Wayland in $m"
     cp /home/claude/folio-suite/tests/wl.sh $m/tmp/wl.sh
-    chroot $m bash -c "cd /tmp/fsi; export DISPLAY=:$D; /tmp/wl.sh bash tests/run_all.sh --installed 2>&1 | grep -v dbind; /tmp/wl.sh bash tests/theme_run.sh --installed 2>&1 | grep -E '^-- |FAIL|checks,|Traceback'"
+    chroot $m bash -c "cd /tmp/fsi; export DISPLAY=:$D; for t in tests/*_audit.py tests/command_walk.py; do /tmp/wl.sh bash tests/run_all.sh --installed \$t 2>&1 | grep -v dbind; done; /tmp/wl.sh bash tests/theme_run.sh --installed 2>&1 | grep -E '^-- |FAIL|checks,|Traceback'"
   fi
 done
