@@ -615,12 +615,17 @@ check("S6-12: it is saved as a chart sheet with its drawing and chart",
 rb = _Book.open(cs)
 idx = next(i for i in range(rb.sheet_count) if rb.sheet_info(i)["kind"] == "chart")
 check("S6-12: and opens again showing its chart", rb.objects(idx) and rb.objects(idx)[0]["kind"] == "chart", rb.objects(idx))
-import openpyxl as _ox
 try:
-    _wb = _ox.load_workbook(cs)
-    check("S6-12: another reader sees the chart sheet", any(type(ws).__name__ == "Chartsheet" for ws in _wb.worksheets + getattr(_wb, "chartsheets", [])))
-except Exception as e:
-    check("S6-12: another reader sees the chart sheet", False, e)
+    import openpyxl as _ox
+except ImportError:
+    _ox = None
+    print("NOTE openpyxl is not installed here; the second reader's check is skipped")
+if _ox is not None:
+    try:
+        _wb = _ox.load_workbook(cs)
+        check("S6-12: another reader sees the chart sheet", any(type(ws).__name__ == "Chartsheet" for ws in _wb.worksheets + getattr(_wb, "chartsheets", [])))
+    except Exception as e:
+        check("S6-12: another reader sees the chart sheet", False, e)
 win.run("undo")
 pump(0.1)
 check("S6-12: Undo takes the chart sheet away again", b.sheet_count == n0 and b.sheet_info(0)["kind"] == "work", b.sheet_count)
