@@ -11,6 +11,8 @@ class HistoryBook:
         object.__setattr__(self, "_book", book)
         object.__setattr__(self, "_depth", 0)
         object.__setattr__(self, "on_switch", None)
+        # the password to open (S6-30): kept with the workbook, so every window on it saves it
+        object.__setattr__(self, "open_password", None)
 
     @property
     def current(self):
@@ -20,7 +22,7 @@ class HistoryBook:
         return getattr(self._book, name)
 
     def __setattr__(self, name, value):
-        if name == "on_switch":
+        if name in ("on_switch", "open_password"):
             object.__setattr__(self, name, value)
         else:
             setattr(self._book, name, value)

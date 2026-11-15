@@ -518,6 +518,27 @@ impl PyBook {
         self.b.save(path).map_err(PyIOError::new_err)
     }
 
+    /// The file save() would write to `path`, without writing it (an encrypted save wraps it).
+    fn save_bytes<'py>(&mut self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
+        let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("xlsx").to_string();
+        if self.b.styles.xfs.iter().any(|x| x.checkbox) {
+            self.b.ensure_feature_bag();
+        }
+        let d = self.b.to_bytes_as(&ext).map_err(PyIOError::new_err)?;
+        Ok(PyBytes::new_bound(py, &d))
+    }
+
+    /// After the caller wrote save_bytes(path) to `path`.
+    fn saved_as(&mut self, path: &str) {
+        self.b.file.path = Some(path.to_string());
+        self.b.mark_saved();
+    }
+
+    /// A change that isn't a cell edit (the password to open): the workbook needs saving.
+    fn mark_modified(&mut self) {
+        self.b.saved = u64::MAX;
+    }
+
     fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let d = self.b.to_bytes().map_err(PyIOError::new_err)?;
         Ok(PyBytes::new_bound(py, &d))

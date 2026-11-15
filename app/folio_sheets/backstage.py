@@ -3,7 +3,7 @@ Export, Close, Options. Shares its look with Folio Page's."""
 import datetime
 import os
 
-from gi.repository import GLib, Gtk, Pango
+from gi.repository import Gdk, GLib, Gtk, Pango
 
 from . import APP_NAME, icons
 
@@ -293,6 +293,31 @@ class Backstage(Gtk.Box):
             grid.attach(Gtk.Label(label=k, xalign=0), 0, i, 1, 1)
             grid.attach(Gtk.Label(label=v, xalign=0), 1, i, 1, 1)
         box.pack_start(grid, False, False, 12)
+        # Protect Workbook
+        prot = Gtk.Box(spacing=12)
+        b = Gtk.Button(label="Protect Workbook")
+        b.set_valign(Gtk.Align.START)
+        menu = Gtk.Menu()
+        for label, cmd in (("Encrypt with Password", "encrypt-password"),
+                           ("Protect Current Sheet", "protect-sheet"),
+                           ("Protect Workbook Structure", "protect-workbook")):
+            it = Gtk.MenuItem(label=label)
+            it.connect("activate", lambda _i, c=cmd: (self.close(), self.win.run(c)))
+            menu.append(it)
+        menu.show_all()
+        b.connect("clicked", lambda btn: menu.popup_at_widget(btn, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None))
+        self.protect_menu = menu
+        prot.pack_start(b, False, False, 0)
+        txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        txt.pack_start(_heading("Protect Workbook", "folio-bs-sub"), False, False, 0)
+        if w.book.open_password:
+            msg = "A password is required to open this workbook."
+        else:
+            msg = "Control what types of changes people can make to this workbook."
+        self.protect_status = Gtk.Label(label=msg, xalign=0)
+        txt.pack_start(self.protect_status, False, False, 0)
+        prot.pack_start(txt, False, False, 0)
+        box.pack_start(prot, False, False, 6)
         return box
 
     def page_saveas(self):

@@ -61,7 +61,7 @@ NEEDS = {
 STRUCTURE = {"insert-sheet", "delete-sheet", "rename-sheet", "move-copy-sheet", "hide-sheet", "unhide-sheet",
              "tab-color", "new-sheet"}
 # commands that never change a protected sheet's cells (they may change the view)
-FREE = {"protect-sheet", "protect-workbook", "unprotect-sheet", "undo", "redo", "copy", "save", "save-as",
+FREE = {"encrypt-password", "protect-sheet", "protect-workbook", "unprotect-sheet", "undo", "redo", "copy", "save", "save-as",
         "find", "goto", "select-all", "zoom-in", "zoom-out", "zoom-100", "split", "freeze-panes", "new-window"}
 
 

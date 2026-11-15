@@ -41,7 +41,7 @@ class Dialogs:
         d.destroy()
         return {1: "save", 2: "discard"}.get(r, "cancel")
 
-    def ask_password(self, title, label):
+    def ask_password(self, title, label, value="", note=None):
         """A password (typed hidden), or None."""
         d = self._dialog(title)
         d.add_button("OK", Gtk.ResponseType.OK)
@@ -52,8 +52,12 @@ class Dialogs:
         box.set_spacing(6)
         box.pack_start(Gtk.Label(label=label, xalign=0), False, False, 0)
         e = Gtk.Entry(visibility=False)
+        e.set_text(value)
         e.set_activates_default(True)
         box.pack_start(e, False, False, 0)
+        if note:
+            n = Gtk.Label(label=note, xalign=0, wrap=True, max_width_chars=48)
+            box.pack_start(n, False, False, 0)
         d.entry = e
         d.show_all()
         r = d.run()

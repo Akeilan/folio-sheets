@@ -229,8 +229,25 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def load(self, path):
         ext = os.path.splitext(path)[1].lower()
+        from . import encryption
+        password = None
         try:
-            if ext in NATIVE:
+            enc = encryption.encrypted_file(path)
+            if enc is not None:
+                # a password to open: the workbook inside, whatever the file is called
+                res = self._open_encrypted(path, enc)
+                if res is None:
+                    if self.book is None:
+                        self.new_book()
+                    return
+                book, password = res
+                if ext in NATIVE:
+                    self.imported_from = None
+                    self.path = os.path.abspath(path)
+                else:
+                    self.imported_from = os.path.abspath(path)
+                    self.path = None
+            elif ext in NATIVE:
                 book = Book.open(path)
                 self.imported_from = None
                 self.path = os.path.abspath(path)
@@ -260,10 +277,29 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 self.new_book()
             return
         self.book = self._wrap(book)
+        self.book.open_password = password
         if self.path is None:
             self.untitled = os.path.splitext(os.path.basename(path))[0]
         self.app.add_recent(path)
         self._after_load()
+
+    def _open_encrypted(self, path, data):
+        """(book, password) for a workbook with a password to open, or None when cancelled."""
+        from . import encryption
+        name = os.path.basename(path)
+        while True:
+            pw = self.dialogs.ask_password("Password", "'%s' is protected.\n\nPassword:" % name)
+            if pw is None:
+                return None
+            try:
+                xlsx = encryption.decrypt(data, pw)
+            except encryption.WrongPassword as e:
+                if "incorrect" not in str(e):
+                    raise RuntimeError(str(e))
+                self.dialogs.message("The password you supplied is not correct. Verify that the CAPS LOCK key is off "
+                                     "and be sure to use the correct capitalization.")
+                continue
+            return Book.from_bytes(xlsx), pw
 
     def _wrap(self, book):
         hb = HistoryBook(book)
@@ -1086,7 +1122,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         macro_free = os.path.splitext(path)[1].lower() not in (".xlsm", ".xltm")
         try:
             self.store_view_state()
-            self.book.save(path)
+            self.write_file(path)
+            self.book.saved_as(path)
             if macro_free and self.book.has_macros():
                 # as in Excel: the open workbook no longer has the macros it was saved without
                 self.book.drop_macros()
@@ -1103,6 +1140,57 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             w.path, w.imported_from = self.path, None
             w.update_title()
         return True
+
+    def write_file(self, path):
+        """The workbook written to `path` (encrypted when it has a password to open); the
+        window's own name and saved state don't change."""
+        from . import encryption
+        data = bytes(self.book.save_bytes(path))
+        pw = self.book.open_password
+        if pw and os.path.splitext(path)[1].lower() in NATIVE:
+            data = encryption.encrypt(data, pw)
+        tmp = path + ".~tmp"
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, path)
+        except OSError as e:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise RuntimeError("Could not save %s: %s" % (path, e.strerror or e))
+
+    def act_encrypt_password(self):
+        """File > Info > Protect Workbook > Encrypt with Password."""
+        cur = self.book.open_password or ""
+        pw = self.dialogs.ask_password(
+            "Encrypt Document",
+            "Encrypt the contents of this file\nPassword:", value=cur,
+            note="Caution: If you lose or forget the password, it cannot be recovered. Keep a list of "
+                 "passwords and their corresponding workbook names in a safe place. (Remember that "
+                 "passwords are case-sensitive.)")
+        if pw is None:
+            return
+        if len(pw) > 255:
+            self.dialogs.message("The password can be up to 255 characters long.")
+            return
+        if pw and pw != cur:
+            again = self.dialogs.ask_password("Confirm Password", "Reenter password:")
+            if again is None:
+                return
+            if again != pw:
+                self.dialogs.message("The confirmation password is not identical.")
+                return
+        if pw == cur:
+            return
+        self.book.open_password = pw or None
+        self.book.mark_modified()
+        from .windows_ui import views
+        for w in views(self):
+            w.update_title()
+        self.status.extra.set_text("A password is now required to open this workbook." if pw
+                                   else "The password to open this workbook was removed.")
 
     def save_csv(self, path):
         """The active sheet's displayed values, as the original writes CSV."""
@@ -2190,7 +2278,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                     raise RuntimeError("there is nothing to print")
             else:
                 self.store_view_state()
-                self.book.save(path)
+                # the copy attached; the open workbook keeps its name and unsaved changes
+                self.write_file(path)
         except Exception as e:
             self.dialogs.message("%s couldn't make the attachment.\n\n%s" % (APP_NAME, e))
             return None
