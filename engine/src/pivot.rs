@@ -1249,6 +1249,46 @@ impl Book {
     }
 
     /// Show Details: the records behind a value, on a new sheet in front of the pivot's.
+    /// GETPIVOTDATA: what the PivotTable at (s, r, c) shows for a data field (its name, or
+    /// its source field's) and (field, item) pairs, worked out from the records it summarizes.
+    pub fn pivot_data_value(&self, s: usize, r: u32, c: u32, field: &str, pairs: &[(String, Value)]) -> Option<Value> {
+        let i = self.pivot_at(s, r, c)?;
+        let p = self.pivots.get(i)?;
+        let src = self.pivot_source(p)?;
+        let df = p.values.iter().find(|d| d.name.eq_ignore_ascii_case(field.trim()))
+            .or_else(|| p.values.iter().find(|d| src.headers.get(d.field).map(|h| h.eq_ignore_ascii_case(field.trim())).unwrap_or(false)))?;
+        let mut want: Vec<(usize, String)> = Vec::new();
+        for (f, v) in pairs {
+            let fi = src.headers.iter().position(|h| h.eq_ignore_ascii_case(f.trim()))?;
+            if !(p.rows.contains(&fi) || p.cols.contains(&fi) || p.pages.iter().any(|x| x.0 == fi)) {
+                return None;
+            }
+            let t = item_text(self, v);
+            if p.fields.get(fi).map(|fd| fd.hidden.contains(&t)).unwrap_or(false) {
+                return None;
+            }
+            want.push((fi, t));
+        }
+        let mut acc = Acc::default();
+        let mut any = false;
+        for rec in &src.records {
+            let ok = want.iter().all(|(f, t)| rec.get(*f).map(|v| item_text(self, v).eq_ignore_ascii_case(t)).unwrap_or(false))
+                && p.pages.iter().all(|(f, sel)| sel.as_ref().map(|s| rec.get(*f).map(|v| &item_text(self, v) == s).unwrap_or(false)).unwrap_or(true))
+                && p.fields.iter().enumerate().all(|(k, fd)| fd.hidden.is_empty() || !(p.rows.contains(&k) || p.cols.contains(&k) || p.pages.iter().any(|x| x.0 == k))
+                    || rec.get(k).map(|v| !fd.hidden.contains(&item_text(self, v))).unwrap_or(true));
+            if ok {
+                any = true;
+                if let Some(v) = rec.get(df.field) {
+                    acc.add(v);
+                }
+            }
+        }
+        if !any {
+            return None;
+        }
+        Some(acc.get(df.agg))
+    }
+
     pub fn pivot_details(&mut self, i: usize, r: u32, c: u32) -> Result<usize, String> {
         let p = self.pivots.get(i).cloned().ok_or("No such PivotTable.")?;
         let (rp, cp) = p.paths.get(&(r, c)).cloned().ok_or("Cannot change this part of a PivotTable report.")?;

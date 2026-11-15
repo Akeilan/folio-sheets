@@ -211,6 +211,28 @@ pub static DEFS: &[Def] = &[
     d!("COUPDAYSNC", 3, 4, |ev, a| fl(ev, a, &[0.0; 4], |ev, x| Ok(coupon(ev, x[0], x[1], x[2], x[3])?.dsc))),
     d!("COUPNCD", 3, 4, |ev, a| fl(ev, a, &[0.0; 4], |ev, x| Ok(coupon(ev, x[0], x[1], x[2], x[3])?.ncd))),
     d!("COUPPCD", 3, 4, |ev, a| fl(ev, a, &[0.0; 4], |ev, x| Ok(coupon(ev, x[0], x[1], x[2], x[3])?.pcd))),
+    d!("AMORLINC", 6, 7, |ev, a| fl(ev, a, &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], amorlinc)),
+    d!("AMORDEGRC", 6, 7, |ev, a| fl(ev, a, &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], amordegrc)),
+    d!("ODDFPRICE", 8, 9, |ev, a| fl(ev, a, &[0.0; 9], |ev, x| oddf_price(ev, x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8]))),
+    d!("ODDFYIELD", 8, 9, |ev, a| fl(ev, a, &[0.0; 9], |ev, x| {
+        let pr = x[5];
+        if pr <= 0.0 { return Err(XlErr::Num); }
+        oddf_price(ev, x[0], x[1], x[2], x[3], x[4], 0.05, x[6], x[7], x[8])?;
+        solve(|y| oddf_price(ev, x[0], x[1], x[2], x[3], x[4], y, x[6], x[7], x[8]).unwrap_or(f64::NAN) - pr, 0.05, -0.99 * x[7]).ok_or(XlErr::Num)
+    })),
+    d!("ODDLPRICE", 7, 8, |ev, a| fl(ev, a, &[0.0; 8], |ev, x| {
+        let (dc, ac, dsc) = oddl_sums(ev, x[0], x[1], x[2], x[6], x[7])?;
+        if x[3] < 0.0 || x[4] < 0.0 { return Err(XlErr::Num); }
+        let cpn = 100.0 * x[3] / x[6];
+        Ok((x[5] + dc * cpn) / (1.0 + dsc * x[4] / x[6]) - ac * cpn)
+    })),
+    d!("ODDLYIELD", 7, 8, |ev, a| fl(ev, a, &[0.0; 8], |ev, x| {
+        let (dc, ac, dsc) = oddl_sums(ev, x[0], x[1], x[2], x[6], x[7])?;
+        if x[3] < 0.0 || x[4] <= 0.0 { return Err(XlErr::Num); }
+        let cpn = 100.0 * x[3] / x[6];
+        let paid = x[4] + ac * cpn;
+        Ok(((x[5] + dc * cpn) - paid) / paid * x[6] / dsc)
+    })),
     d!("COUPNUM", 3, 4, |ev, a| fl(ev, a, &[0.0; 4], |ev, x| Ok(coupon(ev, x[0], x[1], x[2], x[3])?.n))),
     d!("PRICE", 6, 7, |ev, a| fl(ev, a, &[0.0; 7], |ev, x| {
         let c = coupon(ev, x[0], x[1], x[5], x[6])?;
@@ -738,4 +760,204 @@ mod tests {
         assert!(close(ddb(2400.0, 300.0, 10.0, 10.0, 2.0).unwrap(), 22.1225472));
         assert!(close(vdb(2400.0, 300.0, 10.0, 0.0, 1.0, 2.0, false).unwrap(), 480.0));
     }
+}
+
+// --------------------------------------------------------------------------- Backlog 6: French depreciation, odd coupons
+
+/// AMORLINC: straight-line depreciation in the French system (first period prorated).
+fn amorlinc(ev: &Eval, x: &[f64]) -> Result<f64, XlErr> {
+    let (cost, bought, first, salvage, per, rate) = (x[0], x[1].floor(), x[2].floor(), x[3], x[4].trunc(), x[5]);
+    let basis = check_basis(x[6])?;
+    if cost < 0.0 || salvage < 0.0 || salvage > cost || per < 0.0 || rate <= 0.0 || basis == 2 || first < bought {
+        return Err(XlErr::Num);
+    }
+    let one = cost * rate;
+    let delta = cost - salvage;
+    let first_dep = yearfrac(ev, bought, first, basis)? * rate * cost;
+    let full = ((delta - first_dep) / one).floor().max(0.0);
+    Ok(if per == 0.0 {
+        first_dep.min(delta)
+    } else if per <= full {
+        one
+    } else if per == full + 1.0 {
+        (delta - one * full - first_dep).max(0.0)
+    } else {
+        0.0
+    })
+}
+
+/// AMORDEGRC: declining balance in the French system, the coefficient set by the asset's life.
+fn amordegrc(ev: &Eval, x: &[f64]) -> Result<f64, XlErr> {
+    let (cost, bought, first, salvage, per, rate) = (x[0], x[1].floor(), x[2].floor(), x[3], x[4].trunc(), x[5]);
+    let basis = check_basis(x[6])?;
+    if cost < 0.0 || salvage < 0.0 || salvage > cost || per < 0.0 || rate <= 0.0 || basis == 2 || first < bought {
+        return Err(XlErr::Num);
+    }
+    let life = 1.0 / rate;
+    let coef = if life < 3.0 { 1.0 } else if life < 5.0 { 1.5 } else if life <= 6.0 { 2.0 } else { 2.5 };
+    let r = rate * coef;
+    let mut n_rate = (yearfrac(ev, bought, first, basis)? * r * cost).round();
+    let mut c = cost - n_rate;
+    let mut rest = c - salvage;
+    let mut n = 0.0;
+    while n < per {
+        n_rate = (r * c).round();
+        rest -= n_rate;
+        if rest < 0.0 {
+            let left = per - n;
+            return Ok(if left <= 1.0 { (c * 0.5).round() } else { 0.0 });
+        }
+        c -= n_rate;
+        n += 1.0;
+    }
+    Ok(n_rate)
+}
+
+fn ymd_of(ev: &Eval, v: f64) -> Result<Ymd, XlErr> {
+    serial_to_ymd(v, ev.d1904()).ok_or(XlErr::Num)
+}
+
+fn months_add(d: Ymd, k: i64, eom: bool) -> Ymd {
+    let total = d.0 * 12 + (d.1 as i64 - 1) + k;
+    let y = total.div_euclid(12);
+    let m = (total.rem_euclid(12) + 1) as u32;
+    let dim = days_in_month(y, m);
+    (y, m, if eom { dim } else { d.2.min(dim) })
+}
+
+/// Days between two dates under a basis, and the normal length of a coupon period.
+fn odd_days(ev: &Eval, basis: i64, a: f64, b: f64) -> Result<f64, XlErr> {
+    Ok(match basis {
+        0 => days360(ymd_of(ev, a)?, ymd_of(ev, b)?, false),
+        4 => days360(ymd_of(ev, a)?, ymd_of(ev, b)?, true),
+        _ => b - a,
+    })
+}
+
+fn normal_len(basis: i64, f: f64, q0: f64, q1: f64) -> f64 {
+    match basis {
+        1 => q1 - q0,
+        3 => 365.0 / f,
+        _ => 360.0 / f,
+    }
+}
+
+/// ODDFPRICE: price of a security with an odd (short or long) first period.
+#[allow(clippy::too_many_arguments)]
+fn oddf_price(ev: &Eval, settle: f64, mat: f64, issue: f64, first: f64, rate: f64, yld: f64, red: f64, f: f64, b: f64) -> Result<f64, XlErr> {
+    let basis = check_basis(b)?;
+    let (settle, mat, issue, first) = (settle.floor(), mat.floor(), issue.floor(), first.floor());
+    if !(f == 1.0 || f == 2.0 || f == 4.0) || rate < 0.0 || red <= 0.0 || !(issue < settle && settle < first && first < mat) {
+        return Err(XlErr::Num);
+    }
+    let d1904 = ev.d1904();
+    let step = 12 / f as i64;
+    let fy = ymd_of(ev, first)?;
+    let eom = fy.2 == days_in_month(fy.0, fy.1);
+    let ser = |d: Ymd| ymd_to_serial(d.0, d.1 as i64, d.2 as i64, d1904).ok_or(XlErr::Num);
+    // quasi-coupon dates back from the first coupon until one is on or before the issue date
+    let mut q = vec![first];
+    let mut k = 1;
+    loop {
+        let d = ser(months_add(fy, -step * k, eom))?;
+        q.push(d);
+        if d <= issue {
+            break;
+        }
+        k += 1;
+        if k > 4000 {
+            return Err(XlErr::Num);
+        }
+    }
+    // q[0] = first coupon, q[i] earlier; quasi period i runs q[i]..q[i-1]
+    let nc = q.len() - 1;
+    let (mut sdc, mut sa) = (0.0, 0.0);
+    let mut nq = 0.0;
+    let mut dsc = 0.0;
+    let mut e = 0.0;
+    for i in 1..=nc {
+        let (lo, hi) = (q[i], q[i - 1]);
+        let nl = normal_len(basis, f, lo, hi);
+        let start = lo.max(issue);
+        sdc += odd_days(ev, basis, start, hi)? / nl;
+        if settle > start {
+            sa += odd_days(ev, basis, start, settle.min(hi))? / nl;
+        }
+        if settle >= lo && settle < hi {
+            dsc = odd_days(ev, basis, settle, hi)?;
+            e = nl;
+        } else if settle < lo {
+            nq += 1.0;
+        }
+    }
+    if e == 0.0 {
+        return Err(XlErr::Num);
+    }
+    // regular coupons after the first one, up to maturity
+    let my = ymd_of(ev, mat)?;
+    let mut n = 0.0;
+    let mut kk = 1;
+    loop {
+        let d = ser(months_add(fy, step * kk, eom))?;
+        if d > mat + 0.5 {
+            break;
+        }
+        n += 1.0;
+        kk += 1;
+        if kk > 4000 {
+            return Err(XlErr::Num);
+        }
+    }
+    let _ = my;
+    if n < 1.0 {
+        return Err(XlErr::Num);
+    }
+    let cpn = 100.0 * rate / f;
+    let base = 1.0 + yld / f;
+    if base <= 0.0 {
+        return Err(XlErr::Num);
+    }
+    let x = dsc / e;
+    let mut p = red / base.powf(n + nq + x) + cpn * sdc / base.powf(nq + x);
+    for k in 1..=(n as i64) {
+        p += cpn / base.powf(k as f64 + nq + x);
+    }
+    Ok(p - cpn * sa)
+}
+
+/// The sums ODDLPRICE and ODDLYIELD need over the quasi-coupon periods of an odd last period:
+/// (days in the period, days accrued before settlement, days from settlement), each over its
+/// period's normal length.
+fn oddl_sums(ev: &Eval, settle: f64, mat: f64, last: f64, f: f64, b: f64) -> Result<(f64, f64, f64), XlErr> {
+    let basis = check_basis(b)?;
+    let (settle, mat, last) = (settle.floor(), mat.floor(), last.floor());
+    if !(f == 1.0 || f == 2.0 || f == 4.0) || !(last < settle && settle < mat) {
+        return Err(XlErr::Num);
+    }
+    let d1904 = ev.d1904();
+    let step = 12 / f as i64;
+    let ly = ymd_of(ev, last)?;
+    let eom = ly.2 == days_in_month(ly.0, ly.1);
+    let ser = |d: Ymd| ymd_to_serial(d.0, d.1 as i64, d.2 as i64, d1904).ok_or(XlErr::Num);
+    let (mut dc, mut ac, mut dsc) = (0.0, 0.0, 0.0);
+    let mut lo = last;
+    let mut k = 1;
+    while lo < mat {
+        let hi = ser(months_add(ly, step * k, eom))?;
+        let nl = normal_len(basis, f, lo, hi);
+        let end = hi.min(mat);
+        dc += odd_days(ev, basis, lo, end)? / nl;
+        if settle > lo {
+            ac += odd_days(ev, basis, lo, settle.min(end))? / nl;
+        }
+        if settle < end {
+            dsc += odd_days(ev, basis, settle.max(lo), end)? / nl;
+        }
+        lo = hi;
+        k += 1;
+        if k > 4000 {
+            return Err(XlErr::Num);
+        }
+    }
+    Ok((dc, ac, dsc))
 }

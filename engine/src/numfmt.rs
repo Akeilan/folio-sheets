@@ -213,6 +213,9 @@ pub fn fixed(x: f64, dec: usize) -> (String, String) {
 
 /// A number as text the way formulas convert it ("0.333333333333333", "1E+21").
 pub fn num_to_text(v: f64) -> String {
+    if !v.is_finite() {
+        return "#NUM!".into();
+    }
     if v == 0.0 {
         return "0".into();
     }
@@ -426,10 +429,16 @@ impl Format {
         }
         let (sec, abs_sign) = self.pick(v);
         let s = &self.sections[sec];
-        let mut f = format_section(s, v, abs_sign, date1904, width);
+        // A fault in one format must never stop the sheet drawing: fall back to General.
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| format_section(s, v, abs_sign, date1904, width)));
+        let mut f = match r {
+            Ok(f) => f,
+            Err(_) => return get("General").number(v, date1904, width),
+        };
         if f.color.is_none() {
             f.color = s.color;
         }
+        localize(&mut f);
         f
     }
 
@@ -780,7 +789,7 @@ fn format_section(s: &Section, v: f64, abs_sign: bool, date1904: bool, width: us
         let x = if abs_sign { v.abs() } else { v };
         for t in &s.toks {
             match t {
-                Tok::General => f.text.push_str(&general(x, width)),
+                Tok::General => f.text.push_str(&general(x, width).replace('.', &crate::locale::DEC.to_string())),
                 Tok::Lit(l) => f.text.push_str(l),
                 Tok::Pad(c) => {
                     f.pads.push((f.text.len(), *c));
@@ -859,7 +868,7 @@ fn group3(ip: &str) -> String {
     let mut out = String::with_capacity(ip.len() + ip.len() / 3);
     for (i, c) in b.iter().enumerate() {
         if i > 0 && (b.len() - i) % 3 == 0 {
-            out.push(',');
+            out.push(crate::locale::GRP);
         }
         out.push(*c as char);
     }
@@ -880,7 +889,8 @@ fn format_plain(toks: &[Tok], a: f64) -> Formatted {
         }
         k += 1;
     }
-    let first_digit = toks.iter().position(|t| matches!(t, Tok::Digit(_))).unwrap_or(0);
+    // the integer part only: a code that starts at the point (".00") has no integer placeholders
+    let first_digit = toks[..int_end].iter().position(|t| matches!(t, Tok::Digit(_))).unwrap_or(int_end);
     let grouping = toks[first_digit..int_end.min(toks.len())].iter().enumerate().any(|(i, t)| {
         matches!(t, Tok::Comma) && toks[first_digit + i + 1..int_end.min(toks.len())].iter().any(|x| matches!(x, Tok::Digit(_)))
     });
@@ -897,6 +907,7 @@ fn format_plain(toks: &[Tok], a: f64) -> Formatted {
     };
     let (ip, fp) = fixed(x, frac_ph.len());
     let mut ip = if ip == "0" && !int_ph.contains(&b'0') { String::new() } else { ip };
+    let ip_all = ip.clone();
     // integer digits laid onto placeholders right to left
     let n_ph = int_ph.len();
     let mut int_out: Vec<String> = vec![String::new(); n_ph];
@@ -974,7 +985,11 @@ fn format_plain(toks: &[Tok], a: f64) -> Formatted {
             Tok::Point => {
                 if !after_point {
                     after_point = true;
-                    out.text.push('.');
+                    // no integer placeholders at all (".00"): the whole number still shows
+                    if n_ph == 0 && !ip_all.is_empty() {
+                        out.text.push_str(&ip_all);
+                    }
+                    out.text.push(crate::locale::DEC);
                 }
             }
             Tok::Comma => {
@@ -1103,7 +1118,7 @@ fn format_plain_digits(toks: &[Tok], ip: &str, fp: &str) -> String {
             }
             Tok::Point => {
                 after = true;
-                s.push('.');
+                s.push(crate::locale::DEC);
             }
             Tok::Lit(l) => s.push_str(l),
             Tok::Percent => s.push('%'),
@@ -1328,7 +1343,7 @@ fn format_date(s: &Section, v: f64, date1904: bool) -> Formatted {
                 }
             }
             Tok::SubSec(n) => {
-                f.text.push('.');
+                f.text.push(crate::locale::DEC);
                 f.text.push_str(&format!("{:0width$}", sub, width = *n as usize));
             }
             Tok::Elapsed(k, n) => {
@@ -1381,7 +1396,56 @@ thread_local! {
     static CACHE: RefCell<HashMap<String, std::rc::Rc<Format>>> = RefCell::new(HashMap::new());
 }
 
+/// The region changed: formats parsed for the old one (the short date) are parsed again.
+pub fn clear_cache() {
+    CACHE.with(|c| c.borrow_mut().clear());
+}
+
+/// The separators marked while formatting, as the region writes them; padding and fill
+/// positions follow the text they point into.
+fn localize(f: &mut Formatted) {
+    if !f.text.contains(|c| c == crate::locale::DEC || c == crate::locale::GRP) {
+        return;
+    }
+    let (dec, grp) = crate::locale::with(|l| (l.decimal, l.group));
+    let mut out = String::with_capacity(f.text.len());
+    let mut map: Vec<(usize, usize)> = Vec::new();
+    for (i, ch) in f.text.char_indices() {
+        map.push((i, out.len()));
+        out.push(match ch {
+            crate::locale::DEC => dec,
+            crate::locale::GRP => grp,
+            c => c,
+        });
+    }
+    let end = (f.text.len(), out.len());
+    let remap = |p: usize| map.iter().find(|(o, _)| *o == p).map(|x| x.1).unwrap_or(if p >= end.0 { end.1 } else { p });
+    for p in f.pads.iter_mut() {
+        p.0 = remap(p.0);
+    }
+    if let Some(fl) = f.fill.as_mut() {
+        fl.0 = remap(fl.0);
+    }
+    f.text = out;
+}
+
+/// The built-in date formats show the region's short date (number format 14 and 22).
+fn regional(code: &str) -> Option<String> {
+    let sd = crate::locale::with(|l| l.short_date.clone());
+    if sd == "m/d/yyyy" {
+        return None;
+    }
+    match code {
+        "m/d/yyyy" | "mm-dd-yy" | "m/d/yy" => Some(sd),
+        "m/d/yyyy h:mm" | "m/d/yy h:mm" => Some(format!("{} h:mm", sd)),
+        "m/d/yyyy h:mm:ss" => Some(format!("{} h:mm:ss", sd)),
+        _ => None,
+    }
+}
+
 pub fn get(code: &str) -> std::rc::Rc<Format> {
+    let local = regional(code);
+    let code = local.as_deref().unwrap_or(code);
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
         if let Some(f) = c.get(code) {
@@ -1416,6 +1480,11 @@ mod tests {
         assert_eq!(fmt(0.125, "0.00%"), "12.50%");
         assert_eq!(fmt(1234567.0, "#,##0,"), "1,235");
         assert_eq!(fmt(0.5, "#.##"), ".5");
+        // S6-01: a code that starts at the point
+        assert_eq!(fmt(0.123, ".00"), ".12");
+        assert_eq!(fmt(0.5, ".0#"), ".5");
+        assert_eq!(fmt(5.5, ".00"), "5.50");
+        assert_eq!(fmt(0.0, ".00"), ".00");
         assert_eq!(fmt(5.0, "000"), "005");
         assert_eq!(fmt(2.5, "0"), "3");
         assert_eq!(fmt(-2.5, "0"), "-3");

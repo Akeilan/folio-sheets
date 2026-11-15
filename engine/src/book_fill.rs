@@ -44,6 +44,38 @@ fn list_text(list: u8, idx: i64, long: bool, case: u8) -> String {
     }
 }
 
+const ORD: &str = "\u{1}ord";
+const ORD_UPPER: &str = "\u{1}ORD";
+
+fn ordinal(n: i64, upper: bool) -> &'static str {
+    let a = n.abs();
+    let s = if (11..=13).contains(&(a % 100)) {
+        "th"
+    } else {
+        match a % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        }
+    };
+    if upper {
+        match s {
+            "st" => "ST",
+            "nd" => "ND",
+            "rd" => "RD",
+            _ => "TH",
+        }
+    } else {
+        s
+    }
+}
+
+/// Q1, Qtr 1, Quarter 1 count round the four quarters.
+fn is_quarter(prefix: &str, suffix: &str) -> bool {
+    suffix.is_empty() && matches!(prefix.to_lowercase().as_str(), "q" | "qtr" | "qtr " | "quarter " | "quarter")
+}
+
 /// "Item 7" -> ("Item ", 7, "", digits) : the last number in a text.
 fn text_number(t: &str) -> Option<(String, i64, String, usize)> {
     let b: Vec<char> = t.chars().collect();
@@ -63,7 +95,11 @@ fn text_number(t: &str) -> Option<(String, i64, String, usize)> {
     }
     let num: String = b[start..end].iter().collect();
     let prefix: String = b[..start].iter().collect();
-    let suffix: String = b[end..].iter().collect();
+    let mut suffix: String = b[end..].iter().collect();
+    // 1st, 2nd, 3rd, 4th: the ending follows the number (marked so the run stays one series)
+    if matches!(suffix.to_lowercase().as_str(), "st" | "nd" | "rd" | "th") && (prefix.is_empty() || prefix.ends_with(' ')) {
+        suffix = if suffix.chars().all(|c| c.is_uppercase()) { ORD_UPPER.into() } else { ORD.into() };
+    }
     // a number with a sign or decimal point in front is not a counter
     Some((prefix, num.parse().ok()?, suffix, num.len()))
 }
@@ -130,7 +166,17 @@ impl Book {
             let nums: Vec<f64> = vals.iter().map(|v| if let Value::Num(n) = v { *n } else { 0.0 }).collect();
             let dates = cells.iter().all(|(r, c)| self.is_date_cell(s, *r, *c));
             if k == 1 {
-                return if dates && nums[0].fract() == 0.0 { Series::Linear(nums[0], 1.0) } else { Series::Copy };
+                if dates {
+                    // a time alone steps an hour, a date (with or without a time) a day
+                    let f = crate::numfmt::get(&self.number_format(s, cells[0].0, cells[0].1));
+                    let code = self.number_format(s, cells[0].0, cells[0].1).to_lowercase();
+                    let has_date = code.contains('d') || code.contains('y') || (code.contains('m') && !f.has_time());
+                    if f.has_time() && !has_date {
+                        return Series::Linear(nums[0], 1.0 / 24.0);
+                    }
+                    return Series::Linear(nums[0], 1.0);
+                }
+                return Series::Copy;
             }
             if dates {
                 // same day of the month, months apart: step in months
@@ -139,9 +185,10 @@ impl Book {
                     let ymd: Vec<_> = ymd.into_iter().map(|x| x.unwrap()).collect();
                     let months: Vec<i64> = ymd.iter().map(|(y, m, _)| y * 12 + *m as i64).collect();
                     let same_day = ymd.iter().all(|x| x.2 == ymd[0].2);
+                    let month_ends = ymd.iter().all(|(y, m, d)| *d == crate::dates::days_in_month(*y, *m) as u32);
                     let step = months[1] - months[0];
-                    if same_day && step != 0 && months.windows(2).all(|w| w[1] - w[0] == step) {
-                        return Series::Months(nums[0], step);
+                    if (same_day || month_ends) && step != 0 && months.windows(2).all(|w| w[1] - w[0] == step) {
+                        return Series::Months(if month_ends { -nums[0] } else { nums[0] }, step);
                     }
                 }
             }
@@ -223,6 +270,17 @@ impl Book {
                 runs.push((i0, i1, kind));
                 i0 = i1;
             }
+            if series && runs.len() > 1 {
+                for run in runs.iter_mut() {
+                    if run.1 - run.0 == 1 && matches!(run.2, Series::Copy) {
+                        let (r0, c0) = cells[run.0];
+                        let formula = self.sheets[s].get(r0, c0).map(|x| x.f.is_some()).unwrap_or(false);
+                        if let (Value::Num(n), false) = (self.sheets[s].value(r0, c0), formula) {
+                            run.2 = Series::Linear(n, 1.0);
+                        }
+                    }
+                }
+            }
             let targets: Vec<(i64, (u32, u32))> = if down {
                 (src.r2 + 1..=target.r2).enumerate().map(|(t, r)| (k + t as i64, (r, line))).collect()
             } else if up {
@@ -263,7 +321,11 @@ impl Book {
                         }
                         Series::Linear(a, b) => Cell { v: Value::num(clean(a + b * i as f64)), ..Default::default() },
                         Series::Months(start, step) => {
+                            // a negative start marks a run of month ends: each new date is a month end too
+                            let ends = *start < 0.0;
+                            let start = &start.abs();
                             let (y, m, d) = crate::dates::serial_to_ymd(*start, self.date1904).unwrap_or((1900, 1, 1));
+                            let d = if ends { 31 } else { d };
                             let total = y * 12 + (m as i64 - 1) + step * i;
                             let ny = total.div_euclid(12);
                             let nm = total.rem_euclid(12) + 1;
@@ -272,9 +334,13 @@ impl Book {
                             Cell { v: Value::num(v + start.fract()), ..Default::default() }
                         }
                         Series::Text(p, a, b, sfx, width) => {
-                            let n = (a + b * i as f64).round() as i64;
+                            let mut n = (a + b * i as f64).round() as i64;
+                            if is_quarter(p, sfx) {
+                                n = (n - 1).rem_euclid(4) + 1;
+                            }
                             let digits = if n < 0 { format!("{}", n.abs()) } else { format!("{:0w$}", n, w = *width) };
-                            Cell { v: Value::string(format!("{}{}{}", p, digits, sfx)), ..Default::default() }
+                            let end = if sfx == ORD { ordinal(n, false).to_string() } else if sfx == ORD_UPPER { ordinal(n, true).to_string() } else { sfx.clone() };
+                            Cell { v: Value::string(format!("{}{}{}", p, digits, end)), ..Default::default() }
                         }
                         Series::List(list, start, step, long, case) => {
                             Cell { v: Value::string(list_text(*list, start + step * i, *long, *case)), ..Default::default() }

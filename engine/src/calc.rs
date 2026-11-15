@@ -20,11 +20,20 @@ pub trait Ctx {
     fn formula_text(&self, sheet: usize, r: u32, c: u32) -> Option<String>;
     fn number_format(&self, sheet: usize, r: u32, c: u32) -> String;
     fn row_hidden(&self, sheet: usize, r: u32) -> bool;
+    /// hidden by an AutoFilter (SUBTOTAL 1-11 skip these, but not rows hidden by hand)
+    fn row_filtered(&self, _sheet: usize, _r: u32) -> bool {
+        false
+    }
     fn cell_info(&self, sheet: usize, r: u32, c: u32, what: &str) -> Value;
     fn now(&self) -> f64;
     fn rand(&mut self) -> f64;
     /// a cell that is itself a SUBTOTAL/AGGREGATE (skipped by those functions)
     fn is_subtotal(&self, sheet: usize, r: u32, c: u32) -> bool;
+    /// GETPIVOTDATA: the value a PivotTable (the one at sheet, r, c) holds for a data field
+    /// and (field, item) pairs
+    fn pivot_data(&self, _sheet: usize, _r: u32, _c: u32, _field: &str, _pairs: &[(String, Value)]) -> Option<Value> {
+        None
+    }
     /// the cells a structured reference names, read from cell (r, c)
     fn table_ref(&self, _text: &str, _sheet: usize, _r: u32, _c: u32) -> Option<(usize, Rect)> {
         None
@@ -65,6 +74,10 @@ impl Res {
     }
 }
 
+/// Evaluation nesting: brackets and functions are capped by the parser, so this is mostly the
+/// depth of recursive LAMBDAs. It stays well inside the 8 MB stack the program runs on.
+pub const MAX_EVAL_DEPTH: u32 = 1200;
+
 pub struct Eval<'a> {
     pub ctx: &'a mut dyn Ctx,
     pub sheet: usize,
@@ -101,6 +114,8 @@ pub fn to_num(v: &Value, date1904: bool) -> Result<f64, XlErr> {
 pub fn to_text(v: &Value) -> Result<String, XlErr> {
     match v {
         Value::Err(e) => Err(*e),
+        // a number turned into text uses the region's decimal separator (=""&1.5)
+        Value::Num(n) => Ok(crate::locale::num_text(*n)),
         Value::Arr(a) => to_text(a.data.first().unwrap_or(&Value::Empty)),
         v => Ok(v.to_string()),
     }
@@ -200,7 +215,7 @@ impl<'a> Eval<'a> {
 
     pub fn eval(&mut self, e: &Expr) -> Res {
         self.depth += 1;
-        if self.depth > 400 {
+        if self.depth > MAX_EVAL_DEPTH {
             self.depth -= 1;
             return Res::err(XlErr::Num);
         }
@@ -250,10 +265,22 @@ impl<'a> Eval<'a> {
                 let v = self.eval_value(x);
                 self.map1(v, |n| Value::num(n / 100.0))
             }
-            Expr::Bin(op, a, b) => {
-                let va = self.eval_value(a);
-                let vb = self.eval_value(b);
-                Res::V(self.binary(*op, va, vb))
+            Expr::Bin(..) => {
+                // A chain such as A1+A2+...+An is nested down its left side; walk it without
+                // recursing once per operand, so a long chain neither runs out of stack nor
+                // counts against the nesting limit.
+                let mut spine: Vec<(BinOp, &Expr)> = Vec::new();
+                let mut cur = e;
+                while let Expr::Bin(op, a, b) = cur {
+                    spine.push((*op, &**b));
+                    cur = a;
+                }
+                let mut acc = self.eval_value(cur);
+                for (op, rhs) in spine.into_iter().rev() {
+                    let vb = self.eval_value(rhs);
+                    acc = self.binary(op, acc, vb);
+                }
+                Res::V(acc)
             }
             Expr::Range(a, b) => {
                 let ra = self.eval(a);
@@ -409,12 +436,21 @@ impl<'a> Eval<'a> {
                 self.sheet = saved;
                 r
             }
-            None => Res::err(XlErr::Name),
+            None => {
+                // a table's name alone is its data rows (=ROWS(Table1), =SUM(Table1))
+                if sheet.is_none() {
+                    if let Some((s, rc)) = self.ctx.table_ref(&format!("{}[]", name), self.sheet, self.row, self.col) {
+                        return Res::R(vec![Area { sheet: s, rect: rc }]);
+                    }
+                }
+                Res::err(XlErr::Name)
+            }
         }
     }
 
     pub fn call_lambda(&mut self, l: &Lambda, args: &[Expr]) -> Res {
-        if args.len() != l.params.len() {
+        // trailing parameters may be left out; ISOMITTED tells them apart (bound to nothing)
+        if args.len() > l.params.len() {
             return Res::err(XlErr::Value);
         }
         let mut vals = Vec::new();
@@ -608,7 +644,8 @@ pub fn scalar_op(op: BinOp, a: &Value, b: &Value, d1904: bool) -> Value {
             if let Value::Err(e) = b {
                 return Value::Err(*e);
             }
-            let s = format!("{}{}", a, b);
+            let txt = |v: &Value| to_text(v).unwrap_or_default();
+            let s = format!("{}{}", txt(a), txt(b));
             if s.chars().count() > 32767 {
                 return Value::Err(XlErr::Value);
             }

@@ -928,6 +928,9 @@ impl<'a> Ctx for ViewCtx<'a> {
     fn row_hidden(&self, sheet: usize, r: u32) -> bool {
         self.b.sheets.get(sheet).map(|s| s.row_hidden(r)).unwrap_or(false)
     }
+    fn row_filtered(&self, sheet: usize, r: u32) -> bool {
+        Book::row_filtered(self.b, sheet, r)
+    }
     fn cell_info(&self, sheet: usize, r: u32, c: u32, what: &str) -> Value {
         <Book as Ctx>::cell_info(self.b, sheet, r, c, what)
     }

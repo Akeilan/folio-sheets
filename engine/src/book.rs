@@ -147,6 +147,10 @@ pub struct Book {
     /// positions whose value changed and formulas edited, waiting for the calculation
     pub changed: Vec<Key>,
     pub forced: BTreeSet<Key>,
+    /// rows were hidden or shown: SUBTOTAL and AGGREGATE depend on that, not on any cell
+    pub rows_shown_changed: bool,
+    /// rows whose contents or formats changed: their height follows them unless set by hand
+    pub fit_rows: BTreeSet<(usize, u32)>,
     /// trying values (What-If Analysis): no data tables worked out meanwhile
     pub in_what_if: bool,
     /// the PivotTables (each knows its sheet)
@@ -193,6 +197,8 @@ impl Book {
             deps: Deps::default(),
             changed: vec![],
             forced: BTreeSet::new(),
+            rows_shown_changed: false,
+            fit_rows: BTreeSet::new(),
             in_what_if: false,
             pivots: vec![],
             rebuild: false,
@@ -280,6 +286,7 @@ impl Book {
         if self.group_depth > 0 {
             return;
         }
+        self.refit_rows();
         if let Some(mut st) = self.open.take() {
             if !st.deltas.is_empty() {
                 self.state = self.next_state;
@@ -293,6 +300,63 @@ impl Book {
             }
         }
         self.after_change();
+    }
+
+    /// Rows whose contents changed take the height they need (wrapped text, larger fonts,
+    /// line breaks), as in the original, unless their height was set by hand. Recorded in the
+    /// step being committed, so undo puts the old height back too.
+    fn refit_rows(&mut self) {
+        if self.fit_rows.is_empty() || self.open.is_none() {
+            self.fit_rows.clear();
+            return;
+        }
+        let rows: Vec<(usize, u32)> = std::mem::take(&mut self.fit_rows).into_iter().collect();
+        for (s, r) in rows {
+            if s >= self.sheets.len() {
+                continue;
+            }
+            let cur = self.sheets[s].rows.get(&r).cloned().unwrap_or_default();
+            if cur.custom_height || cur.hidden {
+                continue;
+            }
+            let need = self.needed_height(s, r);
+            let def = self.sheets[s].default_row_height;
+            let ht = if (need - def).abs() < 0.01 { None } else { Some(need) };
+            if cur.ht != ht {
+                let mut ri = cur;
+                ri.ht = ht;
+                self.record(Delta::Row(s, r, Some(ri)));
+            }
+        }
+        self.fit_rows.clear();
+    }
+
+    /// After opening: rows the file gives no height take the one their contents need.
+    pub fn fit_unsized_rows(&mut self) {
+        for s in 0..self.sheets.len() {
+            let mut rows: BTreeSet<u32> = BTreeSet::new();
+            for ((r, _), c) in self.sheets[s].cells.iter() {
+                let x = self.styles.xf(c.s);
+                let big = font_of_size(&self.styles, c.s) > 11.5;
+                let lines = matches!(&c.v, Value::Str(t) if t.contains('\n'));
+                if (x.wrap || big || lines || (x.rotation != 0 && x.rotation != 255)) && self.sheets[s].rows.get(r).and_then(|ri| ri.ht).is_none() {
+                    rows.insert(*r);
+                }
+            }
+            for r in rows {
+                let need = self.needed_height(s, r);
+                let def = self.sheets[s].default_row_height;
+                if need > def + 0.01 {
+                    let mut ri = self.sheets[s].rows.get(&r).cloned().unwrap_or_default();
+                    if ri.hidden || ri.custom_height {
+                        continue;
+                    }
+                    ri.ht = Some(need);
+                    self.sheets[s].rows.insert(r, ri);
+                }
+            }
+        }
+        self.fit_rows.clear();
     }
 
     /// Drop an open step, undoing what it did (a command that failed half way).
@@ -371,6 +435,11 @@ impl Book {
             }
             Delta::Row(s, r, info) => {
                 let sh = &mut self.sheets[s];
+                let was_hidden = sh.rows.get(&r).map(|x| x.hidden).unwrap_or(false);
+                if info.as_ref().map(|i| i.hidden).unwrap_or(false) != was_hidden {
+                    self.rows_shown_changed = true;
+                }
+                let sh = &mut self.sheets[s];
                 let old = match info {
                     Some(i) if !i.is_default() => sh.rows.insert(r, i),
                     _ => sh.rows.remove(&r),
@@ -378,6 +447,9 @@ impl Book {
                 Delta::Row(s, r, old)
             }
             Delta::Cols(s, cols) => {
+                // wrapped text in a column that changed width takes more or fewer lines
+                let wrapped: Vec<u32> = self.sheets[s].cells.iter().filter(|(_, c)| self.styles.xf(c.s).wrap).map(|((r, _), _)| *r).collect();
+                self.fit_rows.extend(wrapped.into_iter().map(|r| (s, r)));
                 let old = std::mem::replace(&mut self.sheets[s].cols, cols);
                 Delta::Cols(s, old)
             }
@@ -546,6 +618,7 @@ impl Book {
 
     /// Bookkeeping after a cell was replaced: array ranges, spills, calculation.
     fn cell_changed(&mut self, s: usize, r: u32, c: u32, had_formula: bool) {
+        self.fit_rows.insert((s, r));
         let sh = &mut self.sheets[s];
         let now = sh.cells.get(&(r, c)).map(|x| x.f.clone());
         let has_formula = matches!(now, Some(Some(_)));
@@ -615,6 +688,15 @@ impl Book {
                 sh.spills.retain(|a, _| sh.cells.get(a).map(|c| c.f.is_some()).unwrap_or(false));
             }
         }
+        if std::mem::take(&mut self.rows_shown_changed) {
+            // hiding, showing or filtering rows changes what SUBTOTAL and AGGREGATE count
+            let keys: Vec<Key> = self.deps.formulas().filter(|k| {
+                self.sheets.get(k.0).and_then(|sh| sh.get(k.1, k.2)).and_then(|c| c.f.as_ref())
+                    .map(|f| { let t = f.text.to_ascii_uppercase(); t.contains("SUBTOTAL(") || t.contains("AGGREGATE(") })
+                    .unwrap_or(false)
+            }).collect();
+            self.forced.extend(keys);
+        }
         if self.changed.is_empty() && self.forced.is_empty() {
             return;
         }
@@ -633,6 +715,26 @@ impl Book {
 
     pub fn is_formula(&self, s: usize, r: u32, c: u32) -> bool {
         self.sheets.get(s).and_then(|sh| sh.get(r, c)).map(|x| x.f.is_some()).unwrap_or(false)
+    }
+
+    /// A row the AutoFilter (of the sheet or of a table) hides, as opposed to one hidden by hand:
+    /// SUBTOTAL 1-11 skip the first kind only.
+    pub fn row_filtered(&self, s: usize, r: u32) -> bool {
+        let sh = match self.sheets.get(s) {
+            Some(x) => x,
+            None => return false,
+        };
+        if !sh.row_hidden(r) {
+            return false;
+        }
+        let under = |af: &crate::book_data::AutoFilter, last: u32| r > af.rect.r1 && r <= last && !af.cols.is_empty();
+        if let Some(af) = &sh.autofilter {
+            let last = sh.data_extent().map(|(x, _)| x).unwrap_or(af.rect.r2).max(af.rect.r2);
+            if under(af, last) {
+                return true;
+            }
+        }
+        sh.tables.iter().any(|t| t.filter.as_ref().map(|af| under(af, t.rect.r2)).unwrap_or(false))
     }
 
     pub fn number_format(&self, s: usize, r: u32, c: u32) -> String {
@@ -773,6 +875,12 @@ impl Book {
                 }
             }
             Typed::Value(v, fmt) => {
+                // automatic percent entry: in a cell already formatted as a percentage, 7 means
+                // 7% (numbers below 1 are taken as the fraction they are: 0.1 is 10%)
+                let v = match (&v, &fmt) {
+                    (Value::Num(n), None) if n.abs() >= 1.0 && is_percent_code(&code) => Value::num(n / 100.0),
+                    _ => v,
+                };
                 cell.v = v;
                 if let Some(f) = fmt {
                     if !matches!(code.as_str(), c if c == f) && keeps_typed_format(&code, &f) {
@@ -1745,7 +1853,8 @@ pub fn rebase<'a>(how: &Adjust<'a>, here: &'a str) -> Adjust<'a> {
         Adjust::ColsIn { sheet, at, n, r1, r2, .. } => Adjust::ColsIn { sheet, here, at: *at, n: *n, r1: *r1, r2: *r2 },
         Adjust::RenameSheet(a, b) => Adjust::RenameSheet(a, b),
         Adjust::DeleteSheet(a) => Adjust::DeleteSheet(a),
-        Adjust::Move { sheet, src, dr, dc, .. } => Adjust::Move { sheet, here, src: *src, dr: *dr, dc: *dc },
+        Adjust::Move { sheet, src, dr, dc, to, .. } => Adjust::Move { sheet, here, src: *src, dr: *dr, dc: *dc, to: *to },
+        Adjust::Rehome { from, to } => Adjust::Rehome { from, to },
     }
 }
 
@@ -1839,4 +1948,27 @@ mod tests {
         assert_eq!(normalize_formula("sum(a1:b2"), "SUM(A1:B2)");
         assert_eq!(normalize_formula("\"x\"&a1"), "\"x\"&A1");
     }
+}
+
+/// A number format that shows a percentage (a % outside quotes and escapes).
+pub fn is_percent_code(code: &str) -> bool {
+    let mut quoted = false;
+    let mut esc = false;
+    for ch in code.chars() {
+        if esc {
+            esc = false;
+            continue;
+        }
+        match ch {
+            '\\' => esc = true,
+            '"' => quoted = !quoted,
+            '%' if !quoted => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn font_of_size(st: &crate::styles::Styles, xf: u32) -> f64 {
+    crate::layout::font_of(st, xf).size
 }

@@ -25,6 +25,15 @@ fn month_from(s: &str) -> Option<u32> {
     None
 }
 
+/// Days in a month as dates are typed: February 1900 has the 29th the original counts.
+fn mdays(y: i64, m: u32, d1904: bool) -> i64 {
+    if y == 1900 && m == 2 && !d1904 {
+        29
+    } else {
+        dates::days_in_month(y, m) as i64
+    }
+}
+
 fn current_year() -> i64 {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     dates::civil_from_days(secs.div_euclid(86400)).0
@@ -52,8 +61,9 @@ fn parse_plain(s: &str) -> Option<(f64, Option<String>)> {
     } else if let Some(x) = t.strip_prefix('+') {
         t = x.trim_start().to_string();
     }
+    let (dec, grp, sym) = crate::locale::with(|l| (l.decimal, l.group, l.currency.clone()));
     let mut currency = false;
-    if let Some(x) = t.strip_prefix('$') {
+    if let Some(x) = t.strip_prefix(sym.as_str()) {
         currency = true;
         t = x.trim_start().to_string();
         if let Some(x) = t.strip_prefix('-') {
@@ -62,6 +72,20 @@ fn parse_plain(s: &str) -> Option<(f64, Option<String>)> {
             }
             neg = true;
             t = x.to_string();
+        }
+    } else if let Some(x) = t.strip_suffix(sym.as_str()) {
+        // "12,50 €": the symbol after the amount, as many regions write it
+        currency = true;
+        t = x.trim_end().to_string();
+    }
+    // the region's separators, read as the point and comma the rest of this works with
+    if dec != '.' || grp != ',' {
+        if t.contains('.') && grp != '.' && dec != '.' {
+            return None;
+        }
+        t = t.chars().map(|c| if c == dec { '.' } else if c == grp { ',' } else if c == '\u{a0}' && grp == ' ' { ',' } else { c }).collect();
+        if grp == '.' || grp == ' ' {
+            // "1.234" is a thousand and more, never 1.234, when the point groups
         }
     }
     let mut percent = false;
@@ -124,7 +148,7 @@ fn parse_plain(s: &str) -> Option<(f64, Option<String>)> {
         v /= 100.0;
         fmt = Some(if decimals > 0 { "0.00%".into() } else { "0%".into() });
     } else if currency {
-        fmt = Some(if decimals > 0 { FMT_CURRENCY2.into() } else { FMT_CURRENCY0.into() });
+        fmt = Some(crate::locale::currency_code(decimals > 0));
     } else if exp.is_some() {
         fmt = Some("0.00E+00".into());
     } else if grouped {
@@ -140,7 +164,9 @@ fn parse_plain(s: &str) -> Option<(f64, Option<String>)> {
 fn parse_date(s: &str, d1904: bool) -> Option<(f64, &'static str)> {
     let t = s.trim();
     // numeric with / or -
-    let sep = if t.contains('/') { Some('/') } else if t.contains('-') && !t.starts_with('-') { Some('-') } else { None };
+    let order = crate::locale::with(|l| l.date_order);
+    let point_dates = crate::locale::with(|l| l.decimal != '.') && t.matches('.').count() == 2;
+    let sep = if t.contains('/') { Some('/') } else if t.contains('-') && !t.starts_with('-') { Some('-') } else if point_dates { Some('.') } else { None };
     if let Some(sep) = sep {
         let parts: Vec<&str> = t.split(sep).map(|x| x.trim()).collect();
         if parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())) {
@@ -148,17 +174,23 @@ fn parse_date(s: &str, d1904: bool) -> Option<(f64, &'static str)> {
             match n.len() {
                 3 => {
                     // y-m-d when the first part has 4 digits
-                    let (y, m, d) = if parts[0].len() == 4 { (n[0], n[1], n[2]) } else { (n[2], n[0], n[1]) };
+                    let (y, m, d) = if parts[0].len() == 4 || order == crate::locale::DateOrder::Ymd {
+                        (n[0], n[1], n[2])
+                    } else if order == crate::locale::DateOrder::Dmy {
+                        (n[2], n[1], n[0])
+                    } else {
+                        (n[2], n[0], n[1])
+                    };
                     let y = if parts[0].len() != 4 && parts[2].len() <= 2 { if y < 30 { 2000 + y } else { 1900 + y } } else { y };
-                    if (1..=12).contains(&m) && d >= 1 && d <= dates::days_in_month(y, m as u32) as i64 && (1900..=9999).contains(&y) {
+                    if (1..=12).contains(&m) && d >= 1 && d <= mdays(y, m as u32, d1904) as i64 && (1900..=9999).contains(&y) {
                         return dates::ymd_to_serial(y, m, d, d1904).map(|v| (v, "m/d/yyyy"));
                     }
                     return None;
                 }
                 2 => {
                     // m/d of this year, or m/yy (month and year)
-                    let (a, b) = (n[0], n[1]);
-                    if (1..=12).contains(&a) && b >= 1 && b <= dates::days_in_month(current_year(), a as u32) as i64 {
+                    let (a, b) = if order == crate::locale::DateOrder::Dmy && parts[1].len() != 4 { (n[1], n[0]) } else { (n[0], n[1]) };
+                    if (1..=12).contains(&a) && b >= 1 && b <= mdays(current_year(), a as u32, d1904) as i64 {
                         return dates::ymd_to_serial(current_year(), a, b, d1904).map(|v| (v, "d-mmm"));
                     }
                     if (1..=12).contains(&a) && parts[1].len() == 4 {
@@ -196,7 +228,7 @@ fn parse_date(s: &str, d1904: bool) -> Option<(f64, &'static str)> {
                     let y = if len <= 2 { if x < 30 { 2000 + x } else { 1900 + x } } else { x };
                     return dates::ymd_to_serial(y, m, 1, d1904).map(|v| (v, "mmm-yy"));
                 }
-                if x >= 1 && x <= dates::days_in_month(current_year(), m as u32) as i64 {
+                if x >= 1 && x <= mdays(current_year(), m as u32, d1904) as i64 {
                     return dates::ymd_to_serial(current_year(), m, x, d1904).map(|v| (v, "d-mmm"));
                 }
                 return None;
@@ -208,7 +240,7 @@ fn parse_date(s: &str, d1904: bool) -> Option<(f64, &'static str)> {
                     (nums[0].0, nums[1].0, nums[1].1)
                 };
                 let y = if ylen <= 2 { if y < 30 { 2000 + y } else { 1900 + y } } else { y };
-                if d >= 1 && d <= dates::days_in_month(y, m as u32) as i64 {
+                if d >= 1 && d <= mdays(y, m as u32, d1904) as i64 {
                     return dates::ymd_to_serial(y, m, d, d1904).map(|v| (v, "d-mmm-yy"));
                 }
                 return None;
@@ -314,8 +346,9 @@ pub fn parse_number_text(s: &str, d1904: bool) -> Option<(f64, Option<String>)> 
             (a, b)
         };
         if let (Some((d, _)), Some((tm, tf))) = (parse_date(a2, d1904), parse_time(b2)) {
-            let fmt = if tf.contains("AM") { "m/d/yyyy h:mm AM/PM" } else { "m/d/yyyy h:mm" };
-            return Some((d + tm, Some(fmt.into())));
+            // the original shows a typed date and time as m/d/yyyy h:mm, whatever clock was typed
+            let _ = tf;
+            return Some((d + tm, Some("m/d/yyyy h:mm".into())));
         }
     }
     if let Some((v, f)) = parse_time(t) {
@@ -360,14 +393,11 @@ pub fn interpret(text: &str, d1904: bool, cell_is_text_format: bool) -> Typed {
         return Typed::Value(Value::Err(e), None);
     }
     if let Some((v, f)) = parse_number_text(text, d1904) {
-        return Typed::Value(Value::num(v), f);
+        return Typed::Value(Value::num(fifteen_digits(v)), f);
     }
-    // +A1 / -A1+B1 typed without '=' are formulas
+    // +1+1, +A1, -A1+B1 typed without '=' are formulas
     if (text.starts_with('+') || text.starts_with('-')) && text.len() > 1 && crate::formula::check(text).is_none() {
-        let has_ref = crate::formula::tokenize(text).map(|t| t.iter().any(|k| matches!(k.kind, crate::formula::TokKind::Ref | crate::formula::TokKind::Func | crate::formula::TokKind::Name))).unwrap_or(false);
-        if has_ref {
-            return Typed::Formula(text.to_string());
-        }
+        return Typed::Formula(text.to_string());
     }
     Typed::Value(Value::string(text.to_string()), None)
 }
@@ -382,24 +412,26 @@ pub fn edit_text(v: f64, fmt: &crate::numfmt::Format, code: &str, d1904: bool) -
         };
         let has_time = fmt.has_time();
         if v >= 0.0 {
+            // in the region's short date; a region other than the US shows a 24-hour clock
+            let us = crate::locale::with(|l| l.short_date == "m/d/yyyy");
+            let (dt, tm) = if us { ("m/d/yyyy h:mm:ss AM/PM", "h:mm:ss AM/PM") } else { ("m/d/yyyy h:mm:ss", "h:mm:ss") };
             if has_date && has_time {
-                let f = crate::numfmt::get("m/d/yyyy h:mm:ss AM/PM");
-                return f.number(v, d1904, 20).text;
+                return crate::numfmt::get(dt).number(v, d1904, 20).text;
             }
             if has_time && v < 1.0 {
-                return crate::numfmt::get("h:mm:ss AM/PM").number(v, d1904, 20).text;
+                return crate::numfmt::get(tm).number(v, d1904, 20).text;
             }
             if has_time {
-                return crate::numfmt::get("m/d/yyyy h:mm:ss AM/PM").number(v, d1904, 20).text;
+                return crate::numfmt::get(dt).number(v, d1904, 20).text;
             }
             return crate::numfmt::get("m/d/yyyy").number(v, d1904, 20).text;
         }
     }
     if fmt.is_percent() {
-        let s = crate::numfmt::num_to_text(v * 100.0);
+        let s = crate::locale::num_text(v * 100.0);
         return format!("{s}%");
     }
-    crate::numfmt::num_to_text(v)
+    crate::locale::num_text(v)
 }
 
 #[cfg(test)]
@@ -427,4 +459,25 @@ mod tests {
         assert!(num("1.2.3").is_none());
         assert_eq!(num(".5").unwrap().0, 0.5);
     }
+}
+
+/// The original keeps 15 significant digits of a typed number and drops the rest
+/// (123456789012345678 is stored as 123456789012345000).
+pub fn fifteen_digits(v: f64) -> f64 {
+    if v == 0.0 || !v.is_finite() {
+        return v;
+    }
+    // the shortest text that reads back as this number (0.015, not 0.01499999...)
+    let t = format!("{:e}", v.abs());
+    let (mant, exp) = match t.split_once('e') {
+        Some(x) => x,
+        None => return v,
+    };
+    let digits: String = mant.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() <= 15 || digits[15..].chars().all(|c| c == '0') {
+        return v;
+    }
+    let kept = format!("{}.{}e{}", &digits[..1], &digits[1..15], exp);
+    let r: f64 = kept.parse().unwrap_or(v.abs());
+    if v < 0.0 { -r } else { r }
 }

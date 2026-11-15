@@ -174,6 +174,9 @@ impl<'a> Ctx for TypedCtx<'a> {
     fn row_hidden(&self, sheet: usize, r: u32) -> bool {
         self.base.row_hidden(sheet, r)
     }
+    fn row_filtered(&self, sheet: usize, r: u32) -> bool {
+        self.base.row_filtered(sheet, r)
+    }
     fn cell_info(&self, sheet: usize, r: u32, c: u32, what: &str) -> Value {
         self.base.cell_info(sheet, r, c, what)
     }

@@ -66,10 +66,15 @@ pub fn ymd_to_serial(y: i64, m: i64, d: i64, date1904: bool) -> Option<f64> {
         let s = days - D1904;
         return if (0..=2957003).contains(&s) { Some(s as f64) } else { None };
     }
-    let mut s = days - D1900;
-    if s >= 60 {
-        s += 1; // after the phantom 29 Feb 1900
+    // The 1900 calendar counts a 29 February 1900 (serial 60), as the original does: the first
+    // of the month is placed in that calendar and the day offset counted from it, so
+    // DATE(1900,2,29) is 60, DATE(1900,3,0) is 60 and DATE(1900,3,1) is 61.
+    let _ = days;
+    let mut first = base - D1900;
+    if first >= 60 {
+        first += 1;
     }
+    let s = first + d - 1;
     if (0..=2958465).contains(&s) {
         Some(s as f64)
     } else {

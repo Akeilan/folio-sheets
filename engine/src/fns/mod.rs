@@ -10,6 +10,7 @@ pub mod date;
 pub mod db;
 pub mod dist;
 pub mod eng;
+pub mod extra;
 pub mod ets;
 pub mod fin;
 pub mod logic;
@@ -43,7 +44,7 @@ pub(crate) use d;
 thread_local! {
     static TABLE: std::collections::HashMap<&'static str, &'static Def> = {
         let mut m = std::collections::HashMap::new();
-        for list in [math::DEFS, stats::DEFS, text::DEFS, date::DEFS, lookup::DEFS, logic::DEFS, fin::DEFS, eng::DEFS, dist::DEFS, db::DEFS, ets::DEFS] {
+        for list in [math::DEFS, stats::DEFS, text::DEFS, date::DEFS, lookup::DEFS, logic::DEFS, fin::DEFS, eng::DEFS, dist::DEFS, db::DEFS, ets::DEFS, extra::DEFS] {
             for d in list.iter() {
                 m.insert(d.name, d);
             }
@@ -72,7 +73,17 @@ pub fn call(ev: &mut Eval, name: &str, args: &[Expr]) -> Res {
             if args.len() < d.min || args.len() > d.max {
                 return Res::err(XlErr::NA);
             }
-            (d.f)(ev, args)
+            // A fault in one function is that function's #NUM!, wherever it is evaluated
+            // (cells, conditional formats, validation, Evaluate Formula).
+            let (depth, nlocals) = (ev.depth, ev.locals.len());
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (d.f)(ev, args))) {
+                Ok(r) => r,
+                Err(_) => {
+                    ev.depth = depth;
+                    ev.locals.truncate(nlocals);
+                    Res::err(XlErr::Num)
+                }
+            }
         }
         None => {
             // a LAMBDA stored in a name, called like a function
@@ -99,7 +110,17 @@ pub fn check_args(e: &Expr) -> Option<String> {
             args.iter().find_map(check_args)
         }
         Expr::Neg(x) | Expr::Plus(x) | Expr::Percent(x) | Expr::Spill(x) | Expr::At(x) => check_args(x),
-        Expr::Bin(_, a, b) | Expr::Range(a, b) | Expr::Isect(a, b) => check_args(a).or_else(|| check_args(b)),
+        Expr::Bin(..) => {
+            let mut cur = e;
+            while let Expr::Bin(_, a, b) = cur {
+                if let Some(m) = check_args(b) {
+                    return Some(m);
+                }
+                cur = a;
+            }
+            check_args(cur)
+        }
+        Expr::Range(a, b) | Expr::Isect(a, b) => check_args(a).or_else(|| check_args(b)),
         Expr::Union(v) => v.iter().find_map(check_args),
         Expr::Call(f, args) => check_args(f).or_else(|| args.iter().find_map(check_args)),
         _ => None,
@@ -107,6 +128,16 @@ pub fn check_args(e: &Expr) -> Option<String> {
 }
 
 // --------------------------------------------------------------------------- helpers
+
+/// The largest array a function may build: no larger than a sheet, and no more than ten million
+/// values (beyond that the program would run out of memory instead of answering #NUM!).
+pub const MAX_ARRAY: usize = 10_000_000;
+
+pub fn array_size_ok(rows: usize, cols: usize) -> bool {
+    rows <= crate::cellref::MAX_ROWS as usize
+        && cols <= crate::cellref::MAX_COLS as usize
+        && rows.checked_mul(cols).map_or(false, |n| n <= MAX_ARRAY)
+}
 
 pub fn num(ev: &mut Eval, e: &Expr) -> Result<f64, XlErr> {
     let v = ev.eval_scalar(e);

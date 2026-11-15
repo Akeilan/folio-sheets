@@ -125,8 +125,9 @@ pub static DEFS: &[Def] = &[
     d!("PERMUT", 2, 2, |ev, a| math2(ev, a, |n, k| {
         let (n, k) = (n.trunc(), k.trunc());
         if n < 0.0 || k < 0.0 || k > n { return Value::Err(XlErr::Num); }
-        let mut p = 1.0; let mut i = 0.0;
-        while i < k { p *= n - i; i += 1.0; }
+        let mut p = 1.0f64; let mut i = 0.0;
+        while i < k && p.is_finite() { p *= n - i; i += 1.0; }
+        if !p.is_finite() { return Value::Err(XlErr::Num); }
         Value::num(p)
     })),
     d!("PERMUTATIONA", 2, 2, |ev, a| math2(ev, a, |n, k| {
@@ -582,29 +583,65 @@ fn forecast(ev: &mut Eval, a: &[Expr]) -> Res {
 
 /// Multiple regression by normal equations. Returns coefficients [m_k..m_1, b].
 fn regress(ys: &[f64], xs: &[Vec<f64>], with_const: bool) -> Option<Vec<f64>> {
+    // Least squares by Householder QR on the centred data (the normal equations lost digits:
+    // LINEST of an exact line came out 9.99999999999999 instead of 10).
     let n = ys.len();
     let k = xs.len();
-    let p = k + if with_const { 1 } else { 0 };
-    let row = |i: usize| -> Vec<f64> {
-        let mut r: Vec<f64> = (0..k).map(|j| xs[j][i]).collect();
-        if with_const {
-            r.push(1.0);
+    if n == 0 {
+        return None;
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / n as f64;
+    let xm: Vec<f64> = if with_const { xs.iter().map(|c| mean(c)).collect() } else { vec![0.0; k] };
+    let ym = if with_const { mean(ys) } else { 0.0 };
+    // a: n x k, column-major
+    let mut a: Vec<Vec<f64>> = (0..k).map(|j| xs[j].iter().map(|x| x - xm[j]).collect()).collect();
+    let mut y: Vec<f64> = ys.iter().map(|v| v - ym).collect();
+    let mut rdiag = vec![0.0; k];
+    for j in 0..k {
+        let norm = (j..n).map(|i| a[j][i] * a[j][i]).sum::<f64>().sqrt();
+        if norm == 0.0 {
+            return None;
         }
-        r
-    };
-    let mut ata = vec![vec![0.0; p]; p];
-    let mut aty = vec![0.0; p];
-    for i in 0..n {
-        let r = row(i);
-        for a in 0..p {
-            aty[a] += r[a] * ys[i];
-            for b in 0..p {
-                ata[a][b] += r[a] * r[b];
+        let alpha = if a[j][j] > 0.0 { -norm } else { norm };
+        let mut v: Vec<f64> = vec![0.0; n];
+        for i in j..n {
+            v[i] = a[j][i];
+        }
+        v[j] -= alpha;
+        let vv: f64 = (j..n).map(|i| v[i] * v[i]).sum();
+        if vv == 0.0 {
+            rdiag[j] = alpha;
+            continue;
+        }
+        for c in j..k {
+            let d: f64 = (j..n).map(|i| v[i] * a[c][i]).sum::<f64>() * 2.0 / vv;
+            for i in j..n {
+                a[c][i] -= d * v[i];
             }
         }
+        let d: f64 = (j..n).map(|i| v[i] * y[i]).sum::<f64>() * 2.0 / vv;
+        for i in j..n {
+            y[i] -= d * v[i];
+        }
+        rdiag[j] = a[j][j];
     }
-    let inv = super::math::inverse(ata)?;
-    let coef: Vec<f64> = (0..p).map(|a| (0..p).map(|b| inv[a][b] * aty[b]).sum()).collect();
+    // back substitution: R b = Q'y
+    let mut b = vec![0.0; k];
+    for j in (0..k).rev() {
+        let mut t = y[j];
+        for c in j + 1..k {
+            t -= a[c][j] * b[c];
+        }
+        if rdiag[j].abs() < 1e-300 {
+            return None;
+        }
+        b[j] = t / rdiag[j];
+    }
+    let mut coef = b;
+    if with_const {
+        let c = ym - (0..k).map(|j| coef[j] * xm[j]).sum::<f64>();
+        coef.push(c);
+    }
     Some(coef)
 }
 

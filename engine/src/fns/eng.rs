@@ -55,7 +55,7 @@ pub static DEFS: &[Def] = &[
         let im = tri!(num(ev, &a[1]));
         let suf = tri!(opt_text(ev, a, 2, "i"));
         let suf = match suf.as_str() { "" | "i" => 'i', "j" => 'j', _ => return Res::err(XlErr::Value) };
-        Res::V(Value::string(cfmt(C(re, im), suf)))
+        Res::V(cres(C(re, im), suf))
     }),
     d!("IMREAL", 1, 1, |ev, a| imnum(ev, a, |z| z.0)),
     d!("IMAGINARY", 1, 1, |ev, a| imnum(ev, a, |z| z.1)),
@@ -84,7 +84,7 @@ pub static DEFS: &[Def] = &[
     d!("IMPOWER", 2, 2, |ev, a| {
         let (z, s) = tri!(carg(ev, &a[0]));
         let p = tri!(num(ev, &a[1]));
-        Res::V(Value::string(cfmt(tri!(z.pow(p)), s)))
+        Res::V(cres(tri!(z.pow(p)), s))
     }),
     d!("IMDIV", 2, 2, |ev, a| im2(ev, a, |x, y| x.div(y))),
     d!("IMSUB", 2, 2, |ev, a| im2(ev, a, |x, y| Ok(C(x.0 - y.0, x.1 - y.1)))),
@@ -319,6 +319,14 @@ pub fn cparse(s: &str) -> Result<(C, Option<char>), XlErr> {
     Ok((C(re, im), Some(suf)))
 }
 
+/// A complex result: #NUM! when a part overflowed, as in the original.
+pub fn cres(z: C, suf: char) -> Value {
+    if !z.0.is_finite() || !z.1.is_finite() {
+        return Value::Err(XlErr::Num);
+    }
+    Value::string(cfmt(z, suf))
+}
+
 pub fn cfmt(z: C, suf: char) -> String {
     let clean = |x: f64| if x.abs() < 1e-300 { 0.0 } else { x };
     let (re, im) = (clean(z.0), clean(z.1));
@@ -367,7 +375,7 @@ fn im1(ev: &mut Eval, a: &[Expr], f: fn(C) -> Result<C, XlErr>) -> Res {
             if !r.0.is_finite() || !r.1.is_finite() {
                 return Value::Err(XlErr::Num);
             }
-            Value::string(cfmt(r, s.unwrap_or('i')))
+            cres(r, s.unwrap_or('i'))
         }
         Err(e) => Value::Err(e),
     })
@@ -390,7 +398,7 @@ fn im2(ev: &mut Eval, a: &[Expr], f: fn(C, C) -> Result<C, XlErr>) -> Res {
             Ok::<_, XlErr>((f(x, y)?, s))
         })();
         match r {
-            Ok((z, s)) => Value::string(cfmt(z, s)),
+            Ok((z, s)) => cres(z, s),
             Err(e) => Value::Err(e),
         }
     })
@@ -409,7 +417,7 @@ fn imfold(ev: &mut Eval, a: &[Expr], init: C, f: fn(C, C) -> C) -> Res {
             acc = f(acc, z);
         }
     }
-    Res::V(Value::string(cfmt(acc, suf.unwrap_or('i'))))
+    Res::V(cres(acc, suf.unwrap_or('i')))
 }
 
 // --------------------------------------------------------------------------- CONVERT

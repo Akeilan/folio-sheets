@@ -76,8 +76,8 @@ pub fn collect_areas(e: &Expr, sheets: &[Sheet], names: &[Name], here: usize, ou
         }
         Expr::Range(a, b) => {
             let mut x = Vec::new();
-            collect_areas(a, sheets, names, here, &mut x, depth + 1);
-            collect_areas(b, sheets, names, here, &mut x, depth + 1);
+            collect_areas(a, sheets, names, here, &mut x, depth);
+            collect_areas(b, sheets, names, here, &mut x, depth);
             // A1:B2 written as two references: one rectangle
             if let (Expr::Ref(_), Expr::Ref(_)) = (&**a, &**b) {
                 if x.len() == 2 && x[0].0 == x[1].0 {
@@ -99,32 +99,46 @@ pub fn collect_areas(e: &Expr, sheets: &[Sheet], names: &[Name], here: usize, ou
                 if let Some(x) = &def.expr {
                     collect_areas(x, sheets, names, def.scope.unwrap_or(here), out, depth + 1);
                 }
+            } else if sheet.is_none() {
+                // a table's name alone depends on its data rows
+                if let Some(x) = crate::tables::resolve(sheets, &format!("{}[]", n), here, None) {
+                    out.push(x);
+                }
             }
         }
         Expr::Func(_, args) => {
             for a in args {
-                collect_areas(a, sheets, names, here, out, depth + 1);
+                collect_areas(a, sheets, names, here, out, depth);
             }
         }
-        Expr::Neg(x) | Expr::Plus(x) | Expr::Percent(x) | Expr::Spill(x) | Expr::At(x) => collect_areas(x, sheets, names, here, out, depth + 1),
-        Expr::Bin(_, a, b) | Expr::Isect(a, b) => {
-            collect_areas(a, sheets, names, here, out, depth + 1);
-            collect_areas(b, sheets, names, here, out, depth + 1);
+        Expr::Neg(x) | Expr::Plus(x) | Expr::Percent(x) | Expr::Spill(x) | Expr::At(x) => collect_areas(x, sheets, names, here, out, depth),
+        Expr::Bin(..) => {
+            // a long chain (A1+A2+...) is walked down its left side, not recursed into
+            let mut cur = e;
+            while let Expr::Bin(_, a, b) = cur {
+                collect_areas(b, sheets, names, here, out, depth);
+                cur = a;
+            }
+            collect_areas(cur, sheets, names, here, out, depth);
+        }
+        Expr::Isect(a, b) => {
+            collect_areas(a, sheets, names, here, out, depth);
+            collect_areas(b, sheets, names, here, out, depth);
         }
         Expr::Union(v) => {
             for x in v {
-                collect_areas(x, sheets, names, here, out, depth + 1);
+                collect_areas(x, sheets, names, here, out, depth);
             }
         }
         Expr::Array(rows) => {
             for x in rows.iter().flatten() {
-                collect_areas(x, sheets, names, here, out, depth + 1);
+                collect_areas(x, sheets, names, here, out, depth);
             }
         }
         Expr::Call(f, args) => {
-            collect_areas(f, sheets, names, here, out, depth + 1);
+            collect_areas(f, sheets, names, here, out, depth);
             for a in args {
-                collect_areas(a, sheets, names, here, out, depth + 1);
+                collect_areas(a, sheets, names, here, out, depth);
             }
         }
         Expr::Struct(text) => {
@@ -146,11 +160,21 @@ fn uses_volatile_name(e: &Expr, sheets: &[Sheet], names: &[Name], here: usize, d
             let scope = sheet.as_ref().and_then(|s| sheet_idx(sheets, s)).unwrap_or(here);
             find_name(names, n, scope).and_then(|d| d.expr.as_ref()).map(|x| crate::book::is_volatile(x) || uses_volatile_name(x, sheets, names, here, depth + 1)).unwrap_or(false)
         }
-        Expr::Func(_, args) => args.iter().any(|a| uses_volatile_name(a, sheets, names, here, depth + 1)),
-        Expr::Neg(x) | Expr::Plus(x) | Expr::Percent(x) | Expr::Spill(x) | Expr::At(x) => uses_volatile_name(x, sheets, names, here, depth + 1),
-        Expr::Bin(_, a, b) | Expr::Range(a, b) | Expr::Isect(a, b) => uses_volatile_name(a, sheets, names, here, depth + 1) || uses_volatile_name(b, sheets, names, here, depth + 1),
-        Expr::Union(v) => v.iter().any(|x| uses_volatile_name(x, sheets, names, here, depth + 1)),
-        Expr::Call(f, args) => uses_volatile_name(f, sheets, names, here, depth + 1) || args.iter().any(|a| uses_volatile_name(a, sheets, names, here, depth + 1)),
+        Expr::Func(_, args) => args.iter().any(|a| uses_volatile_name(a, sheets, names, here, depth)),
+        Expr::Neg(x) | Expr::Plus(x) | Expr::Percent(x) | Expr::Spill(x) | Expr::At(x) => uses_volatile_name(x, sheets, names, here, depth),
+        Expr::Bin(..) => {
+            let mut cur = e;
+            while let Expr::Bin(_, a, b) = cur {
+                if uses_volatile_name(b, sheets, names, here, depth) {
+                    return true;
+                }
+                cur = a;
+            }
+            uses_volatile_name(cur, sheets, names, here, depth)
+        }
+        Expr::Range(a, b) | Expr::Isect(a, b) => uses_volatile_name(a, sheets, names, here, depth) || uses_volatile_name(b, sheets, names, here, depth),
+        Expr::Union(v) => v.iter().any(|x| uses_volatile_name(x, sheets, names, here, depth)),
+        Expr::Call(f, args) => uses_volatile_name(f, sheets, names, here, depth) || args.iter().any(|a| uses_volatile_name(a, sheets, names, here, depth)),
         _ => false,
     }
 }
@@ -549,8 +573,13 @@ impl Book {
         let v = match &f.expr {
             Some(e) => {
                 let legacy = matches!(f.kind, FKind::Normal);
-                let mut ev = Eval::new(self, k.0, k.1, k.2, legacy);
-                ev.eval_top(e)
+                // A fault inside one function becomes that cell's #NUM!; it must never leave the
+                // workbook unable to calculate (every later edit would fail with it).
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut ev = Eval::new(self, k.0, k.1, k.2, legacy);
+                    ev.eval_top(e)
+                }));
+                r.unwrap_or(Value::Err(XlErr::Num))
             }
             None => Value::Err(XlErr::Name),
         };
@@ -879,6 +908,9 @@ impl Ctx for Book {
     fn table_ref(&self, text: &str, sheet: usize, r: u32, c: u32) -> Option<(usize, Rect)> {
         crate::tables::resolve(&self.sheets, text, sheet, Some((r, c)))
     }
+    fn pivot_data(&self, sheet: usize, r: u32, c: u32, field: &str, pairs: &[(String, Value)]) -> Option<Value> {
+        self.pivot_data_value(sheet, r, c, field, pairs)
+    }
     fn value(&mut self, sheet: usize, r: u32, c: u32) -> Value {
         if sheet >= self.sheets.len() {
             return Value::Err(XlErr::Ref);
@@ -978,6 +1010,9 @@ impl Ctx for Book {
     }
     fn row_hidden(&self, sheet: usize, r: u32) -> bool {
         self.sheets.get(sheet).map(|s| s.row_hidden(r)).unwrap_or(false)
+    }
+    fn row_filtered(&self, sheet: usize, r: u32) -> bool {
+        Book::row_filtered(self, sheet, r)
     }
     fn cell_info(&self, sheet: usize, r: u32, c: u32, what: &str) -> Value {
         let sh = match self.sheets.get(sheet) {

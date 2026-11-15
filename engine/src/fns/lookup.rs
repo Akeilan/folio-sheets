@@ -52,9 +52,10 @@ pub static DEFS: &[Def] = &[
     d!("WRAPCOLS", 2, 3, |ev, a| wrap(ev, a, false)),
     d!("EXPAND", 2, 4, |ev, a| {
         let arr = tri!(array_of(ev, &a[0]));
-        let rows = if is_missing(a, 1) { arr.rows } else { tri!(num(ev, &a[1])).trunc() as usize };
-        let cols = if is_missing(a, 2) { arr.cols } else { tri!(num(ev, &a[2])).trunc() as usize };
+        let rows = if is_missing(a, 1) { arr.rows } else { tri!(num(ev, &a[1])).trunc().max(0.0) as usize };
+        let cols = if is_missing(a, 2) { arr.cols } else { tri!(num(ev, &a[2])).trunc().max(0.0) as usize };
         if rows < arr.rows || cols < arr.cols { return Res::err(XlErr::Value); }
+        if !super::array_size_ok(rows, cols) { return Res::err(XlErr::Num); }
         let pad = if is_missing(a, 3) { Value::Err(XlErr::NA) } else { ev.eval_scalar(&a[3]) };
         let mut data = Vec::with_capacity(rows * cols);
         for r in 0..rows { for c in 0..cols { data.push(if r < arr.rows && c < arr.cols { arr.get(r, c).clone() } else { pad.clone() }); } }
@@ -292,7 +293,24 @@ fn xmatch(ev: &mut Eval, a: &[Expr]) -> Res {
 }
 
 fn xlookup(ev: &mut Eval, a: &[Expr]) -> Res {
-    let target = ev.eval_scalar(&a[0]);
+    // several lookup values: one result for each (the first of its row or column)
+    let tv = ev.eval_value(&a[0]);
+    if let Value::Arr(t) = &tv {
+        let t = t.clone();
+        let mut out = Vec::with_capacity(t.data.len());
+        for v in t.data.iter() {
+            let r = xlookup_one(ev, a, v.clone());
+            out.push(match ev.res_value(r) {
+                Value::Arr(x) if x.rows * x.cols >= 1 => x.get(0, 0).clone(),
+                v => v,
+            });
+        }
+        return arr_val(Array::new(t.rows, t.cols, out));
+    }
+    xlookup_one(ev, a, tv)
+}
+
+fn xlookup_one(ev: &mut Eval, a: &[Expr], target: Value) -> Res {
     let la = tri!(array_of(ev, &a[1]));
     let ra = tri!(array_of(ev, &a[2]));
     let mm = tri!(opt_num(ev, a, 4, 0.0)) as i32;
@@ -337,10 +355,30 @@ fn xlookup(ev: &mut Eval, a: &[Expr]) -> Res {
 }
 
 fn index(ev: &mut Eval, a: &[Expr]) -> Res {
-    let r = ev.eval(&a[0]);
-    let row = tri!(opt_num(ev, a, 1, 0.0)).trunc() as i64;
-    let col = tri!(opt_num(ev, a, 2, 0.0)).trunc() as i64;
+    // an array of row or column numbers gives an array of picks: INDEX(A1:B5,{1,2},2)
+    let rv = if is_missing(a, 1) { Value::num(0.0) } else { ev.eval_value(&a[1]) };
+    let cv = if is_missing(a, 2) { Value::num(0.0) } else { ev.eval_value(&a[2]) };
     let area_n = tri!(opt_num(ev, a, 3, 1.0)).trunc() as i64;
+    if matches!(rv, Value::Arr(_)) || matches!(cv, Value::Arr(_)) {
+        let base = ev.eval(&a[0]);
+        let out = lift_values(ev, &[rv, cv], |ev, v| {
+            let row = match vnum(ev, &v[0]) { Ok(x) => x.trunc() as i64, Err(e) => return Value::Err(e) };
+            let col = match vnum(ev, &v[1]) { Ok(x) => x.trunc() as i64, Err(e) => return Value::Err(e) };
+            let r = index_core(ev, a, base.clone(), row, col, area_n);
+            match ev.res_value(r) {
+                Value::Arr(x) if x.rows * x.cols >= 1 => x.get(0, 0).clone(),
+                v => v,
+            }
+        });
+        return Res::V(out);
+    }
+    let row = match vnum(ev, &rv) { Ok(x) => x.trunc() as i64, Err(e) => return Res::err(e) };
+    let col = match vnum(ev, &cv) { Ok(x) => x.trunc() as i64, Err(e) => return Res::err(e) };
+    let r = ev.eval(&a[0]);
+    index_core(ev, a, r, row, col, area_n)
+}
+
+fn index_core(ev: &mut Eval, a: &[Expr], r: Res, row: i64, col: i64, area_n: i64) -> Res {
     if row < 0 || col < 0 {
         return Res::err(XlErr::Value);
     }
@@ -894,6 +932,9 @@ fn wrap(ev: &mut Eval, a: &[Expr], rows: bool) -> Res {
     let n = arr.data.len();
     let k = n.div_ceil(w);
     let (nr, nc) = if rows { (k, w) } else { (w, k) };
+    if !super::array_size_ok(nr, nc) {
+        return Res::err(XlErr::Num);
+    }
     let mut data = vec![pad; nr * nc];
     for (i, v) in arr.data.iter().enumerate() {
         let (r, c) = if rows { (i / w, i % w) } else { (i % w, i / w) };

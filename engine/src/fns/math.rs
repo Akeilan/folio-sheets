@@ -43,8 +43,9 @@ pub static DEFS: &[Def] = &[
     d!("FACT", 1, 1, |ev, a| math1(ev, a, |x| if x < 0.0 { Value::Err(XlErr::Num) } else { Value::num(fact(x.floor())) })),
     d!("FACTDOUBLE", 1, 1, |ev, a| math1(ev, a, |x| {
         if x < -1.0 { return Value::Err(XlErr::Num); }
-        let mut n = x.floor(); let mut p = 1.0;
-        while n > 1.0 { p *= n; n -= 2.0; }
+        let mut n = x.floor(); let mut p = 1.0f64;
+        while n > 1.0 && p.is_finite() { p *= n; n -= 2.0; }
+        if !p.is_finite() { return Value::Err(XlErr::Num); }
         Value::num(p)
     })),
     d!("GAMMA", 1, 1, |ev, a| math1(ev, a, |x| {
@@ -124,13 +125,17 @@ pub static DEFS: &[Def] = &[
     d!("COMBIN", 2, 2, |ev, a| math2(ev, a, |n, k| {
         let (n, k) = (n.trunc(), k.trunc());
         if n < 0.0 || k < 0.0 || k > n { return Value::Err(XlErr::Num); }
-        Value::num(combin(n, k))
+        let r = combin(n, k);
+        if !r.is_finite() { return Value::Err(XlErr::Num); }
+        Value::num(r)
     })),
     d!("COMBINA", 2, 2, |ev, a| math2(ev, a, |n, k| {
         let (n, k) = (n.trunc(), k.trunc());
         if n < 0.0 || k < 0.0 || (n == 0.0 && k > 0.0) { return Value::Err(XlErr::Num); }
         if n == 0.0 && k == 0.0 { return Value::num(1.0); }
-        Value::num(combin(n + k - 1.0, k))
+        let r = combin(n + k - 1.0, k);
+        if !r.is_finite() { return Value::Err(XlErr::Num); }
+        Value::num(r)
     })),
     d!("MULTINOMIAL", 1, MANY, |ev, a| {
         let v = tri!(collect(ev, a, Mode::Plain));
@@ -191,6 +196,7 @@ pub static DEFS: &[Def] = &[
         let n = tri!(num(ev, &a[0])).trunc() as i64;
         if n < 1 { return Res::err(XlErr::Value); }
         let n = n as usize;
+        if !super::array_size_ok(n, n) { return Res::err(XlErr::Num); }
         let mut data = vec![Value::num(0.0); n * n];
         for i in 0..n { data[i * n + i] = Value::num(1.0); }
         arr_val(Array::new(n, n, data))
@@ -313,6 +319,9 @@ pub fn combin(n: f64, k: f64) -> f64 {
     let mut i = 0.0;
     while i < k {
         r = r * (n - i) / (i + 1.0);
+        if !r.is_finite() {
+            return f64::INFINITY;
+        }
         i += 1.0;
     }
     r.round()
@@ -465,7 +474,8 @@ fn subtotal(ev: &mut Eval, a: &[Expr]) -> Res {
                 for ar in &areas {
                     let rc = ev.bound(ar);
                     for (rr, cc, v) in ev.ctx.cells_in(ar.sheet, rc) {
-                        if skip_hidden && ev.ctx.row_hidden(ar.sheet, rr) {
+                        // 101-111 skip every hidden row; 1-11 only the rows a filter hides
+                        if if skip_hidden { ev.ctx.row_hidden(ar.sheet, rr) } else { ev.ctx.row_filtered(ar.sheet, rr) } {
                             continue;
                         }
                         if ev.ctx.is_subtotal(ar.sheet, rr, cc) {

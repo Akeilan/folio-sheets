@@ -309,6 +309,10 @@ fn networkdays(ev: &mut Eval, a: &[Expr], intl: bool) -> Res {
     let e = tri!(num(ev, &a[1])).floor();
     let mask = tri!(weekend_mask(ev, a, 2, intl));
     let hol = tri!(holidays(ev, a, if intl { 3 } else { 2 }));
+    // dates outside the calendar (before 1900 or after 9999) are #NUM!, and would never end
+    if !(0.0..=2958465.0).contains(&s) || !(0.0..=2958465.0).contains(&e) {
+        return Res::err(XlErr::Num);
+    }
     let (lo, hi, sign) = if s <= e { (s, e, 1.0) } else { (e, s, -1.0) };
     let mut n = 0.0;
     let mut x = lo;
@@ -326,6 +330,9 @@ fn workday(ev: &mut Eval, a: &[Expr], intl: bool) -> Res {
     let days = tri!(num(ev, &a[1])).trunc();
     let mask = tri!(weekend_mask(ev, a, 2, intl));
     let hol = tri!(holidays(ev, a, if intl { 3 } else { 2 }));
+    if !(0.0..=2958465.0).contains(&s) || days.abs() > 2958465.0 {
+        return Res::err(XlErr::Num);
+    }
     let step = if days >= 0.0 { 1.0 } else { -1.0 };
     let mut left = days.abs();
     let mut x = s;

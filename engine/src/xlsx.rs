@@ -131,7 +131,15 @@ pub(crate) fn relative(base_part: &str, target: &str) -> String {
 
 /// Text escaped for OOXML: control characters as _xHHHH_.
 fn esc_ooxml(t: &str, out: &mut String) {
-    for ch in t.chars() {
+    let cs: Vec<char> = t.chars().collect();
+    for (i, &ch) in cs.iter().enumerate() {
+        // a literal "_x0041_" in the text: its underscore is written as _x005F_ so readers
+        // don't take the rest for an escaped character
+        if ch == '_' && i + 6 < cs.len() + 0 && cs.get(i + 1) == Some(&'x') && cs.get(i + 6) == Some(&'_')
+            && cs[i + 2..i + 6].iter().all(|c| c.is_ascii_hexdigit()) {
+            out.push_str("_x005F_");
+            continue;
+        }
         match ch {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
@@ -171,6 +179,7 @@ impl Book {
         let data = std::fs::read(path).map_err(|e| format!("Could not open {}: {}", path, e))?;
         let mut b = Book::from_bytes(&data)?;
         b.file.path = Some(path.to_string());
+        b.fit_unsized_rows();
         Ok(b)
     }
 
@@ -2100,7 +2109,7 @@ impl Book {
             out.push_str("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
         } else {
             out.push_str(if sh.prolog.trim().is_empty() { xml::DECL } else { &sh.prolog });
-            out.push_str(&sh.root_open);
+            out.push_str(&with_rel_ns(&sh.root_open));
         }
         let pfx = {
             let n = sh.root_open.trim_start_matches('<');
@@ -2767,4 +2776,30 @@ pub(crate) fn flatten_objs(objs: &[crate::drawing::Obj]) -> Vec<&crate::drawing:
         out.extend(flatten_objs(&o.members));
     }
     out
+}
+
+/// The sheet's own root element, with the relationships prefix declared on it. Some writers
+/// declare `r` only on the elements that use it (openpyxl does, on `<tablePart>` and
+/// `<drawing>`); those elements are written again here as `<drawing r:id=...>`, so without this
+/// the saved sheet uses a prefix nothing declares and other programs refuse the file.
+pub(crate) fn with_rel_ns(root_open: &str) -> String {
+    if root_open.contains("xmlns:r=") {
+        return root_open.to_string();
+    }
+    let t = root_open.trim_end();
+    let (head, tail) = if let Some(h) = t.strip_suffix("/>") { (h, "/>") } else if let Some(h) = t.strip_suffix('>') { (h, ">") } else { (t, "") };
+    format!("{} xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"{}", head.trim_end(), tail)
+}
+
+#[cfg(test)]
+mod rel_ns_tests {
+    use super::with_rel_ns;
+    #[test]
+    fn declares_r_once() {
+        let a = with_rel_ns("<worksheet xmlns=\"m\">");
+        assert_eq!(a, "<worksheet xmlns=\"m\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
+        let b = with_rel_ns(&a);
+        assert_eq!(a, b);
+        assert!(with_rel_ns("<x:worksheet xmlns:x=\"m\" >").ends_with("relationships\">"));
+    }
 }

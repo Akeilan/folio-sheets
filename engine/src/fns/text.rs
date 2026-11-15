@@ -144,8 +144,11 @@ pub static DEFS: &[Def] = &[
     d!("TEXT", 2, 2, |ev, a| lift(ev, a, |ev, v| {
         let code = match vtext(&v[1]) { Ok(c) => c, Err(e) => return Value::Err(e) };
         let f = crate::numfmt::get(&code);
+        // a date or time format can't show a negative number or one past 9999: #VALUE!
+        let out_of_range = |n: f64| f.is_date() && (n < 0.0 || n >= 2958466.0);
         match &v[0] {
             Value::Err(e) => Value::Err(*e),
+            Value::Num(n) if out_of_range(*n) => Value::Err(XlErr::Value),
             Value::Str(s) => match crate::calc::text_to_number(s, ev.d1904()) {
                 Some(n) => Value::string(f.number(n, ev.d1904(), 11).text),
                 None => Value::string(f.text(s).text),
@@ -172,6 +175,7 @@ pub static DEFS: &[Def] = &[
         lift(ev, a, move |ev, v| {
             let x = match vnum(ev, &v[0]) { Ok(x) => x, Err(e) => return Value::Err(e) };
             let d = if n > 1 { match vnum(ev, &v[1]) { Ok(d) => d.trunc(), Err(e) => return Value::Err(e) } } else { 2.0 };
+            if d > 127.0 { return Value::Err(XlErr::Value); }
             let r = super::math::round_half_away(x, d);
             let dd = d.max(0.0) as usize;
             let body = format!("#,##0{}", if dd > 0 { format!(".{}", "0".repeat(dd)) } else { String::new() });
@@ -291,6 +295,9 @@ fn replace(ev: &mut Eval, a: &[Expr]) -> Res {
         let cs = chars(&s);
         let a0 = (st as usize - 1).min(cs.len());
         let b0 = (a0 + n as usize).min(cs.len());
+        if a0 + new.chars().count() + (cs.len() - b0) > 32767 {
+            return Value::Err(XlErr::Value);
+        }
         let mut out: String = cs[..a0].iter().collect();
         out.push_str(&new);
         out.extend(cs[b0..].iter());
@@ -323,6 +330,12 @@ fn substitute(ev: &mut Eval, a: &[Expr]) -> Res {
                 idx += p + old.len();
             }
             return Value::string(s);
+        }
+        // a cell holds at most 32,767 characters: work out the length before building it
+        let hits = s.matches(&old).count();
+        let len = s.chars().count() + hits * new.chars().count() - hits * old.chars().count();
+        if len > 32767 {
+            return Value::Err(XlErr::Value);
         }
         Value::string(s.replace(&old, &new))
     })
@@ -382,32 +395,36 @@ fn textsplit(ev: &mut Eval, a: &[Expr]) -> Res {
     let ignore = tri!(opt_bool(ev, a, 3, false));
     let nocase = tri!(opt_num(ev, a, 4, 0.0)) != 0.0;
     let pad = if is_missing(a, 5) { Value::Err(XlErr::NA) } else { ev.eval_scalar(&a[5]) };
+    // Delimiters are matched on the original text, character by character, so the pieces cut
+    // from it line up even when lower-casing changes a character's length.
+    let starts = |t: &str, d: &str| -> Option<usize> {
+        if !nocase {
+            return if t.starts_with(d) { Some(d.len()) } else { None };
+        }
+        let mut ti = t.char_indices();
+        for dc in d.chars() {
+            let (_, tc) = ti.next()?;
+            if !tc.to_lowercase().eq(dc.to_lowercase()) {
+                return None;
+            }
+        }
+        Some(ti.next().map(|(k, _)| k).unwrap_or(t.len()))
+    };
     let split = |t: &str, ds: &[String]| -> Vec<String> {
         if ds.is_empty() || ds.iter().all(|d| d.is_empty()) {
             return vec![t.to_string()];
         }
-        let hay = if nocase { t.to_lowercase() } else { t.to_string() };
         let mut out = Vec::new();
         let mut last = 0;
         let mut i = 0;
-        while i < hay.len() {
-            let mut hit = None;
-            for d in ds {
-                if d.is_empty() {
-                    continue;
-                }
-                let d2 = if nocase { d.to_lowercase() } else { d.clone() };
-                if hay[i..].starts_with(&d2) {
-                    hit = Some(d2.len());
-                    break;
-                }
-            }
+        while i < t.len() {
+            let hit = ds.iter().filter(|d| !d.is_empty()).find_map(|d| starts(&t[i..], d));
             if let Some(l) = hit {
                 out.push(t[last..i].to_string());
                 i += l;
                 last = i;
             } else {
-                i += hay[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                i += t[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
             }
         }
         out.push(t[last..].to_string());
@@ -416,7 +433,12 @@ fn textsplit(ev: &mut Eval, a: &[Expr]) -> Res {
         }
         out
     };
-    let rows: Vec<Vec<String>> = split(&s, &row_d).iter().map(|r| split(r, &col_d)).collect();
+    let mut rows: Vec<Vec<String>> = split(&s, &row_d).iter().map(|r| split(r, &col_d)).filter(|r| !r.is_empty()).collect();
+    if rows.is_empty() {
+        // everything was a delimiter and empty pieces are ignored: Excel answers #CALC!
+        return Res::err(XlErr::Calc);
+    }
+    rows.retain(|r| !r.is_empty());
     let nr = rows.len().max(1);
     let nc = rows.iter().map(|r| r.len()).max().unwrap_or(1).max(1);
     let mut data = Vec::with_capacity(nr * nc);

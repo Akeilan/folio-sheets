@@ -11,6 +11,7 @@ pub mod styles;
 pub mod sheet;
 pub mod calc;
 pub mod input;
+pub mod locale;
 pub mod fns;
 pub mod ffi;
 pub mod layout;

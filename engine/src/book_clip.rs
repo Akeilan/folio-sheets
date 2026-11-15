@@ -151,6 +151,9 @@ impl Book {
         if cut && src_s == dst_s && o.what == What::All && !o.transpose {
             return self.move_cells(src_s, src, dst.r1, dst.c1);
         }
+        if cut && o.what == What::All && !o.transpose {
+            return self.move_cells_to(src_s, src, dst_s, dst, o);
+        }
         if o.what == What::Validation {
             let (h, w) = (src.rows() as u32, src.cols() as u32);
             let out = if dst.r1 == dst.r2 && dst.c1 == dst.c2 {
@@ -446,6 +449,70 @@ impl Book {
     }
 
     /// Cut and paste on one sheet: the cells move, and every reference to them follows.
+    /// Cut to another sheet: formulas anywhere that used the cells follow them there, and the
+    /// moved formulas keep pointing at the cells they used (on the sheet they came from).
+    fn move_cells_to(&mut self, src_s: usize, src: Rect, dst_s: usize, dst: Rect, o: PasteOpts) -> Result<Rect, String> {
+        let (r, c) = (dst.r1, dst.c1);
+        if r + src.rows() - 1 >= MAX_ROWS || c + src.cols() - 1 >= MAX_COLS {
+            return Err("The information cannot be pasted because the paste area is outside the sheet.".into());
+        }
+        let (dr, dc) = (r as i64 - src.r1 as i64, c as i64 - src.c1 as i64);
+        let from = self.sheets[src_s].name.clone();
+        let to = self.sheets[dst_s].name.clone();
+        self.begin_group("Paste", dst_s);
+        self.begin("Paste", dst_s);
+        let how = Adjust::Move { sheet: &from, here: &from, src, dr, dc, to: Some(&to) };
+        self.rewrite_formulas(&how, None);
+        let mut names = self.names.clone();
+        let mut changed = false;
+        for n in names.iter_mut() {
+            let here = n.scope.and_then(|i| self.sheets.get(i)).map(|x| x.name.clone()).unwrap_or_default();
+            let t = formula::adjust(&n.text, &crate::book::rebase(&how, &here));
+            if t != n.text {
+                n.text = t;
+                changed = true;
+            }
+        }
+        if changed {
+            self.record(Delta::Names(names));
+        }
+        self.commit();
+        // the moved formulas, as they must read on their new sheet
+        let mut moved: Vec<(u32, u32, String)> = Vec::new();
+        for (rr, cc) in self.sheets[src_s].positions_in(src) {
+            if let Some(f) = self.sheets[src_s].get(rr, cc).and_then(|x| x.f.clone()) {
+                if matches!(f.kind, FKind::Normal | FKind::Dynamic) {
+                    let t = formula::adjust(&f.text, &Adjust::Rehome { from: &from, to: &to });
+                    moved.push(((rr as i64 + dr) as u32, (cc as i64 + dc) as u32, t));
+                }
+            }
+        }
+        let out = self.paste_cells(src_s, src, dst_s, dst, o, false);
+        let out = match out {
+            Ok(x) => x,
+            Err(e) => {
+                self.end_group();
+                return Err(e);
+            }
+        };
+        self.begin("Paste", dst_s);
+        for (rr, cc, t) in moved {
+            if let Some(mut cell) = self.sheets[dst_s].get(rr, cc).cloned() {
+                if let Some(f) = &cell.f {
+                    let mut nf = (**f).clone();
+                    nf.text = t;
+                    nf.expr = formula::parse(&nf.text).ok();
+                    cell.f = Some(Rc::new(nf));
+                    self.record(Delta::Cell(dst_s, rr, cc, Some(cell)));
+                }
+            }
+        }
+        self.commit();
+        let r = self.clear_all(src_s, src, "Paste");
+        self.end_group();
+        r.map(|_| out)
+    }
+
     pub fn move_cells(&mut self, s: usize, src: Rect, r: u32, c: u32) -> Result<Rect, String> {
         let dst = Rect::new(r, c, r + src.rows() - 1, c + src.cols() - 1);
         if dst.r2 >= MAX_ROWS || dst.c2 >= MAX_COLS {
@@ -462,7 +529,7 @@ impl Book {
         let (dr, dc) = (r as i64 - src.r1 as i64, c as i64 - src.c1 as i64);
         let name = self.sheets[s].name.clone();
         self.begin("Paste", s);
-        let how = Adjust::Move { sheet: &name, here: &name, src, dr, dc };
+        let how = Adjust::Move { sheet: &name, here: &name, src, dr, dc, to: None };
         // references everywhere (the moving cells' own included) follow the cells
         self.rewrite_formulas(&how, None);
         let mut names = self.names.clone();

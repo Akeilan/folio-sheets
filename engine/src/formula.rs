@@ -673,9 +673,21 @@ pub fn strip_prefixes(name: &str) -> &str {
 pub struct Parser<'a> {
     toks: Vec<&'a Token>,
     pos: usize,
+    /// operands entered and not yet finished: brackets, function arguments and signs nest it
+    depth: u32,
 }
 
+/// As in the original: a formula may hold 8,192 characters.
+pub const MAX_FORMULA_CHARS: usize = 8192;
+/// Nesting deeper than this is refused rather than overflowing the stack (the original allows
+/// 64 levels of functions).
+pub const MAX_NESTING: u32 = 256;
+pub const NESTING_MSG: &str = "This formula has more levels of nesting than allowed.";
+
 pub fn parse(src: &str) -> Result<Expr, String> {
+    if src.chars().count() > MAX_FORMULA_CHARS {
+        return Err("This formula is too long. Formulas may hold 8,192 characters.".into());
+    }
     let toks = tokenize(src)?;
     parse_tokens(&toks)
 }
@@ -696,7 +708,7 @@ pub fn parse_tokens(toks: &[Token]) -> Result<Expr, String> {
         }
         keep.push(t);
     }
-    let mut p = Parser { toks: keep, pos: 0 };
+    let mut p = Parser { toks: keep, pos: 0, depth: 0 };
     if p.toks.is_empty() {
         return Err("The formula is empty.".into());
     }
@@ -765,6 +777,16 @@ impl<'a> Parser<'a> {
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
+        self.depth += 1;
+        if self.depth > MAX_NESTING {
+            return Err(NESTING_MSG.into());
+        }
+        let r = self.unary_inner();
+        self.depth -= 1;
+        r
+    }
+
+    fn unary_inner(&mut self) -> Result<Expr, String> {
         match self.peek() {
             Some(t) if t.kind == TokKind::Op && (t.text == "-" || t.text == "+") => {
                 self.next();
@@ -973,8 +995,12 @@ pub enum Adjust<'a> {
     RenameSheet(&'a str, &'a str),
     /// a sheet deleted: references to it become #REF!
     DeleteSheet(&'a str),
-    /// cut/paste: references into `src` on `sheet` move by (dr, dc)
-    Move { sheet: &'a str, here: &'a str, src: crate::cellref::Rect, dr: i64, dc: i64 },
+    /// cut/paste: references into `src` on `sheet` move by (dr, dc), and to sheet `to` when
+    /// the cells were cut to another sheet
+    Move { sheet: &'a str, here: &'a str, src: crate::cellref::Rect, dr: i64, dc: i64, to: Option<&'a str> },
+    /// a formula carried from sheet `from` to sheet `to` that must keep pointing where it did:
+    /// its unqualified references name `from`, and those naming `to` lose the sheet name
+    Rehome { from: &'a str, to: &'a str },
 }
 
 fn same(a: Option<&String>, here: &str, target: &str) -> bool {
@@ -1129,12 +1155,26 @@ pub fn adjust_ref(mut r: RefTok, how: &Adjust) -> String {
             }
             r.write()
         }
-        Adjust::Move { sheet, here, src, dr, dc } => {
+        Adjust::Rehome { from, to } => {
+            if r.sheet2.is_none() {
+                match &r.sheet {
+                    None => r.sheet = Some(from.to_string()),
+                    Some(n) if n.eq_ignore_ascii_case(to) => r.sheet = None,
+                    _ => {}
+                }
+            }
+            r.write()
+        }
+        Adjust::Move { sheet, here, src, dr, dc, to } => {
             if !same(r.sheet.as_ref(), here, sheet) || r.sheet2.is_some() {
                 return r.write();
             }
             let rect = crate::cellref::Rect::new(r.r1, r.c1, r.r2, r.c2);
             if src.contains_rect(&rect) {
+                if let Some(to) = to {
+                    // the cells now live on another sheet: name it, unless the formula is there
+                    r.sheet = if here.eq_ignore_ascii_case(to) { None } else { Some(to.to_string()) };
+                }
                 if let (Some(a), Some(b), Some(c), Some(d)) = (
                     shift_coord(r.r1, *dr, MAX_ROWS), shift_coord(r.r2, *dr, MAX_ROWS),
                     shift_coord(r.c1, *dc, MAX_COLS), shift_coord(r.c2, *dc, MAX_COLS),

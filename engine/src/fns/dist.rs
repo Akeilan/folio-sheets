@@ -594,6 +594,19 @@ fn critbinom(x: &[f64]) -> Result<f64, XlErr> {
     if n < 0.0 || !(0.0..=1.0).contains(&p) || !(0.0..=1.0).contains(&al) {
         return Err(num_e());
     }
+    if n > 2000.0 {
+        // a large n: the smallest k whose cumulative probability reaches alpha, by bisection
+        // (summing term by term took seconds with n in the millions)
+        let (mut lo, mut hi) = (0.0f64, n);
+        if binom_cdf(0.0, n, p) >= al - 1e-12 {
+            return Ok(0.0);
+        }
+        while hi - lo > 1.0 {
+            let mid = ((lo + hi) / 2.0).floor();
+            if binom_cdf(mid, n, p) >= al - 1e-12 { hi = mid } else { lo = mid }
+        }
+        return Ok(hi);
+    }
     let mut k = 0.0;
     let mut c = 0.0;
     while k <= n {

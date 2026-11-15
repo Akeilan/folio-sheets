@@ -2890,6 +2890,53 @@ fn format_number_fn(v: f64, code: &str) -> String {
     crate::numfmt::format_number(v, code, false)
 }
 
+/// Follow regional settings: decimal, group, date_order ("MDY", "DMY", "YMD"), short_date,
+/// currency, currency_before, currency_space. Missing keys keep the US defaults.
+#[pyfunction]
+fn set_locale(d: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
+    let mut l = crate::locale::Locale::default();
+    let ch = |k: &str, cur: char| -> char {
+        d.get_item(k).ok().flatten().and_then(|v| v.extract::<String>().ok()).and_then(|s| s.chars().next()).unwrap_or(cur)
+    };
+    l.decimal = ch("decimal", l.decimal);
+    l.group = ch("group", l.group);
+    if l.group == l.decimal {
+        l.group = if l.decimal == ',' { '.' } else { ',' };
+    }
+    if let Some(o) = d.get_item("date_order").ok().flatten().and_then(|v| v.extract::<String>().ok()) {
+        l.date_order = match o.to_ascii_uppercase().as_str() {
+            "DMY" => crate::locale::DateOrder::Dmy,
+            "YMD" => crate::locale::DateOrder::Ymd,
+            _ => crate::locale::DateOrder::Mdy,
+        };
+    }
+    if let Some(sd) = d.get_item("short_date").ok().flatten().and_then(|v| v.extract::<String>().ok()) {
+        if !sd.is_empty() {
+            l.short_date = sd;
+        }
+    }
+    if let Some(c) = d.get_item("currency").ok().flatten().and_then(|v| v.extract::<String>().ok()) {
+        if !c.is_empty() {
+            l.currency = c;
+        }
+    }
+    if let Some(b) = d.get_item("currency_before").ok().flatten().and_then(|v| v.extract::<bool>().ok()) {
+        l.currency_before = b;
+    }
+    if let Some(b) = d.get_item("currency_space").ok().flatten().and_then(|v| v.extract::<bool>().ok()) {
+        l.currency_space = b;
+    }
+    crate::locale::set(l);
+    Ok(())
+}
+
+#[pyfunction]
+fn get_locale() -> (String, String, String, String, String) {
+    let l = crate::locale::get();
+    let o = match l.date_order { crate::locale::DateOrder::Dmy => "DMY", crate::locale::DateOrder::Ymd => "YMD", _ => "MDY" };
+    (l.decimal.to_string(), l.group.to_string(), o.to_string(), l.short_date, l.currency)
+}
+
 #[pyfunction]
 fn function_names() -> Vec<&'static str> {
     crate::fns::names()
@@ -2914,6 +2961,8 @@ fn folio_sheets_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(col_name, m)?)?;
     m.add_function(wrap_pyfunction!(format_number_fn, m)?)?;
     m.add_function(wrap_pyfunction!(function_names, m)?)?;
+    m.add_function(wrap_pyfunction!(set_locale, m)?)?;
+    m.add_function(wrap_pyfunction!(get_locale, m)?)?;
     m.add_function(wrap_pyfunction!(parse_ref, m)?)?;
     m.add_function(wrap_pyfunction!(ref_spans, m)?)?;
     m.add("MAX_ROWS", MAX_ROWS)?;
