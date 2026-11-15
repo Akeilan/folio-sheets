@@ -1,0 +1,17 @@
+exec(open("/tmp/b6/uiharn.py").read())
+focus(); S = g.sheet
+def st(tag):
+    ed = g.editing(); info(tag, dict(active=A(), editing=bool(ed), text=(g.editor.text() if ed else None), msg=MSG[-1:][0][:60] if MSG else None)); MSG.clear()
+at(0, 0); typ("-5%"); st("typed -5%"); key("Return"); st("after Enter"); info("A1", (I(0, 0), V(0, 0), D(0, 0)))
+if g.editing(): key("Escape")
+at(1, 0); typ("-5"); key("Return"); info("A2 after -5", (I(1, 0), V(1, 0)))
+if g.editing(): key("Escape")
+at(2, 0); typ("-abc"); key("Return"); st("after -abc Enter"); info("A3", (I(2, 0), V(2, 0)))
+if g.editing(): key("Escape")
+at(3, 0); typ("+5"); key("Return"); info("A4 after +5", (I(3, 0), V(3, 0)))
+if g.editing(): key("Escape")
+at(4, 0); typ("-A2"); key("Return"); st("after -A2"); info("A5 after -A2", (I(4, 0), V(4, 0)))
+if g.editing(): key("Escape")
+at(5, 0); typ("-"); key("Up"); st("after '-' then Up (Excel points: -A5)")
+if g.editing(): key("Escape")
+done()

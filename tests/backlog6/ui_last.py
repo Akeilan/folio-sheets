@@ -1,0 +1,11 @@
+exec(open("/tmp/b6/uiharn.py").read())
+focus(); S = g.sheet
+at(0, 0); typ("+1+1"); key("Return"); info("typing +1+1", (I(0, 0), V(0, 0)))
+if g.editing(): key("Escape")
+at(1, 0); typ("+A1*2"); key("Return"); info("typing +A1*2", (I(1, 0), V(1, 0)))
+if g.editing(): key("Escape")
+at(2, 0); typ("2/29/1900"); key("Return"); info("typing 2/29/1900", (I(2, 0), V(2, 0)))
+at(3, 0); typ("1,23"); key("Return"); info("typing 1,23", (I(3, 0), V(3, 0)))
+b.mark_saved(); win.save_to("/tmp/b6/tpl.xltx"); win.load("/tmp/b6/tpl.xltx"); pump(0.2); info("an .xltx opened: window path, title", (win.path, win.get_title()))
+open("/tmp/b6/enc.xlsx", "wb").write(bytes.fromhex("d0cf11e0a1b11ae1") + b"\x00" * 2000); MSG.clear(); win.load("/tmp/b6/enc.xlsx"); pump(0.2); info("an encrypted workbook (OLE container)", MSG[:1])
+done()
