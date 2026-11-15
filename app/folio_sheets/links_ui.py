@@ -9,6 +9,21 @@ from gi.repository import GLib, Gtk
 from .core import parse_ref
 
 LINK_COLOR = 0x0563C1
+
+_URL = __import__("re").compile(r"^(?:(?:https?|ftp)://|www\.)[^\s]+\.[^\s]+$", __import__("re").I)
+_MAIL = __import__("re").compile(r"^(?:mailto:)?[\w.+-]+@[\w-]+(?:\.[\w-]+)+$", __import__("re").I)
+
+
+def auto_link(text):
+    """The link a typed web or e-mail address becomes (AutoCorrect's Internet paths), or None."""
+    t = text.strip()
+    if not t or t != text or "\n" in t:
+        return None
+    if _URL.match(t):
+        return t if "://" in t else "http://" + t
+    if _MAIL.match(t):
+        return t if t.lower().startswith("mailto:") else "mailto:" + t
+    return None
 HOLD_TO_SELECT = 0.6        # seconds: a longer click selects the cell instead of following
 KINDS = [("web", "Existing File\nor Web Page"), ("place", "Place in This\nDocument"), ("email", "E-mail\nAddress")]
 

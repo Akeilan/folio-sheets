@@ -392,6 +392,30 @@ impl Book {
         Ok(i)
     }
 
+    /// A chart sheet holding the chart, inserted at `at` (F11). Returns the sheet's index.
+    pub fn add_chart_sheet(&mut self, at: usize, ch: Chart) -> Result<usize, String> {
+        let at = at.min(self.sheets.len());
+        let mut k = 1;
+        let name = loop {
+            let n = format!("Chart{}", k);
+            if self.sheet_index(&n).is_none() {
+                break n;
+            }
+            k += 1;
+        };
+        let id = self.sheets.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+        let mut sh = crate::sheet::Sheet::new(id, &name);
+        sh.kind = "chart".into();
+        // the size the original gives a new chart sheet (fitted to the window when shown)
+        let anchor = Anchor::Abs { x: 0, y: 0, cx: 8_670_000, cy: 6_300_000 };
+        sh.objects = vec![Obj { anchor, body: chart_frame(2, "Chart 1"), chart: Some(Rc::new(ch)), name: "Chart 1".into(), part: None, picture: None, pic_part: None,
+                                ink: None, ink_part: None, raw: None, slicer: None, members: Vec::new(), chartex: None }];
+        self.begin("Insert Chart Sheet", at);
+        self.record(Delta::AddSheet(at, Box::new(sh)));
+        self.commit();
+        Ok(at)
+    }
+
     /// A chart of the selection, placed at (x, y).
     pub fn insert_chart(&mut self, s: usize, rc: Rect, kind: &str, x: f64, y: f64) -> Result<usize, String> {
         let ch = self.chart_from_range(s, rc, kind)?;

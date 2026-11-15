@@ -151,13 +151,58 @@ class FormulaAssist:
         p = self.point
         r1, c1 = p["anchor"]
         r2, c2 = p["cursor"]
-        s = ref_text(min(r1, r2), min(c1, c2), max(r1, r2), max(c1, c2), self._sheet_prefix())
+        s = self._table_ref(r1, c1, r2, c2) or self._pivot_ref(r1, c1, r2, c2) or ref_text(min(r1, r2), min(c1, c2), max(r1, r2), max(c1, c2), self._sheet_prefix())
         self._replace(p["start"], p["end"], s)
         p["end"] = p["start"] + len(s)
         g = self.win.grid
         g.ensure_visible(r2, c2)
         self.win.status.set_mode("Point")
         self.update()
+
+    def _pivot_ref(self, r1, c1, r2, c2):
+        """Pointing at a PivotTable value writes GETPIVOTDATA (Generate GetPivotData, on by default)."""
+        g = self.win.grid
+        if (r1, c1) != (r2, c2) or not self.win.app.settings.get("getpivotdata", True):
+            return None
+        b = self.win.book
+        if b.pivot_at(g.sheet, r1, c1) is None:
+            return None
+        role = b.pivot_role(g.sheet, r1, c1)
+        if not role or role[0] not in ("data", "subtotal", "grand_row", "grand_col"):
+            return None
+        f = b.getpivotdata_formula(g.sheet, r1, c1)
+        if not f:
+            return None
+        body = f[1:]
+        pre = self._sheet_prefix()
+        if pre:
+            # the anchor cell on the pivot's sheet
+            import re
+            q = pre if re.match(r"^[A-Za-z_][\w.]*$", pre) else "'%s'" % pre.replace("'", "''")
+            body = body.replace(",$", "," + q + "!$", 1)
+        return body
+
+    def _table_ref(self, r1, c1, r2, c2):
+        """Pointing at a cell of a table from the same row of that table writes [@Column], as the
+        original does (S6-20)."""
+        g = self.win.grid
+        if g.editor.cell is None or g.edit_sheet not in (None, g.sheet) or (r1, c1) != (r2, c2):
+            return None
+        er, ec = g.editor.cell
+        b = self.win.book
+        ti = b.table_at(g.sheet, r1, c1)
+        if ti is None or b.table_at(g.sheet, er, ec) != ti or er != r1:
+            return None
+        t = b.tables(g.sheet)[ti]
+        d = t["data"]
+        if not (d[0] <= r1 <= d[2]) or not t.get("header"):
+            return None
+        hr = t["ref"][0]
+        name = b.display(g.sheet, hr, c1)
+        if not name:
+            return None
+        esc = "".join("'" + ch if ch in "[]#'" else ch for ch in name)
+        return "[@%s]" % esc if all(ch.isalnum() or ch == "_" for ch in name) else "[@[%s]]" % esc
 
     def point_move(self, dr, dc, extend=False):
         g = self.win.grid
@@ -255,6 +300,9 @@ class FormulaAssist:
             return
         tt = buf.get_tag_table()
         for i, c in enumerate(REF_COLORS):
+            if tt.lookup("ref%d" % i) is not None:
+                # the buffer already has them (S6-35: adding them again filled the console)
+                continue
             tag = Gtk.TextTag(name="ref%d" % i)
             tag.set_property("foreground", "#%06x" % c)
             tt.add(tag)

@@ -1514,6 +1514,26 @@ impl PyBook {
         let d = self.b.copy_to_bytes(s, rect(rg)).map_err(verr)?;
         Ok(PyBytes::new_bound(py, &d))
     }
+    /// The copy of a block with only these rows (absolute row numbers).
+    fn copy_rows_to_bytes<'py>(&self, py: Python<'py>, s: usize, rg: R4, rows: Vec<u32>) -> PyResult<Bound<'py, PyBytes>> {
+        self.sheet(s)?;
+        let d = self.b.copy_rows_to_bytes(s, rect(rg), Some(&rows)).map_err(verr)?;
+        Ok(PyBytes::new_bound(py, &d))
+    }
+    /// The rows between r1 and r2 that a filter hides.
+    fn filtered_rows(&self, s: usize, r1: u32, r2: u32) -> PyResult<Vec<u32>> {
+        self.sheet(s)?;
+        let sh = &self.b.sheets[s];
+        if sh.autofilter.is_none() && !sh.tables.iter().any(|t| t.filter.is_some()) {
+            return Ok(vec![]);
+        }
+        Ok((r1..=r2.min(crate::cellref::MAX_ROWS - 1)).filter(|r| sh.row_hidden(*r) && self.b.row_filtered(s, *r)).collect())
+    }
+    /// Whether an AutoFilter or table filter hides the row (not hidden by hand).
+    fn row_filtered(&self, s: usize, r: u32) -> PyResult<bool> {
+        self.sheet(s)?;
+        Ok(self.b.row_filtered(s, r))
+    }
     #[pyo3(signature = (data, dst_s, dst, opts=None))]
     fn paste_from_bytes(&mut self, data: &[u8], dst_s: usize, dst: R4, opts: Option<&Bound<'_, PyDict>>) -> PyResult<R4> {
         self.sheet(dst_s)?;
@@ -2494,6 +2514,10 @@ impl PyBook {
             Role::GrandCol => ("grand_col".into(), 0),
         })
     }
+    /// The GETPIVOTDATA formula that returns a value cell of a PivotTable.
+    fn getpivotdata_formula(&self, s: usize, r: u32, c: u32) -> Option<String> {
+        self.b.getpivotdata_formula(s, r, c)
+    }
     /// The (row items, column items) a value cell sums.
     fn pivot_path(&self, s: usize, r: u32, c: u32) -> Option<(Vec<String>, Vec<String>)> {
         let i = self.b.pivot_at(s, r, c)?;
@@ -2864,6 +2888,18 @@ impl PyBook {
         let ch = self.b.chart_of_spec(&dict_spec(spec)?).map_err(verr)?;
         unsafe { self.b.paint_chart_at(&ch, ctx, 0.0, 0.0, w, h, zoom) };
         Ok(())
+    }
+    /// A chart sheet of the spec, inserted at `at` (F11).
+    fn add_chart_sheet_spec(&mut self, at: usize, spec: &Bound<'_, PyDict>) -> PyResult<usize> {
+        let ch = self.b.chart_of_spec(&dict_spec(spec)?).map_err(verr)?;
+        self.b.add_chart_sheet(at, ch).map_err(verr)
+    }
+    /// Draw a chart sheet's chart filling (w, h).
+    fn render_chart_sheet(&self, s: usize, cr: &Bound<'_, PyAny>, w: f64, h: f64) -> PyResult<bool> {
+        let ctx = cairo_ptr(cr)?;
+        let Some(ch) = self.b.sheets.get(s).and_then(|sh| sh.objects.iter().find_map(|o| o.chart.clone())) else { return Ok(false) };
+        unsafe { self.b.paint_chart_at(&ch, ctx, 0.0, 0.0, w, h, 1.0) };
+        Ok(true)
     }
     #[pyo3(signature = (s, spec, x, y, w=480.0, h=288.0))]
     fn add_chart_spec(&mut self, s: usize, spec: &Bound<'_, PyDict>, x: f64, y: f64, w: f64, h: f64) -> PyResult<usize> {

@@ -96,6 +96,8 @@ class SheetsApp(Gtk.Application):
         Gtk.Application.do_startup(self)
         from . import regional
         regional.apply()
+        from . import autorecover
+        self.autorecover = autorecover.AutoRecover(self)
         css = Gtk.CssProvider()
         css.load_from_path(os.path.join(os.path.dirname(__file__), "theme.css"))
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css,
@@ -151,6 +153,9 @@ class SheetsApp(Gtk.Application):
             self.windows[-1].present()
             return
         win = self.new_window()
+        if not os.environ.get("FOLIO_TEST_SCRIPT"):
+            from . import autorecover
+            GLib.idle_add(lambda: (autorecover.offer(self, win), False)[1])
         self._maybe_script(win)
 
     def _maybe_script(self, win):

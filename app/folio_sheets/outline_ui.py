@@ -35,6 +35,8 @@ class Gutter(Gtk.DrawingArea):
             return 0
 
     def size(self):
+        if getattr(self.grid, "outline_hidden", False):
+            return 0
         n = self.levels()
         return 0 if n == 0 else (n + 1) * STEP + 4
 

@@ -29,6 +29,22 @@ SHAPE_TEXT_CMDS = {"bold", "italic", "font-size", "font-grow", "font-shrink", "f
 IMPORT = (".xls", ".ods", ".xlsb", ".fods", ".sxc")
 
 
+def _open_brackets(body):
+    """How many brackets a formula leaves open (text in quotes and sheet names don't count)."""
+    n, q, sq = 0, False, False
+    for ch in body:
+        if ch == '"' and not sq:
+            q = not q
+        elif ch == "'" and not q:
+            sq = not sq
+        elif not q and not sq:
+            if ch == "(":
+                n += 1
+            elif ch == ")":
+                n -= 1
+    return n
+
+
 class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     def __init__(self, app, path=None, share=None):
         Gtk.ApplicationWindow.__init__(self, application=app)
@@ -422,6 +438,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def sheet_changed(self):
         self.tabs.mark_active()
+        if self.book is not None:
+            self.on_object_selection()
         st = self.grid.state()
         self.status.show_zoom(st.zoom * 100)
         self.sync_checks()
@@ -561,6 +579,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         err = check_formula(body)
         if err is None:
             return self.dv.check_entry(text)
+        # brackets left open are closed, as the original does (=SUM(1,2 -> =SUM(1,2))
+        missing = _open_brackets(body)
+        if missing > 0 and check_formula(body + ")" * missing) is None:
+            fixed = (text + ")" * missing)
+            return self.dv.check_entry(fixed)
         self.formula_error(text, err)
         return None
 
@@ -590,6 +613,29 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return
         g.refresh()
 
+    def array_formula_from_edit(self):
+        """Ctrl+Shift+Enter: one array formula over the whole selection."""
+        g = self.grid
+        text = g.editor.text()
+        if self.formula_bar.view.has_focus():
+            text = self.formula_bar.text()
+        if not text.startswith("="):
+            return self.fill_selection_with_edit()
+        checked = self.validate_entry(text)
+        if checked is None:
+            return
+        if checked is False:
+            g.cancel_edit()
+            return
+        rg = tuple(g.sel.ranges[-1]) if g.sel.ranges else (g.sel.active[0], g.sel.active[1]) * 2
+        g.cancel_edit()
+        try:
+            self.book.set_array_formula(g.sheet, rg, checked)
+        except ValueError as e:
+            self.dialogs.message(str(e))
+        g.refresh()
+        self.update_title()
+
     def fill_selection_with_edit(self):
         """Ctrl+Enter: the typed entry goes into every selected cell."""
         g = self.grid
@@ -606,7 +652,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         text = checked
         g.cancel_edit()
         cells = []
-        for rg in g.sel.ranges:
+        for rg in [x for rg0 in g.sel.ranges for x in self.visible_runs(rg0)]:
             if (rg[2] - rg[0] + 1) * (rg[3] - rg[1] + 1) > 1_000_000:
                 self.dialogs.message("The selection is too large to fill.")
                 return
@@ -619,7 +665,25 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         g.refresh()
 
     # ------------------------------------------------------------ commands
+    # commands F4 (and Ctrl+Y with nothing to redo) don't repeat
+    NO_REPEAT = {"undo", "redo", "repeat", "save", "save-as", "open", "new", "close", "copy", "cut", "paste",
+                 "print", "help", "find", "replace", "goto", "goto-special", "select-all", "context-menu"}
+
     def run(self, cmd):
+        if cmd is None:
+            return
+        book = self.book
+        mark = (book.can_undo, (book.undo_labels() or [""])[0] if book is not None and book.can_undo else "",
+                len(book.undo_labels()) if book is not None else 0) if book is not None else None
+        res = self._run(cmd)
+        base = cmd.split(":", 1)[0]
+        if self.book is book and book is not None and base not in self.NO_REPEAT and not base.startswith(("select-", "paste")):
+            after = (book.can_undo, (book.undo_labels() or [""])[0] if book.can_undo else "", len(book.undo_labels()))
+            if after != mark and book.can_undo:
+                self.last_cmd = cmd
+        return res
+
+    def _run(self, cmd):
         if cmd is None:
             return
         self.keytips.leave()
@@ -1153,6 +1217,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.path = os.path.abspath(path)
         self.imported_from = None
         self.book.mark_saved()
+        ar = getattr(self.app, "autorecover", None)
+        if ar is not None:
+            ar.forget(self)
         self.app.add_recent(self.path)
         from .windows_ui import views
         for w in views(self):
@@ -1287,6 +1354,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
 
     def _closing(self):
         from . import windows_ui
+        ar = getattr(self.app, "autorecover", None)
+        if ar is not None and len(windows_ui.views(self)) <= 1:
+            ar.forget(self)
         if self.side_partner is not None:
             windows_ui.end_side_by_side(self)
         others = [w for w in windows_ui.views(self) if w is not self]
@@ -1345,6 +1415,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self._back_to(s)
 
     def act_redo(self):
+        if not self.book.can_redo and getattr(self, "last_cmd", None):
+            # with nothing to redo, Ctrl+Y repeats the last action (as F4 does)
+            return self.run(self.last_cmd)
         s = self.book.redo_sheet()
         if self.book.redo() is None:
             return
@@ -1458,7 +1531,9 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
     # editing
     def act_clear_contents(self):
         g = self.grid
-        self.book.clear_contents(g.sheet, g.sel.ranges)
+        # in a filtered range only the rows that show are cleared
+        runs = [x for rg in g.sel.ranges for x in self.visible_runs(rg)]
+        self.book.clear_contents(g.sheet, runs)
         g.refresh()
 
     def _fill(self, dr, dc):
@@ -1472,9 +1547,14 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             if (r2 - r1 + 1) * (c2 - c1 + 1) > 200000:
                 self.dialogs.message("The selection is too large to fill.")
                 return
+            hidden = set(self.book.filtered_rows(g.sheet, r1, r2))
             if dr:
                 src_r = r1 if dr > 0 else r2
                 rows = range(r1 + 1, r2 + 1) if dr > 0 else range(r1, r2)
+                if hidden:
+                    # the rows a filter hides keep what they have
+                    src_r = next((r for r in (range(r1, r2 + 1) if dr > 0 else range(r2, r1 - 1, -1)) if r not in hidden), src_r)
+                    rows = [r for r in rows if r not in hidden and r != src_r]
                 if r1 == r2:
                     if r1 == 0:
                         continue
@@ -1494,6 +1574,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                         continue
                     src_c, cols = (c1 - 1, [c1]) if dc > 0 else (c1 + 1, [c1])
                 for r in range(r1, r2 + 1):
+                    if r in hidden:
+                        continue
                     v = self.book.input(g.sheet, r, src_c)
                     for c in cols:
                         t = v
@@ -2239,6 +2321,66 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.update_title()
 
     # ------------------------------------------------------------ fill
+    def table_add_row(self, ti):
+        """A new row at the bottom of a table's data (above its Total Row)."""
+        g = self.grid
+        t = self.book.tables(g.sheet)[ti]
+        d, ref = t["data"], t["ref"]
+        below = d[2] + 1
+        free = not t.get("totals") and below < MAX_ROWS and not any(self.book.has_content(g.sheet, below, c) for c in range(d[1], d[3] + 1))
+        try:
+            if free:
+                self.book.resize_table(g.sheet, ti, (ref[0], ref[1], ref[2] + 1, ref[3]))
+            else:
+                self.book.insert_rows(g.sheet, below, 1)
+                t2 = self.book.tables(g.sheet)[ti]
+                if t2["data"][2] < below:
+                    r2 = t2["ref"]
+                    self.book.resize_table(g.sheet, ti, (r2[0], r2[1], r2[2] + 1, r2[3]))
+        except ValueError as e:
+            self.dialogs.message(str(e))
+        g.refresh()
+        self.update_title()
+
+    def fill_handle_double(self):
+        """A double-click on the fill handle fills down as far as the data in the column next
+        to the selection goes (as the original does)."""
+        g = self.grid
+        b = self.book
+        r1, c1, r2, c2 = g.sel.ranges[-1]
+        has = lambda r, c: b.has_content(g.sheet, r, c)
+        for nc in ([c1 - 1] if c1 > 0 else []) + [c2 + 1]:
+            if nc < 0 or nc >= MAX_COLS or not has(r2 + 1, nc) and not has(r2, nc):
+                continue
+            last = r2
+            while last + 1 < MAX_ROWS and has(last + 1, nc):
+                last += 1
+            if last > r2:
+                self.fill_handle((r1, c1, r2, c2), (r1, c1, last, c2))
+                g.select_range((r1, c1, last, c2), g.sel.active)
+                return True
+        return False
+
+    def move_cells_by_drag(self, src, dst, copy=False):
+        """The selection's border was dragged: the cells move there (copy with Ctrl)."""
+        g = self.grid
+        from .protect_ui import may_change_cells
+        if not may_change_cells(self, [tuple(src), tuple(dst)] if not copy else [tuple(dst)]):
+            return
+        r1, c1, r2, c2 = dst
+        if not copy and any(self.book.has_content(g.sheet, r, c) for r in range(r1, r2 + 1) for c in range(c1, c2 + 1)
+                            if not (src[0] <= r <= src[2] and src[1] <= c <= src[3])):
+            if not self.dialogs.confirm("There's already data here. Do you want to replace it?"):
+                return
+        try:
+            self.book.paste_cells(g.sheet, tuple(src), g.sheet, tuple(dst), None, not copy)
+        except ValueError as e:
+            self.dialogs.message(str(e))
+            return
+        g.select_range(tuple(dst), (dst[0], dst[1]))
+        g.refresh()
+        self.update_title()
+
     def fill_handle(self, src, target, ctrl=False):
         """The fill handle was dragged from src over target (Ctrl: copy instead of a
         series; a single number counts up instead)."""
@@ -2596,7 +2738,7 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             if t is not None:
                 self.ribbon.select(t)
         if chart:
-            name = self.book.objects(g.sheet)[g.sel_objects[0]]["name"]
+            name = self.book.objects(g.sheet)[g.selected_chart()]["name"]
             self.formula_bar.namebox.show_text(name)
         g.area.queue_draw()
 
@@ -2626,6 +2768,25 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         if i is None:
             self.status.extra.set_text("Select a chart first.")
         return i
+
+    def act_chart_sheet(self):
+        """F11: a chart of the selection (or the data around the active cell) on a sheet of its own."""
+        from . import chart_ui
+        g = self.grid
+        if self.book.sheet_info(g.sheet)["kind"] != "work":
+            return False
+        rg = chart_ui.chart_range(self)
+        err = self.book.chart_check(g.sheet, rg, "col")
+        if err:
+            self.dialogs.message(err, "Insert Chart")
+            return False
+        spec = chart_ui.spec_for(self, rg, "col")
+        i = self.book.add_chart_sheet_spec(g.sheet, spec)
+        self.tabs.rebuild()
+        g.set_sheet(i)
+        self.sheet_changed()
+        self.update_title()
+        return True
 
     def _insert_chart(self, kind, page):
         from . import chart_ui
@@ -3186,7 +3347,12 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self._pivot_missing("Show Report Filter Pages")
 
     def act_pivot_getpivotdata(self):
-        self._pivot_missing("GETPIVOTDATA")
+        """Generate GetPivotData: pointing at a PivotTable value while typing a formula writes a
+        GETPIVOTDATA call (on, as in the original) or a plain cell reference (off)."""
+        on = not self.app.settings.get("getpivotdata", True)
+        self.app.settings["getpivotdata"] = on
+        self.ribbon.update("pivot-getpivotdata", "true" if on else "false")
+        self.status.extra.set_text("Pointing at a PivotTable value now writes %s." % ("GETPIVOTDATA" if on else "a cell reference"))
 
     def act_queries_connections(self):
         from . import getdata_ui
@@ -3227,11 +3393,38 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
         self.dv.pick_from_list()
 
     # ------------------------------------------------------------ insert / delete cells
-    def _struct_ranges(self, rows):
-        """The selection's row (or column) spans, last first so earlier ones don't move."""
+    def visible_runs(self, rg):
+        """A range split into runs of the rows a filter doesn't hide (the whole range when
+        nothing in it is filtered). Whole columns stop where the sheet's data does."""
         g = self.grid
-        spans = sorted({(rg[0], rg[2]) if rows else (rg[1], rg[3]) for rg in g.sel.ranges}, reverse=True)
-        return spans
+        r1, c1, r2, c2 = rg
+        if r2 - r1 > 100000:
+            ext = self.book.used_extent(g.sheet) or (0, 0)
+            r2 = max(r1, min(r2, ext[0]))
+        hidden = set(self.book.filtered_rows(g.sheet, r1, r2))
+        if not hidden:
+            return [tuple(rg)]
+        runs, start = [], None
+        for r in range(r1, r2 + 1):
+            if r in hidden:
+                if start is not None:
+                    runs.append((start, c1, r - 1, c2))
+                    start = None
+            elif start is None:
+                start = r
+        if start is not None:
+            runs.append((start, c1, r2, c2))
+        return runs
+
+    def _struct_ranges(self, rows):
+        """The selection's row (or column) spans, last first so earlier ones don't move. Rows a
+        filter hides are left alone (as the original deletes only the visible rows)."""
+        g = self.grid
+        if rows:
+            spans = {(x[0], x[2]) for rg in g.sel.ranges for x in self.visible_runs(rg)}
+        else:
+            spans = {(rg[1], rg[3]) for rg in g.sel.ranges}
+        return sorted(spans, reverse=True)
 
     def _struct(self, label, fn):
         g = self.grid
@@ -3715,6 +3908,8 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
                 # anything else goes back to the cells
                 g.deselect_objects()
                 self.on_object_selection()
+        if self._more_shortcuts(kv, ctrl, shift, alt, in_grid):
+            return True
         # global shortcuts
         if alt and shift and not ctrl and kv in (Gdk.KEY_Right, Gdk.KEY_Left) and in_grid and not g.editing():
             self.run("group" if kv == Gdk.KEY_Right else "ungroup")     # Alt+Shift+Right / Left
@@ -3828,8 +4023,151 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             return self.grid_key(ev, kv, ctrl, shift, alt)
         return False
 
+    def _insert_in_entry(self, text):
+        """Type text where the entry is being made (the cell or the formula bar)."""
+        g = self.grid
+        focus = self.get_focus()
+        if isinstance(focus, Gtk.Entry):
+            pos = focus.get_position()
+            focus.insert_text(text, pos)
+            focus.set_position(pos + len(text))
+            return True
+        if g.editing():
+            g.editor.get_buffer().insert_at_cursor(text)
+            return True
+        return False
+
+    def _more_shortcuts(self, kv, ctrl, shift, alt, in_grid):
+        """The keyboard shortcuts added in Backlog 6 (S6-12)."""
+        import datetime
+        from . import regional
+        g = self.grid
+        editing = g.editing() or isinstance(self.get_focus(), Gtk.Entry) and self.get_focus() is getattr(self.formula_bar, "entry", None)
+        work = self.book is not None and self.book.sheet_info(g.sheet)["kind"] == "work"
+        # Ctrl+; today's date, Ctrl+Shift+: the time
+        if ctrl and not alt and kv in (Gdk.KEY_semicolon, Gdk.KEY_colon):
+            now = datetime.datetime.now()
+            text = regional.time_text(now) if kv == Gdk.KEY_colon else regional.date_text(now.date())
+            if editing or g.editing():
+                return self._insert_in_entry(text)
+            if in_grid and work:
+                g.start_edit(initial=text)
+                return True
+        if not in_grid or g.editing():
+            # the rest act on the cells, not on an entry being typed
+            if ctrl and kv == Gdk.KEY_Tab or ctrl and kv == Gdk.KEY_ISO_Left_Tab:
+                pass
+            elif kv == Gdk.KEY_F12 and not (ctrl or alt or shift):
+                pass
+            else:
+                return False
+        if ctrl and not alt and kv in (Gdk.KEY_apostrophe, Gdk.KEY_quotedbl) and work:
+            # the formula (Ctrl+') or the value (Ctrl+Shift+") of the cell above, to edit
+            r, c = g.sel.active
+            if r > 0:
+                text = self.book.input(g.sheet, r - 1, c) if kv == Gdk.KEY_apostrophe else self.book.display(g.sheet, r - 1, c)
+                g.start_edit(initial=text)
+            return True
+        if ctrl and not alt:
+            hide = {Gdk.KEY_9: "hide-rows", Gdk.KEY_parenleft: "unhide-rows", Gdk.KEY_0: "hide-columns",
+                    Gdk.KEY_parenright: "unhide-columns", Gdk.KEY_2: "bold", Gdk.KEY_3: "italic", Gdk.KEY_4: "underline"}
+            if kv in hide and (kv in (Gdk.KEY_parenleft, Gdk.KEY_parenright) or not shift):
+                self.run(hide[kv])
+                return True
+            if shift and kv in (Gdk.KEY_9, Gdk.KEY_0):
+                self.run("unhide-rows" if kv == Gdk.KEY_9 else "unhide-columns")
+                return True
+            if kv in (Gdk.KEY_asterisk, Gdk.KEY_KP_Multiply) or (shift and kv == Gdk.KEY_8):
+                from . import find_ui
+                find_ui.goto_special(self, "region")
+                return True
+            if kv == Gdk.KEY_8 and not shift:
+                self.act_outline_symbols()
+                return True
+            if kv in (Gdk.KEY_bracketleft, Gdk.KEY_bracketright) and not shift:
+                self._select_related(precedents=kv == Gdk.KEY_bracketleft)
+                return True
+            if kv == Gdk.KEY_F1:
+                self.ribbon.toggle_collapse()
+                return True
+            if kv == Gdk.KEY_F2:
+                self.run("print")
+                return True
+            if kv in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
+                ws = [w for w in self.app.windows if w.get_visible()]
+                if len(ws) > 1 and self in ws:
+                    back = shift or kv == Gdk.KEY_ISO_Left_Tab
+                    ws[(ws.index(self) + (-1 if back else 1)) % len(ws)].present()
+                return True
+            if shift and kv in (Gdk.KEY_t, Gdk.KEY_T):
+                from . import table_ui
+                if table_ui.current(self) is not None:
+                    self.run("table-option:totals")
+                return True
+            if shift and kv in (Gdk.KEY_o, Gdk.KEY_O):
+                self.run("select-comments")
+                return True
+        if alt and not ctrl and kv == Gdk.KEY_semicolon:
+            from . import find_ui
+            find_ui.goto_special(self, "visible")
+            return True
+        if not (ctrl or alt or shift):
+            if kv == Gdk.KEY_F12:
+                self.run("save-as")
+                return True
+            if kv == Gdk.KEY_F1:
+                self.run("help")
+                return True
+            if kv == Gdk.KEY_F11:
+                self.run("chart-sheet")
+                return True
+            if kv == Gdk.KEY_F4:
+                last = getattr(self, "last_cmd", None)
+                if last:
+                    self.run(last)
+                return True
+        return False
+
+    def _select_related(self, precedents=True):
+        """Ctrl+[ and Ctrl+]: select the cells the formula uses, or the cells that use this one."""
+        g = self.grid
+        r, c = g.sel.active
+        if precedents:
+            refs = [x for x in self.book.precedents(g.sheet, r, c)]
+            rects = [(x[1], x[2], x[3], x[4]) for x in refs if x[0] == g.sheet]
+            other = [x for x in refs if x[0] != g.sheet]
+        else:
+            refs = list(self.book.dependents(g.sheet, r, c))
+            rects = [(x[1], x[2], x[1], x[2]) for x in refs if x[0] == g.sheet]
+            other = [(x[0], x[1], x[2], x[1], x[2]) for x in refs if x[0] != g.sheet]
+        if not rects and other:
+            # on another sheet: go there, as the original does
+            s0 = other[0][0]
+            g.set_sheet(s0)
+            self.sheet_changed()
+            rects = [(x[1], x[2], x[3], x[4]) for x in other if x[0] == s0]
+        if not rects:
+            self.status.extra.set_text("No cells were found.")
+            return
+        g.sel.ranges = rects[:2000]
+        g.sel.active = rects[0][0:2]
+        g.ensure_visible(*rects[0][0:2])
+        g.refresh()
+        self.on_selection_changed()
+
+    def act_outline_symbols(self):
+        """Ctrl+8: show or hide the outline bars."""
+        g = self.grid
+        g.outline_hidden = not getattr(g, "outline_hidden", False)
+        for gut in (g.row_gutter, g.col_gutter):
+            gut.sync()
+        g.refresh()
+
     def grid_key(self, ev, kv, ctrl, shift, alt):
         g = self.grid
+        if self.book is not None and self.book.sheet_info(g.sheet)["kind"] == "chart":
+            # nothing to type into on a chart sheet
+            return kv not in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab)
         arrows = {Gdk.KEY_Up: (-1, 0), Gdk.KEY_Down: (1, 0), Gdk.KEY_Left: (0, -1), Gdk.KEY_Right: (0, 1),
                   Gdk.KEY_KP_Up: (-1, 0), Gdk.KEY_KP_Down: (1, 0), Gdk.KEY_KP_Left: (0, -1),
                   Gdk.KEY_KP_Right: (0, 1)}
@@ -3860,6 +4198,11 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             else:
                 g.end_mode = not g.end_mode
                 self.status.extra.set_text("End Mode" if g.end_mode else "")
+            return True
+        if kv in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not shift and g.copy_range is not None:
+            # Enter pastes what is copied (moving dashes around it) and ends the copy
+            self.run("paste")
+            self.cancel_copy()
             return True
         if kv in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             if not g.sel.is_single_cell():
@@ -3914,18 +4257,15 @@ class SheetWindow(FormattingMixin, Gtk.ApplicationWindow):
             self.run("clear-contents")
             return True
         if kv == Gdk.KEY_BackSpace:
-            r, c = g.sel.active
-            from .protect_ui import may_change_cells
-            if not may_change_cells(self, [(r, c, r, c)]):
-                return True
-            self.book.clear_contents(g.sheet, [(r, c, r, c)])
+            # an empty entry in the cell: Enter stores it (one undo step), Esc keeps the old value
             g.start_edit(initial="")
             return True
         if kv == Gdk.KEY_Escape:
             if self.painter:
                 self.painter = None
             if g.copy_range is not None:
-                self.cancel_copy()
+                from . import clip_ui
+                clip_ui.cancel(self, forget=True)
             g.extend_mode = g.add_mode = False
             self.status.extra.set_text("")
             return True

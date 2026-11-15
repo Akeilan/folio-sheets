@@ -2,7 +2,7 @@
 from gi.repository import Gdk, GLib, Gtk
 
 from . import icons
-from .core import parse_ref, range_a1
+from .core import a1, parse_ref, range_a1
 
 
 class NameBox(Gtk.ComboBoxText):
@@ -56,10 +56,32 @@ class NameBox(Gtk.ComboBoxText):
         if not text:
             return
         if not self.win.goto_reference(text):
-            self.win.dialogs.message("Reference isn't valid.")
-            self.win.on_selection_changed()
-            return
+            if not self.define(text):
+                self.win.on_selection_changed()
+                return
         self.win.grid.area.grab_focus()
+
+    def define(self, name):
+        """A name typed in the Name Box that isn't a reference names the selection (S6-19)."""
+        import re
+        w = self.win
+        if "!" in name or not re.match(r"^[A-Za-z_\\][\w.\\?]*$", name) or name.lower() in ("r", "c"):
+            w.dialogs.message("Reference isn't valid.")
+            return False
+        g = w.grid
+        rg = g.sel.ranges[-1]
+        sname = w.book.sheet_info(g.sheet)["name"]
+        q = sname if re.match(r"^[A-Za-z_][\w.]*$", sname) else "'%s'" % sname.replace("'", "''")
+        absref = lambda r, c: "$%s$%d" % (re.sub(r"\d+", "", a1(r, c)), r + 1)
+        ref = absref(rg[0], rg[1]) if rg[0:2] == rg[2:4] else "%s:%s" % (absref(rg[0], rg[1]), absref(rg[2], rg[3]))
+        try:
+            w.book.define_name(name, "=%s!%s" % (q, ref), None, None, None)
+        except ValueError as e:
+            w.dialogs.message(str(e) or "The name that you entered is not valid.")
+            return False
+        self.show_text(name)
+        w.update_title()
+        return True
 
 
 class FormulaBar(Gtk.Box):
@@ -168,9 +190,17 @@ class FormulaBar(Gtk.Box):
         state = ev.get_state()
         shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
         alt = bool(state & Gdk.ModifierType.MOD1_MASK)
+        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
         if ev.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             if alt:
                 self.buf.insert_at_cursor("\n")
+                return True
+            if ctrl and g.editing():
+                g.editor.set_text(self.text(), quiet=True)
+                if shift:
+                    self.win.array_formula_from_edit()
+                else:
+                    self.win.fill_selection_with_edit()
                 return True
             g.editor.set_text(self.text(), quiet=True)
             g.commit_edit(move=(-1 if shift else 1, 0))

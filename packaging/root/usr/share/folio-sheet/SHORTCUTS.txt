@@ -80,11 +80,35 @@ Cell formatting
 
 Sheets
   Shift+F11               Insert a sheet
+  F11                     A chart of the data on a chart sheet of its own
   Double-click a tab      Rename the sheet
   Double-click a border   AutoFit the column / row
 
+Entering and repeating
+  Ctrl+; / Ctrl+Shift+:      Today's date / the time
+  Ctrl+' / Ctrl+Shift+"      The formula / the value of the cell above
+  F4 (or Ctrl+Y)             Repeat the last action (F4 while typing a reference: $ toggles)
+  Enter after a copy         Paste and end the copy
+
+Showing and hiding
+  Ctrl+9 / Ctrl+Shift+(      Hide / unhide rows
+  Ctrl+0 / Ctrl+Shift+)      Hide / unhide columns
+  Ctrl+8                     Show or hide the outline bars
+  Ctrl+F1                    Collapse or show the ribbon
+
+Selecting more
+  Ctrl+Shift+*               The current region
+  Alt+;                      Visible cells only
+  Ctrl+[ / Ctrl+]            The cells the formula uses / the cells that use this one
+  Ctrl+Shift+O               Cells with notes
+  Ctrl+Shift+T               A table's Total Row on or off
+
 Workbook
   Ctrl+N / Ctrl+O / Ctrl+S   New / open / save
+  F12                        Save As
+  Ctrl+F2                    Print (preview)
+  Ctrl+Tab                   The next workbook window
+  F1                         This list
   Ctrl+W, Ctrl+F4            Close
   Alt or F10                 KeyTips
   Ctrl+mouse wheel           Zoom

@@ -593,12 +593,50 @@ impl Book {
 
     /// A copied block as a small workbook (for the clipboard and other windows).
     pub fn copy_to_bytes(&self, s: usize, rc: Rect) -> Result<Vec<u8>, String> {
+        self.copy_rows_to_bytes(s, rc, None)
+    }
+
+    /// The copy of a block keeping only some of its rows (a filtered range copies its visible
+    /// rows only); the rows close up and formulas move with their cells.
+    pub fn copy_rows_to_bytes(&self, s: usize, rc: Rect, keep: Option<&[u32]>) -> Result<Vec<u8>, String> {
         let rc = self.clip_rect(s, rc);
         let mut b = Book::new_empty();
         b.styles = Styles::parse(Some(&self.styles.to_xml()))?;
         b.date1904 = self.date1904;
         let sh = &self.sheets[s];
-        let block = snapshot(sh, rc);
+        let mut block = snapshot(sh, rc);
+        let mut rows_out = rc.rows();
+        if let Some(keep) = keep {
+            // relative row -> its new place
+            let map: HashMap<u32, u32> = keep.iter().filter(|r| **r >= rc.r1 && **r <= rc.r2).enumerate().map(|(n, r)| (r - rc.r1, n as u32)).collect();
+            rows_out = map.len().max(1) as u32;
+            let mut cells = HashMap::new();
+            for ((i, j), cell) in block.cells.drain() {
+                if let Some(&n) = map.get(&i) {
+                    let mut cell = cell;
+                    if let Some(f) = &cell.f {
+                        let mut nf = (**f).clone();
+                        nf.text = formula::adjust(&f.text, &Adjust::Shift(n as i64 - i as i64, 0));
+                        nf.expr = formula::parse(&nf.text).ok();
+                        cell.f = Some(Rc::new(nf));
+                    }
+                    cells.insert((n, j), cell);
+                }
+            }
+            block.cells = cells;
+            let mut styles = vec![Vec::new(); map.len()];
+            for (i, row) in block.styles.iter().enumerate() {
+                if let Some(&n) = map.get(&(i as u32)) {
+                    styles[n as usize] = row.clone();
+                }
+            }
+            block.styles = styles;
+            block.merges.retain(|m| match (map.get(&m.r1), map.get(&m.r2)) {
+                (Some(a), Some(b)) => b - a == m.r2 - m.r1,
+                _ => false,
+            });
+            block.merges = block.merges.iter().map(|m| { let d = map[&m.r1] as i64 - m.r1 as i64; Rect::new((m.r1 as i64 + d) as u32, m.c1, (m.r2 as i64 + d) as u32, m.c2) }).collect();
+        }
         let mut t = Sheet::new(1, &sh.name);
         for ((i, j), cell) in block.cells.iter() {
             let mut cell = cell.clone();
@@ -638,7 +676,7 @@ impl Book {
         }
         b.sheets = vec![t, vals];
         // the size of what was copied (trailing blank cells included)
-        b.names.push(crate::book::Name::new("__clip", None, &Rect::new(0, 0, rc.rows() - 1, rc.cols() - 1).a1()));
+        b.names.push(crate::book::Name::new("__clip", None, &Rect::new(0, 0, rows_out - 1, rc.cols() - 1).a1()));
         b.to_bytes()
     }
 

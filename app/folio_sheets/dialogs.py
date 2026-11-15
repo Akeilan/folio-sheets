@@ -28,6 +28,15 @@ class Dialogs:
         d.run()
         d.destroy()
 
+    def confirm(self, text, title=APP_NAME):
+        """OK or Cancel: True for OK."""
+        d = Gtk.MessageDialog(transient_for=self.win, modal=True, message_type=Gtk.MessageType.QUESTION,
+                              buttons=Gtk.ButtonsType.OK_CANCEL, text=text)
+        d.set_title(title)
+        r = d.run()
+        d.destroy()
+        return r == Gtk.ResponseType.OK
+
     def confirm_save(self, name):
         """Save / Don't Save / Cancel → 'save' | 'discard' | 'cancel'."""
         d = Gtk.MessageDialog(transient_for=self.win, modal=True, message_type=Gtk.MessageType.QUESTION,

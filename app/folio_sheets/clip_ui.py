@@ -22,6 +22,7 @@ class Clip:
     sheet = 0
     rg = None
     cut = False
+    rows = None      # a filtered copy: the rows kept
 
 
 def _clipboard():
@@ -118,8 +119,17 @@ def copy(win, cut=False):
     if (rg[2] - rg[0] + 1) * (rg[3] - rg[1] + 1) > 2_000_000:
         win.dialogs.message("The selection is too large to copy.")
         return
-    text = _text_of(win, g.sheet, rg)
-    Clip.data = bytes(win.book.copy_to_bytes(g.sheet, rg))
+    runs = win.visible_runs(rg) if not cut else [rg]
+    Clip.rows = None
+    if len(runs) > 1 or tuple(runs[0]) != tuple(rg):
+        # a filtered range: only the rows that show are copied
+        keep = [r for x in runs for r in range(x[0], x[2] + 1)]
+        text = "".join(_text_of(win, g.sheet, x) for x in runs)
+        Clip.data = bytes(win.book.copy_rows_to_bytes(g.sheet, rg, keep))
+        Clip.rows = keep
+    else:
+        text = _text_of(win, g.sheet, rg)
+        Clip.data = bytes(win.book.copy_to_bytes(g.sheet, rg))
     Clip.text = text
     Clip.window, Clip.sheet, Clip.rg, Clip.cut = win, g.sheet, rg, cut
     if not _Owner.offer(text, _html_of(win, g.sheet, rg)):
@@ -132,9 +142,15 @@ def copy(win, cut=False):
     g.refresh()
 
 
-def cancel(win):
+def cancel(win, forget=False):
     if Clip.window is win:
         Clip.cut = False
+        if forget:
+            # Esc: the copy is over, so Paste has nothing of ours to paste (S6-22)
+            if _ours():
+                _clipboard().set_text("", -1)
+            Clip.data = None
+            Clip.rows = None
     win.grid.copy_range = None
     win._copied = None
     win.grid.area.queue_draw()
@@ -159,7 +175,9 @@ def paste(win, opts=None):
     b = win.book
     if _ours():
         try:
-            if Clip.window is win:
+            if Clip.window is win and getattr(Clip, "rows", None):
+                out = b.paste_from_bytes(Clip.data, g.sheet, dst, opts)
+            elif Clip.window is win:
                 out = b.paste_cells(Clip.sheet, Clip.rg, g.sheet, dst, opts, Clip.cut and not opts)
             else:
                 if opts and opts.get("link"):
@@ -283,7 +301,21 @@ def _text_rows():
     text = _clipboard().wait_for_text()
     if not text:
         return None
-    return [ln.split("\t") for ln in text.replace("\r\n", "\n").rstrip("\n").split("\n")]
+    return split_text(text)
+
+
+def split_text(text):
+    """Tab-separated text as rows of fields: a field in double quotes loses them (and may hold
+    tabs, line breaks and doubled quotes), as the original reads pasted text (S6-23)."""
+    import csv
+    import io
+    t = text.replace("\r\n", "\n").rstrip("\n")
+    if '"' not in t:
+        return [ln.split("\t") for ln in t.split("\n")]
+    try:
+        return [row if row else [""] for row in csv.reader(io.StringIO(t), delimiter="\t", quotechar='"', strict=True)]
+    except csv.Error:
+        return [ln.split("\t") for ln in t.split("\n")]
 
 
 class _Table(HTMLParser):

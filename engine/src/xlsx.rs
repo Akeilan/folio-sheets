@@ -28,6 +28,8 @@ const CT_TABLE: &str = "application/vnd.openxmlformats-officedocument.spreadshee
 const CT_DRAWING: &str = "application/vnd.openxmlformats-officedocument.drawing+xml";
 const CT_CHART: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
 const CT_WORKSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+const CT_CHARTSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml";
+const T_CHARTSHEET: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet";
 const CT_SST: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml";
 const CT_META: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml";
 const T_CUSTOMXML: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
@@ -312,6 +314,12 @@ impl Book {
                     }
                     None => sh.error = Some("the sheet's part is missing".into()),
                 }
+            } else if typ.ends_with("/chartsheet") {
+                sh.kind = "chart".into();
+                sh.raw_part = data.cloned();
+                if let Some(t) = data.and_then(|d| xml::decode(d).ok()) {
+                    load_chartsheet_drawing(&mut sh, &t, &parts, &b.styles.theme);
+                }
             } else {
                 sh.kind = if typ.ends_with("/chartsheet") {
                     "chart".into()
@@ -561,6 +569,53 @@ fn load_drawing(sh: &mut Sheet, parts: &[(String, Vec<u8>)], theme: &[u32; 12]) 
         sh.objects = objs;
         sh.drawing = Some(df);
         sh.pieces[idx] = Piece::Known("drawing".into());
+    }
+}
+
+/// A chart sheet's part: as read with its drawing relationship brought up to date, or a new one.
+fn chartsheet_xml(raw: Option<&[u8]>, drawing_rid: Option<&str>) -> String {
+    if let Some(t) = raw.and_then(|d| xml::decode(d).ok()) {
+        if let (Ok((pro, mut root)), Some(rid)) = (xml::parse(&t), drawing_rid) {
+            if let Some(d) = root.child_mut("drawing") {
+                let key = d.attrs.iter().find(|(k, _)| xml::local(k) == "id" && k.contains(':')).map(|(k, _)| k.clone());
+                if let Some(k) = key {
+                    d.set_attr(&k, rid);
+                }
+                return xml::document(&pro, &root);
+            }
+        }
+        if drawing_rid.is_none() {
+            return t;
+        }
+    }
+    let mut x = String::from(xml::DECL);
+    x.push_str("<chartsheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
+    x.push_str("<sheetPr/><sheetViews><sheetView zoomScale=\"100\" workbookViewId=\"0\" zoomToFit=\"1\"/></sheetViews>");
+    x.push_str("<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>");
+    if let Some(rid) = drawing_rid {
+        x.push_str(&format!("<drawing r:id=\"{}\"/>", xml::escape_attr(rid)));
+    }
+    x.push_str("</chartsheet>");
+    x
+}
+
+/// A chart sheet's chart (its drawing part), so it can be shown and changed; the sheet's own
+/// part is kept as read.
+fn load_chartsheet_drawing(sh: &mut Sheet, text: &str, parts: &[(String, Vec<u8>)], theme: &[u32; 12]) {
+    let Ok((_, root)) = xml::parse(text) else { return };
+    let Some(d) = root.child("drawing") else { return };
+    let Some(rid) = d.attrs.iter().find(|(k, _)| xml::local(k) == "id" && k.contains(':')).map(|(_, v)| v.clone()) else { return };
+    let rels = read_rels(&sh.part, parts);
+    let Some(target) = rels.iter().find(|r| r.0 == rid && !r.3).map(|r| r.2.clone()) else { return };
+    let Some(dt) = find_part(parts, &target).and_then(|x| xml::decode(x).ok()) else { return };
+    let drels = read_rels(&target, parts);
+    let read = |p: &str| -> Option<String> { find_part(parts, p).and_then(|d| xml::decode(d).ok()) };
+    let read_bytes = |p: &str| -> Option<Vec<u8>> { find_part(parts, p).map(|d| d.to_vec()) };
+    if let Ok((df, objs)) = crate::drawing::read_drawing(&target, &dt, drels, &read, &read_bytes, theme) {
+        if objs.iter().any(|o| o.chart.is_some()) {
+            sh.objects = objs;
+            sh.drawing = Some(df);
+        }
     }
 }
 
@@ -1249,8 +1304,9 @@ impl Book {
             let mut part = sh.part.clone();
             if part.is_empty() {
                 let mut k = 1;
+                let folder = if sh.kind == "chart" { "chartsheets" } else { "worksheets" };
                 loop {
-                    let p = format!("{}/worksheets/sheet{}.xml", if dir.is_empty() { "xl" } else { &dir }, k);
+                    let p = format!("{}/{}/sheet{}.xml", if dir.is_empty() { "xl" } else { &dir }, folder, k);
                     if !taken.contains(&p) && !self.file.parts.iter().any(|(n, _)| *n == p) {
                         part = p;
                         break;
@@ -1263,8 +1319,9 @@ impl Book {
                 Some(r) if !r.is_empty() && rels.elems().any(|e| e.attr("Id") == Some(r)) => r.clone(),
                 _ => {
                     let id = new_rid(&mut used_rids);
-                    rels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", T_WORKSHEET), ("Target", &relative(&wb_part, &part))]));
-                    set_override(&mut ct, &part, CT_WORKSHEET);
+                    let (t, c) = if sh.kind == "chart" { (T_CHARTSHEET, CT_CHARTSHEET) } else { (T_WORKSHEET, CT_WORKSHEET) };
+                    rels.push(Element::with_attrs("Relationship", &[("Id", &id), ("Type", t), ("Target", &relative(&wb_part, &part))]));
+                    set_override(&mut ct, &part, c);
                     id
                 }
             };
@@ -1337,7 +1394,8 @@ impl Book {
         let mut bg_rids: Vec<Option<String>> = vec![None; self.sheets.len()];
         let mut pv = PivotWrite::new(self, &rels, &wb_part);
         for (i, sh) in self.sheets.iter().enumerate() {
-            if sh.raw_part.is_some() {
+            let chart_sheet = sh.kind == "chart" && sh.objects.iter().any(|o| o.chart.is_some());
+            if sh.raw_part.is_some() && !chart_sheet {
                 continue;
             }
             let has_p = self.pivots.iter().any(|p| p.sheet == i) || self.file.pivot_parts.iter().any(|x| x.0 == sheet_parts[i].0);
@@ -1446,6 +1504,10 @@ impl Book {
         // worksheets
         for (i, sh) in self.sheets.iter().enumerate() {
             let (part, _) = &sheet_parts[i];
+            if sh.kind == "chart" && sh.objects.iter().any(|o| o.chart.is_some()) {
+                out.push((part.clone(), chartsheet_xml(sh.raw_part.as_deref(), drawing_rids[i].as_deref()).into_bytes()));
+                continue;
+            }
             if let Some(raw) = &sh.raw_part {
                 out.push((part.clone(), raw.clone()));
                 continue;

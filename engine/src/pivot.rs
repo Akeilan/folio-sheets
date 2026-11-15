@@ -191,6 +191,8 @@ pub struct Pivot {
     pub roles: Rc<HashMap<(u32, u32), Role>>,
     /// output cell -> the record filter it sums (row path, col path), for Show Details
     pub paths: Rc<HashMap<(u32, u32), (Vec<String>, Vec<String>)>>,
+    /// which data field each value cell shows
+    pub vals: Rc<HashMap<(u32, u32), usize>>,
     /// the file's own parts (kept when this version can't remake them)
     pub table_part: Option<String>,
     pub cache_part: Option<String>,
@@ -234,6 +236,7 @@ impl Pivot {
             out: None,
             roles: Rc::new(HashMap::new()),
             paths: Rc::new(HashMap::new()),
+            vals: Rc::new(HashMap::new()),
             table_part: None,
             cache_part: None,
             raw: None,
@@ -449,6 +452,7 @@ pub struct Output {
     pub height: u32,
     pub width: u32,
     pub paths: HashMap<(u32, u32), (Vec<String>, Vec<String>)>,
+    pub vals: HashMap<(u32, u32), usize>,
     pub first_data_row: u32,
     pub first_data_col: u32,
     pub page_rows: u32,
@@ -607,7 +611,7 @@ pub fn compute(b: &Book, p: &Pivot, src: &Source) -> Output {
     let page_rows = if p.pages.is_empty() { 0 } else { p.pages.len() as u32 + 1 };
     let header_rows = if p.cols.is_empty() { 1 } else { col_levels + 1 };
     let first_data_row = page_rows + header_rows;
-    let mut out = Output { cells: vec![], height: 0, width: 0, paths: HashMap::new(), first_data_row, first_data_col: label_cols, page_rows,
+    let mut out = Output { cells: vec![], height: 0, width: 0, paths: HashMap::new(), vals: HashMap::new(), first_data_row, first_data_col: label_cols, page_rows,
                            row_lines: vec![], col_lines: vec![], items };
     let mut put = |out: &mut Output, r: u32, c: u32, v: Value, role: Role, fmt: Option<String>| {
         out.cells.push((r, c, v, role, fmt));
@@ -799,6 +803,7 @@ pub fn compute(b: &Book, p: &Pivot, src: &Source) -> Output {
                     _ => None,
                 });
                 out.paths.insert((r, c), (line.path.clone(), cl.path.clone()));
+                out.vals.insert((r, c), *j);
                 put(&mut out, r, c, v, role, fmt);
             }
         }
@@ -956,6 +961,7 @@ impl Book {
         }
         p.roles = Rc::new(roles);
         p.paths = Rc::new(out.paths.iter().map(|(k, v)| ((r0 + k.0, c0 + k.1), v.clone())).collect());
+        p.vals = Rc::new(out.vals.iter().map(|(k, v)| ((r0 + k.0, c0 + k.1), *v)).collect());
         Ok(p)
     }
 
@@ -986,6 +992,7 @@ impl Book {
                         }
                         p.roles = Rc::new(roles);
                         p.paths = Rc::new(out.paths.iter().map(|(k, v)| ((r0 + k.0, c0 + k.1), v.clone())).collect());
+                        p.vals = Rc::new(out.vals.iter().map(|(k, v)| ((r0 + k.0, c0 + k.1), *v)).collect());
                         self.pivots.push(p);
                         return;
                     }
@@ -1251,6 +1258,32 @@ impl Book {
     /// Show Details: the records behind a value, on a new sheet in front of the pivot's.
     /// GETPIVOTDATA: what the PivotTable at (s, r, c) shows for a data field (its name, or
     /// its source field's) and (field, item) pairs, worked out from the records it summarizes.
+    /// The GETPIVOTDATA formula for a value cell of a PivotTable (Generate GetPivotData).
+    pub fn getpivotdata_formula(&self, s: usize, r: u32, c: u32) -> Option<String> {
+        let i = self.pivot_at(s, r, c)?;
+        let p = self.pivots.get(i)?;
+        let (rp, cp) = p.paths.get(&(r, c))?.clone();
+        let j = p.vals.get(&(r, c)).copied().unwrap_or(0);
+        let src = self.pivot_source(p)?;
+        let df = p.values.get(j)?;
+        let q = |t: &str| format!("\"{}\"", t.replace('"', "\"\""));
+        let out = p.out?;
+        let anchor = format!("${}${}", crate::cellref::col_name(out.c1), out.r1 + 1);
+        let mut args = vec![q(&df.name), anchor];
+        for (fields, path) in [(&p.rows, &rp), (&p.cols, &cp)] {
+            for (k, item) in path.iter().enumerate() {
+                let Some(&fi) = fields.get(k) else { break };
+                let Some(h) = src.headers.get(fi) else { break };
+                args.push(q(h));
+                args.push(match item.parse::<f64>() {
+                    Ok(_) if !item.is_empty() => item.clone(),
+                    _ => q(item),
+                });
+            }
+        }
+        Some(format!("=GETPIVOTDATA({})", args.join(",")))
+    }
+
     pub fn pivot_data_value(&self, s: usize, r: u32, c: u32, field: &str, pairs: &[(String, Value)]) -> Option<Value> {
         let i = self.pivot_at(s, r, c)?;
         let p = self.pivots.get(i)?;

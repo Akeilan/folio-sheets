@@ -56,7 +56,9 @@ class CellEditor(Gtk.TextView):
         self._css = Gtk.CssProvider()
         self.get_style_context().add_provider(self._css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2)
         self.get_buffer().connect("changed", self._changed)
+        self.get_buffer().connect("insert-text", self._inserted)
         self._quiet = False
+        self._typed = False
 
     def text(self):
         b = self.get_buffer()
@@ -82,10 +84,45 @@ class CellEditor(Gtk.TextView):
                    "#%06x" % fill if fill is not None else "#ffffff"))
         self._css.load_from_data(css.encode())
 
+    def _inserted(self, buf, it, text, n):
+        # AutoComplete only after typing at the end of the entry (not after deleting)
+        self._typed = not self._quiet and it.is_end()
+
     def _changed(self, buf):
         if self._quiet:
             return
         self.grid.editor_changed()
+        if self._typed:
+            self._typed = False
+            GLib.idle_add(self._autocomplete)
+
+    def _autocomplete(self):
+        """AutoComplete: text typed in a column that matches one entry above or below the cell
+        is completed, the added part selected so typing on replaces it (S6-15)."""
+        g = self.grid
+        if self.cell is None or self.grid.win.formula_mode():
+            return False
+        b = self.get_buffer()
+        if b.get_has_selection():
+            return False
+        t = self.text()
+        if not t or t[0] in "=+-'" or t[0].isdigit() or "\n" in t:
+            return False
+        options = g.column_entries(*self.cell)
+        low = t.lower()
+        hits = {o for o in options if o.lower().startswith(low) and len(o) > len(t)}
+        found = {o.lower() for o in hits}
+        if len(found) != 1:
+            return False
+        full = sorted(hits)[0]
+        self._quiet = True
+        b.insert(b.get_end_iter(), full[len(t):])
+        self._quiet = False
+        end = b.get_end_iter()
+        start = b.get_iter_at_offset(len(t))
+        b.select_range(end, start)
+        g.editor_changed()
+        return False
 
 
 class GridView(Gtk.Box):
@@ -236,6 +273,17 @@ class GridView(Gtk.Box):
         if self.book is None:
             return False
         info = self.book.sheet_info(self.sheet)
+        if info["kind"] == "chart":
+            a = self.area.get_allocation()
+            cr.set_source_rgb(0.93, 0.93, 0.93)
+            cr.paint()
+            m = 12
+            cr.save()
+            cr.translate(m, m)
+            shown = self.book.render_chart_sheet(self.sheet, cr, max(10, a.width - 2 * m), max(10, a.height - 2 * m))
+            cr.restore()
+            if shown:
+                return False
         if info["kind"] != "work" and info["kind"] != "macro":
             cr.set_source_rgb(1, 1, 1)
             cr.paint()
@@ -564,6 +612,9 @@ class GridView(Gtk.Box):
     def selected_chart(self):
         """The selected chart's index, if exactly one chart is selected."""
         objs = self.book.objects(self.sheet) if self.book is not None else []
+        if self.book is not None and self.book.sheet_info(self.sheet)["kind"] == "chart":
+            # a chart sheet: its chart is always the one the chart commands work on
+            return next((i for i, o in enumerate(objs) if o["kind"] == "chart"), None)
         live = [i for i in self.sel_objects if i < len(objs) and objs[i]["kind"] == "chart"]
         return live[0] if len(live) == 1 and len(self.sel_objects) == 1 else None
 
@@ -615,6 +666,16 @@ class GridView(Gtk.Box):
         if self.book is None:
             return False
         if self.win.backstage_open():
+            return True
+        if self.book.sheet_info(self.sheet)["kind"] == "chart":
+            # a chart sheet is all chart: a click selects it, a double-click formats it, the
+            # right button gives the chart's menu
+            self.area.grab_focus()
+            self.win.on_object_selection(switch_tab=False)
+            if ev.type == Gdk.EventType._2BUTTON_PRESS and ev.button == 1:
+                self.win.run("chart-format")
+            elif ev.button == 3:
+                self.win.run("context-menu")
             return True
         ed = getattr(self.win, "equation_editor", None)
         if ed is not None and not ed.done:
@@ -743,12 +804,23 @@ class GridView(Gtk.Box):
                 double_click(self.win, h[1], h[2])
             elif h[0] == "cell":
                 self.start_edit(mode="edit")
+            elif h[0] == "fill":
+                self._drag = None
+                self.fill_target = None
+                self.win.fill_handle_double()
             elif h[0] == "colresize":
                 self.win.run("autofit-column-at:%d" % h[1])
             elif h[0] == "rowresize":
                 self.win.run("autofit-row-at:%d" % h[1])
             return True
         kind = h[0]
+        if kind == "cell" and not shift and not ctrl and self.on_sel_edge(ev.x, ev.y) or \
+                kind == "cell" and ctrl and self.on_sel_edge(ev.x, ev.y):
+            # dragging the selection's border moves the cells (Ctrl: copies them)
+            rg = tuple(self.sel.ranges[-1])
+            self._drag = ("move", rg, h[1] - rg[0], h[2] - rg[1], ctrl)
+            self.fill_target = None
+            return True
         if kind == "filterbtn":
             self.select_cell(h[1], h[2], refresh=True)
             from .data_ui import filter_menu
@@ -852,6 +924,8 @@ class GridView(Gtk.Box):
                 cur = "crosshair"
             elif h[0] == "cell" and getattr(self.win, "border_mode", None):
                 cur = "pencil" if self.win.border_mode != "erase" else "crosshair"
+            elif h[0] == "cell" and self.on_sel_edge(ev.x, ev.y):
+                cur = "move"
             elif h[0] == "cell":
                 cur = "pointer" if self.win.links.hover((h[1], h[2])) else "cell"
             if h[0] != "cell":
@@ -908,6 +982,14 @@ class GridView(Gtk.Box):
                 self.fill_target = self._fill_target(self._drag[1], h[1], h[2])
                 self.area.queue_draw()
             return
+        if kind == "move":
+            if h[0] == "cell":
+                rg, dr, dc = self._drag[1], self._drag[2], self._drag[3]
+                r0 = min(max(h[1] - dr, 0), MAX_ROWS - 1 - (rg[2] - rg[0]))
+                c0 = min(max(h[2] - dc, 0), MAX_COLS - 1 - (rg[3] - rg[1]))
+                self.fill_target = (r0, c0, r0 + rg[2] - rg[0], c0 + rg[3] - rg[1])
+                self.area.queue_draw()
+            return
         if kind == "cells" and h[0] == "cell":
             self.sel.extend_to(h[1], h[2])
             self.refresh()
@@ -926,6 +1008,45 @@ class GridView(Gtk.Box):
                 a = self._drag[1]
                 self.sel.ranges[-1] = (min(a, r), 0, max(a, r), MAX_COLS - 1)
                 self.refresh()
+
+    def column_entries(self, r, c, limit=2000):
+        """The text entries in the cell's column, in the run of filled cells above and below it."""
+        b = self.book
+        out = set()
+        for step in (-1, 1):
+            rr = r + step
+            n = 0
+            while 0 <= rr < MAX_ROWS and n < limit:
+                v = b.value(self.sheet, rr, c)
+                if v is None or v == "":
+                    break
+                if isinstance(v, str) and not b.is_formula(self.sheet, rr, c):
+                    out.add(v)
+                rr += step
+                n += 1
+        return out
+
+    def on_sel_edge(self, x, y):
+        """Whether (x, y) is on the border of the selection (where a drag moves it)."""
+        if len(self.sel.ranges) != 1 or self.editing():
+            return False
+        r1, c1, r2, c2 = self.sel.ranges[0]
+        if r2 - r1 > 100000 or c2 - c1 > 10000:
+            return False
+        p = self.params()
+        a = self.book.cell_rect(self.sheet, r1, c1, p)
+        b = self.book.cell_rect(self.sheet, r2, c2, p)
+        if a is None or b is None:
+            return False
+        x0, y0, x1, y1 = a[0], a[1], b[0] + b[2], b[1] + b[3]
+        near = 3
+        inside = x0 - near <= x <= x1 + near and y0 - near <= y <= y1 + near
+        if not inside:
+            return False
+        # not the fill handle (bottom right)
+        if abs(x - x1) <= 5 and abs(y - y1) <= 5:
+            return False
+        return abs(x - x0) <= near or abs(x - x1) <= near or abs(y - y0) <= near or abs(y - y1) <= near
 
     @staticmethod
     def _fill_target(src, r, c):
@@ -1025,6 +1146,12 @@ class GridView(Gtk.Box):
             return True
         if d and d[0] in ("colresize", "rowresize"):
             self.win.resize_header(d, ev.x, ev.y)
+        if d and d[0] == "move":
+            target, self.fill_target = getattr(self, "fill_target", None), None
+            if target and tuple(target) != tuple(d[1]):
+                copy = d[4] or bool(ev.state & Gdk.ModifierType.CONTROL_MASK)
+                self.win.move_cells_by_drag(d[1], target, copy)
+            self.area.queue_draw()
         if d and d[0] == "fill":
             target, self.fill_target = getattr(self, "fill_target", None), None
             if target and tuple(target) != tuple(d[1]):
@@ -1134,6 +1261,9 @@ class GridView(Gtk.Box):
         self.place_editor()
         self.editor.grab_focus()
         self.win.edit_started(text)
+        if initial:
+            # the first letter typed can already be completed
+            GLib.idle_add(self.editor._autocomplete)
 
     def place_editor(self):
         self.win.dv.place()
@@ -1180,8 +1310,22 @@ class GridView(Gtk.Box):
         self.editor.cell = None
         self.editor.hide()
         self._back_to_edit_sheet()
+        # a line break typed with Alt+Enter turns Wrap Text on; a web or e-mail address becomes a link
+        wrap = "\n" in text and not text.startswith("=") and not self.book.cell_style(self.sheet, r, c).get("wrap")
+        from .links_ui import auto_link
+        link = auto_link(text) if not self.book.link_at(self.sheet, r, c) else None
         try:
-            self.book.set_input(self.sheet, r, c, text)
+            if wrap or link:
+                with self.book.group("Typing"):
+                    self.book.set_input(self.sheet, r, c, text)
+                    if wrap:
+                        self.book.restyle(self.sheet, [(r, c, r, c)], [{"align": {"wrap": True}}], "Typing")
+                    if link:
+                        from .links_ui import LINK_COLOR
+                        self.book.set_link(self.sheet, (r, c, r, c), link)
+                        self.book.restyle(self.sheet, [(r, c, r, c)], [{"font": {"color": LINK_COLOR, "underline": "single"}}], "Typing")
+            else:
+                self.book.set_input(self.sheet, r, c, text)
         except Exception as e:
             self.win.formula_error(text, e)
         self.win.edit_ended()
@@ -1202,6 +1346,17 @@ class GridView(Gtk.Box):
         """Tab/Enter in a single cell: Enter after a run of Tabs goes to the
         next row in the column the run started from."""
         r, c = self.sel.active
+        if dc > 0 and not dr and self.book is not None:
+            ti = self.book.table_at(self.sheet, r, c)
+            if ti is not None:
+                t = self.book.tables(self.sheet)[ti]
+                d = t["data"]
+                if (r, c) == (d[2], d[3]):
+                    # Tab in a table's last cell adds a row and goes to its first cell (S6-20)
+                    self.win.table_add_row(ti)
+                    self.tab_origin = None
+                    self.select_cell(d[2] + 1, d[1])
+                    return
         if dc and not dr:
             if self.tab_origin is None:
                 self.tab_origin = c
@@ -1245,6 +1400,9 @@ class GridView(Gtk.Box):
         if kv in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             if alt:
                 self.editor.get_buffer().insert_at_cursor("\n")
+                return True
+            if ctrl and shift:
+                self.win.array_formula_from_edit()
                 return True
             if ctrl:
                 self.win.fill_selection_with_edit()

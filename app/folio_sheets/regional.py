@@ -137,3 +137,21 @@ def refresh_presets():
             ribbon_defs.NUMBER_FORMATS[i] = (name, currency_format())
         elif name == "Accounting":
             ribbon_defs.NUMBER_FORMATS[i] = (name, accounting_format())
+
+
+def date_text(d):
+    """A date as typed in the region (Ctrl+;)."""
+    order = _CUR.get("date_order", "MDY")
+    code = _CUR.get("short_date", "m/d/yyyy")
+    sep = next((ch for ch in code if ch in "/-. "), "/")
+    parts = {"D": str(d.day), "M": str(d.month), "Y": str(d.year)}
+    return sep.join(parts[k] for k in order)
+
+
+def time_text(t):
+    """A time as typed in the region (Ctrl+Shift+:): 12-hour with AM/PM where dates go
+    month first, 24-hour elsewhere."""
+    if _CUR.get("date_order", "MDY") == "MDY":
+        h = t.hour % 12 or 12
+        return "%d:%02d %s" % (h, t.minute, "AM" if t.hour < 12 else "PM")
+    return "%d:%02d" % (t.hour, t.minute)
