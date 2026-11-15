@@ -146,6 +146,7 @@ fn spec_dict<'py>(py: Python<'py>, sp: &crate::book_chart::ChartSpec) -> PyResul
         e.set_item("name", &s.name)?;
         e.set_item("cat", &s.cat)?;
         e.set_item("val", &s.val)?;
+        e.set_item("size", &s.size)?;
         e.set_item("kind", &s.kind)?;
         e.set_item("secondary", s.secondary)?;
         e.set_item("color", s.color)?;
@@ -330,6 +331,7 @@ fn dict_spec(d: &Bound<'_, PyDict>) -> PyResult<crate::book_chart::ChartSpec> {
                 name: get(e, "name").unwrap_or_default(),
                 cat: get(e, "cat").unwrap_or_default(),
                 val: get(e, "val").unwrap_or_default(),
+                size: get(e, "size").unwrap_or_default(),
                 kind: get(e, "kind").unwrap_or_else(|| "col".into()),
                 secondary: get(e, "secondary").unwrap_or(false),
                 color: get(e, "color"),

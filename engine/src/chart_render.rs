@@ -14,6 +14,35 @@ unsafe fn rgb(cr: *mut cairo_t, c: u32) {
     cairo_set_source_rgb(cr, ((c >> 16) & 255) as f64 / 255.0, ((c >> 8) & 255) as f64 / 255.0, (c & 255) as f64 / 255.0);
 }
 
+fn shade(c: u32, k: f64) -> u32 {
+    crate::render::mix_pub(c, 0x000000, k)
+}
+
+fn lighten(c: u32, k: f64) -> u32 {
+    crate::render::mix_pub(c, 0xFFFFFF, k)
+}
+
+/// A box seen from the front, its top and right side going back by (dx, dy).
+unsafe fn prism(cr: *mut cairo_t, x: f64, y: f64, w: f64, h: f64, dx: f64, dy: f64, c: u32) {
+    rgb(cr, shade(c, 0.3));
+    cairo_move_to(cr, x + w, y);
+    cairo_line_to(cr, x + w + dx, y - dy);
+    cairo_line_to(cr, x + w + dx, y + h - dy);
+    cairo_line_to(cr, x + w, y + h);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+    rgb(cr, lighten(c, 0.25));
+    cairo_move_to(cr, x, y);
+    cairo_line_to(cr, x + dx, y - dy);
+    cairo_line_to(cr, x + w + dx, y - dy);
+    cairo_line_to(cr, x + w, y);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+    rgb(cr, c);
+    cairo_rectangle(cr, x, y, w, h);
+    cairo_fill(cr);
+}
+
 fn luma(c: u32) -> f64 {
     0.299 * ((c >> 16) & 255) as f64 + 0.587 * ((c >> 8) & 255) as f64 + 0.114 * (c & 255) as f64
 }
@@ -74,6 +103,8 @@ struct Entry {
 struct SerData {
     vals: Vec<Option<f64>>,
     xs: Vec<Option<f64>>,
+    /// bubble sizes
+    sizes: Vec<Option<f64>>,
     color: u32,
     labels: bool,
     smooth: bool,
@@ -115,7 +146,7 @@ impl Book {
             }
         }
         pen.set_align(PANGO_ALIGN_LEFT);
-        if let Some(tag) = ch.special() {
+        if let Some(tag) = ch.special().filter(|t| matches!(*t, "radarChart" | "stockChart" | "surfaceChart" | "surface3DChart")) {
             self.paint_special(ch, tag, cr, l, t, r, b, z, pen);
             cairo_restore(cr);
             return;
@@ -142,6 +173,7 @@ impl Book {
                     vals: pts.iter().map(|p| p.v).collect(),
                     texts: pts.iter().map(|p| p.text.clone()).collect(),
                     xs: xpts.iter().map(|p| p.v).collect(),
+                    sizes: se.size.as_ref().map(|v| self.chart_values(v).into_iter().map(|p| p.v).collect()).unwrap_or_default(),
                     color,
                     labels: se.labels,
                     smooth: se.smooth,
@@ -257,6 +289,11 @@ impl Book {
         if total <= 0.0 {
             return;
         }
+        match p.file_tag.as_deref() {
+            Some("pie3DChart") => return self.paint_pie_3d(ch, s0, total, cr, l, t, r, b, z, pen),
+            Some("ofPieChart") => return self.paint_of_pie(ch, s0, cr, l, t, r, b, z, pen),
+            _ => {}
+        }
         let cx = (l + r) / 2.0;
         let cy = (t + b) / 2.0;
         let rad = ((r - l).min(b - t) / 2.0) * 0.92;
@@ -296,6 +333,192 @@ impl Book {
         for (text, x, y, color) in labels {
             let (tw, th) = pen.set(&text, &f, z, None);
             rgb(cr, if luma(color) < 140.0 { 0xFFFFFF } else { 0x404040 });
+            pen.show(cr, x - tw / 2.0, y - th / 2.0);
+        }
+    }
+
+    /// A pie tilted back, with its edge showing at the front.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn paint_pie_3d(&self, ch: &Chart, s0: &SerData, total: f64, cr: *mut cairo_t, l: f64, t: f64, r: f64, b: f64, z: f64, pen: &mut Pen) {
+        let theme = &self.styles.theme;
+        let rad = ((r - l) / 2.0).min((b - t) / 2.0 / 0.7) * 0.92;
+        let ry = rad * 0.55;
+        let depth = rad * 0.16;
+        let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0 - depth / 2.0);
+        let p = &ch.plots[0];
+        let mut slices = Vec::new();
+        let mut a = -PI / 2.0 + p.first_angle as f64 * PI / 180.0;
+        for (i, v) in s0.vals.iter().enumerate() {
+            let v = v.unwrap_or(0.0).abs();
+            if v == 0.0 {
+                continue;
+            }
+            let sweep = v / total * 2.0 * PI;
+            slices.push((a, a + sweep, auto_color(theme, ch.palette, i), v));
+            a += sweep;
+        }
+        let ell = |ang: f64, dy: f64| (cx + rad * ang.cos(), cy + ry * ang.sin() + dy);
+        // the edge: the parts of each slice in the front half (angles 0..pi on screen)
+        for (a0, a1, c, _) in &slices {
+            for k in -1..=2 {
+                let lo = (k as f64) * 2.0 * PI;
+                let (s1, e1) = (a0.max(lo), a1.min(lo + PI));
+                if e1 <= s1 {
+                    continue;
+                }
+                rgb(cr, shade(*c, 0.3));
+                cairo_new_path(cr);
+                let steps = (((e1 - s1) / 0.05).ceil() as usize).max(2);
+                for st in 0..=steps {
+                    let q = ell(s1 + (e1 - s1) * st as f64 / steps as f64, 0.0);
+                    if st == 0 { cairo_move_to(cr, q.0, q.1) } else { cairo_line_to(cr, q.0, q.1) }
+                }
+                for st in (0..=steps).rev() {
+                    let q = ell(s1 + (e1 - s1) * st as f64 / steps as f64, depth);
+                    cairo_line_to(cr, q.0, q.1);
+                }
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            }
+        }
+        // the top
+        let f = self.chart_font(9.0, false);
+        for (a0, a1, c, v) in &slices {
+            cairo_save(cr);
+            cairo_translate(cr, cx, cy);
+            cairo_scale(cr, 1.0, ry / rad);
+            cairo_new_path(cr);
+            cairo_move_to(cr, 0.0, 0.0);
+            cairo_arc(cr, 0.0, 0.0, rad, *a0, *a1);
+            cairo_close_path(cr);
+            cairo_restore(cr);
+            rgb(cr, *c);
+            cairo_fill_preserve(cr);
+            rgb(cr, 0xFFFFFF);
+            cairo_set_line_width(cr, 1.0 * z);
+            cairo_stroke(cr);
+            if s0.labels {
+                let mid = (a0 + a1) / 2.0;
+                let text = format!("{:.0}%", v / total * 100.0);
+                let (tw, th) = pen.set(&text, &f, z, None);
+                rgb(cr, if luma(*c) < 140.0 { 0xFFFFFF } else { 0x404040 });
+                pen.show(cr, cx + rad * 0.62 * mid.cos() - tw / 2.0, cy + ry * 0.62 * mid.sin() - th / 2.0);
+            }
+        }
+    }
+
+    /// Pie-of-pie and bar-of-pie: the last points taken out of the pie into a second pie or a stacked bar.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn paint_of_pie(&self, ch: &Chart, s0: &SerData, cr: *mut cairo_t, l: f64, t: f64, r: f64, b: f64, z: f64, pen: &mut Pen) {
+        let theme = &self.styles.theme;
+        let p = &ch.plots[0];
+        let vals: Vec<f64> = s0.vals.iter().map(|v| v.unwrap_or(0.0).abs()).collect();
+        let n = vals.len();
+        let k = crate::chart::of_split(p, n);
+        let (main, second) = vals.split_at(n - k);
+        let other: f64 = second.iter().sum();
+        let total: f64 = main.iter().sum::<f64>() + other;
+        if total <= 0.0 {
+            return;
+        }
+        let w = r - l;
+        let cy = (t + b) / 2.0;
+        let rad = (w * 0.26).min((b - t) / 2.0 * 0.9);
+        let cx1 = l + w * 0.3;
+        let cx2 = l + w * 0.78;
+        let f = self.chart_font(9.0, false);
+        let mut labels: Vec<(String, f64, f64, u32)> = Vec::new();
+        let other_sweep = other / total * 2.0 * PI;
+        // the main pie: the combined slice faces the second plot
+        let mut a = other_sweep / 2.0;
+        let slice = |a0: f64, a1: f64, c: u32, cx: f64, rr: f64| {
+            rgb(cr, c);
+            cairo_new_path(cr);
+            cairo_move_to(cr, cx, cy);
+            cairo_arc(cr, cx, cy, rr, a0, a1);
+            cairo_close_path(cr);
+            cairo_fill_preserve(cr);
+            rgb(cr, 0xFFFFFF);
+            cairo_set_line_width(cr, 1.5 * z);
+            cairo_stroke(cr);
+        };
+        for (i, v) in main.iter().enumerate() {
+            if *v == 0.0 {
+                continue;
+            }
+            let sw = v / total * 2.0 * PI;
+            let c = auto_color(theme, ch.palette, i);
+            slice(a, a + sw, c, cx1, rad);
+            if s0.labels {
+                let m = a + sw / 2.0;
+                labels.push((format!("{:.0}%", v / total * 100.0), cx1 + rad * 0.65 * m.cos(), cy + rad * 0.65 * m.sin(), c));
+            }
+            a += sw;
+        }
+        if other > 0.0 {
+            let c = auto_color(theme, ch.palette, n);
+            slice(-other_sweep / 2.0, other_sweep / 2.0, c, cx1, rad);
+            if s0.labels {
+                labels.push((format!("{:.0}%", other / total * 100.0), cx1 + rad * 0.65, cy, c));
+            }
+        }
+        // the second plot and the lines joining it to the combined slice
+        let (top_pt, bot_pt) = ((cx1 + rad * (other_sweep / 2.0).cos(), cy - rad * (other_sweep / 2.0).sin()),
+                                (cx1 + rad * (other_sweep / 2.0).cos(), cy + rad * (other_sweep / 2.0).sin()));
+        let (t2, b2, left2);
+        if p.of_bar {
+            let bh = rad * 2.0 * 0.85;
+            let bw = rad * 0.45;
+            let x0 = cx2 - bw / 2.0;
+            let mut y = cy - bh / 2.0;
+            for (j, v) in second.iter().enumerate() {
+                let hh = if other > 0.0 { v / other * bh } else { 0.0 };
+                let c = auto_color(theme, ch.palette, n - k + j);
+                rgb(cr, c);
+                cairo_rectangle(cr, x0, y, bw, hh);
+                cairo_fill_preserve(cr);
+                rgb(cr, 0xFFFFFF);
+                cairo_set_line_width(cr, 1.5 * z);
+                cairo_stroke(cr);
+                if s0.labels {
+                    labels.push((format!("{:.0}%", v / total * 100.0), cx2, y + hh / 2.0, c));
+                }
+                y += hh;
+            }
+            t2 = (x0, cy - bh / 2.0);
+            b2 = (x0, cy + bh / 2.0);
+            left2 = x0;
+        } else {
+            let rad2 = rad * 0.75;
+            let mut a2 = PI - (if other > 0.0 { second[0] / other } else { 0.0 }) * PI;
+            for (j, v) in second.iter().enumerate() {
+                if *v == 0.0 {
+                    continue;
+                }
+                let sw = if other > 0.0 { v / other * 2.0 * PI } else { 0.0 };
+                let c = auto_color(theme, ch.palette, n - k + j);
+                slice(a2, a2 + sw, c, cx2, rad2);
+                if s0.labels {
+                    let m = a2 + sw / 2.0;
+                    labels.push((format!("{:.0}%", v / total * 100.0), cx2 + rad2 * 0.62 * m.cos(), cy + rad2 * 0.62 * m.sin(), c));
+                }
+                a2 += sw;
+            }
+            t2 = (cx2, cy - rad2);
+            b2 = (cx2, cy + rad2);
+            left2 = cx2 - rad2;
+        }
+        let _ = left2;
+        rgb(cr, 0xA6A6A6);
+        cairo_set_line_width(cr, 1.0 * z);
+        cairo_move_to(cr, top_pt.0, top_pt.1);
+        cairo_line_to(cr, t2.0, t2.1);
+        cairo_move_to(cr, bot_pt.0, bot_pt.1);
+        cairo_line_to(cr, b2.0, b2.1);
+        cairo_stroke(cr);
+        for (text, x, y, c) in labels {
+            let (tw, th) = pen.set(&text, &f, z, None);
+            rgb(cr, if luma(c) < 140.0 { 0xFFFFFF } else { 0x404040 });
             pen.show(cr, x - tw / 2.0, y - th / 2.0);
         }
     }
@@ -433,6 +656,28 @@ impl Book {
         if pr - pl < 10.0 || pb - pt < 10.0 {
             return;
         }
+        // ---- 3-D: room for the depth, one row per series where they stand one behind another
+        let p3 = ch.plots.first().filter(|p| p.is_3d());
+        let nser = data.first().map(|d| d.len()).unwrap_or(1).max(1);
+        let rows3 = match p3 {
+            Some(p) if p.standard3d || p.file_tag.as_deref() == Some("line3DChart")
+                || (p.file_tag.as_deref() == Some("area3DChart") && p.group == Group::Clustered) => nser,
+            Some(_) => 1,
+            None => 0,
+        };
+        let (ddx, ddy) = if rows3 > 0 {
+            let len = if horizontal { pb - pt } else { pr - pl };
+            let unit = (len / ncat as f64 * 0.45).min(len * 0.25 / rows3 as f64).min(40.0 * z).max(3.0 * z);
+            (unit * 0.85, unit * 0.5)
+        } else {
+            (0.0, 0.0)
+        };
+        let (dxt, dyt) = (ddx * rows3 as f64, ddy * rows3 as f64);
+        let pr = pr - dxt;
+        let pt = pt + dyt;
+        if pr - pl < 10.0 || pb - pt < 10.0 {
+            return;
+        }
         // value -> screen
         let vmap = |v: f64, ax: (f64, f64, f64, bool)| -> f64 {
             let k = (v - ax.0) / (ax.1 - ax.0);
@@ -448,7 +693,18 @@ impl Book {
             let p = vmap(*v, prim).round() + 0.5;
             if ch.gridlines {
                 rgb(cr, LINE);
-                if horizontal {
+                if rows3 > 0 {
+                    // on the back wall, joined to the front along the side wall (floor)
+                    if horizontal {
+                        cairo_move_to(cr, p, pb);
+                        cairo_line_to(cr, p + dxt, pb - dyt);
+                        cairo_line_to(cr, p + dxt, pt - dyt);
+                    } else {
+                        cairo_move_to(cr, pl, p);
+                        cairo_line_to(cr, pl + dxt, p - dyt);
+                        cairo_line_to(cr, pr + dxt, p - dyt);
+                    }
+                } else if horizontal {
                     cairo_move_to(cr, p, pt);
                     cairo_line_to(cr, p, pb);
                 } else {
@@ -538,9 +794,19 @@ impl Book {
             cairo_restore(cr);
             pango_cairo_update_layout(cr, pen.layout);
         }
+        if rows3 > 0 {
+            rgb(cr, LINE);
+            cairo_move_to(cr, pl, pb);
+            cairo_line_to(cr, pl + dxt, pb - dyt);
+            cairo_line_to(cr, pr + dxt, pb - dyt);
+            cairo_line_to(cr, pr, pb);
+            cairo_move_to(cr, pl + dxt, pb - dyt);
+            cairo_line_to(cr, pl + dxt, pt - dyt);
+            cairo_stroke(cr);
+        }
         // ---- series
         cairo_save(cr);
-        cairo_rectangle(cr, pl - 6.0 * z, pt - 6.0 * z, pr - pl + 12.0 * z, pb - pt + 12.0 * z);
+        cairo_rectangle(cr, pl - 6.0 * z, pt - dyt - 6.0 * z, pr - pl + dxt + 12.0 * z, pb - pt + dyt + 12.0 * z);
         cairo_clip(cr);
         cairo_set_line_join(cr, 1);
         cairo_set_line_cap(cr, 1);
@@ -551,8 +817,50 @@ impl Book {
             let ax = if p.secondary { sec.unwrap_or(prim) } else { prim };
             let fmt = if p.secondary { &sfmt } else { &pfmt };
             match p.kind {
+                Kind::Bar if p.is_3d() => self.paint_bars_3d(p, ser, ncat, ax, horizontal, pl, pt, pr, pb, cr, &vmap, (ddx, ddy), fmt, &mut labels),
                 Kind::Bar => self.paint_bars(p, ser, ncat, ax, horizontal, pl, pt, pr, pb, cr, &vmap, fmt, &mut labels),
+                Kind::Line | Kind::Area if p.is_3d() => self.paint_lines_3d(p, ser, ncat, ax, pl, pr, cr, &vmap, z, (ddx, ddy), rows3 > 1),
                 Kind::Line | Kind::Area => self.paint_lines(p, ser, ncat, ax, pl, pr, cr, &vmap, z, fmt, &mut labels),
+                Kind::Scatter if p.file_tag.as_deref() == Some("bubbleChart") => {
+                    let maxsz = ser.iter().flat_map(|s| s.sizes.iter().flatten()).fold(0.0f64, |m, v| m.max(v.abs()));
+                    let rmax = 0.125 * (pr - pl).min(pb - pt);
+                    for s in ser {
+                        for i in 0..s.vals.len() {
+                            let xv = if s.xs.is_empty() { Some(i as f64 + 1.0) } else { s.xs.get(i).copied().flatten() };
+                            let (xv, yv) = match (xv, s.vals[i]) {
+                                (Some(a), Some(b)) => (a, b),
+                                _ => continue,
+                            };
+                            let sz = s.sizes.get(i).copied().flatten().unwrap_or(if s.sizes.is_empty() { 1.0 } else { 0.0 });
+                            if sz <= 0.0 || maxsz <= 0.0 && !s.sizes.is_empty() {
+                                continue;
+                            }
+                            let rr = if maxsz > 0.0 { (sz / maxsz).sqrt() * rmax } else { rmax * 0.5 };
+                            let (x, y) = (xmap(xv), vmap(yv, ax));
+                            if p.bubble3d {
+                                let g = cairo_pattern_create_radial(x - rr * 0.35, y - rr * 0.35, rr * 0.05, x, y, rr);
+                                let hi = lighten(s.color, 0.6);
+                                let ch2 = |c: u32, k: u32| ((c >> k) & 255) as f64 / 255.0;
+                                cairo_pattern_add_color_stop_rgb(g, 0.0, ch2(hi, 16), ch2(hi, 8), ch2(hi, 0));
+                                cairo_pattern_add_color_stop_rgb(g, 1.0, ch2(shade(s.color, 0.2), 16), ch2(shade(s.color, 0.2), 8), ch2(shade(s.color, 0.2), 0));
+                                cairo_set_source(cr, g);
+                                cairo_arc(cr, x, y, rr, 0.0, 2.0 * PI);
+                                cairo_fill(cr);
+                                cairo_pattern_destroy(g);
+                            } else {
+                                rgb(cr, s.color);
+                                cairo_arc(cr, x, y, rr, 0.0, 2.0 * PI);
+                                cairo_fill_preserve(cr);
+                                rgb(cr, 0xFFFFFF);
+                                cairo_set_line_width(cr, 0.75 * z);
+                                cairo_stroke(cr);
+                            }
+                            if s.labels {
+                                labels.push((label(yv, false, fmt), x, y + 4.0 * z));
+                            }
+                        }
+                    }
+                }
                 Kind::Scatter => {
                     for s in ser {
                         let pts: Vec<Option<(f64, f64)>> = (0..s.vals.len()).map(|i| {
@@ -637,6 +945,162 @@ impl Book {
                     if s.labels {
                         labels.push((self.fmt_label(v, fmt), x0 + bw / 2.0, if stacked { (p0 + p1) / 2.0 + 6.0 } else { p1.min(p0) - 2.0 }));
                     }
+                }
+            }
+        }
+    }
+
+    /// 3-D column and bar charts: boxes with depth; "3-D Column" puts each series in its own row going back.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn paint_bars_3d(&self, p: &Plot, ser: &[SerData], ncat: usize, ax: (f64, f64, f64, bool), horizontal: bool,
+                            pl: f64, pt: f64, pr: f64, pb: f64, cr: *mut cairo_t, vmap: &dyn Fn(f64, (f64, f64, f64, bool)) -> f64,
+                            (ddx, ddy): (f64, f64), fmt: &str, labels: &mut Vec<(String, f64, f64)>) {
+        let slot = if horizontal { (pb - pt) / ncat as f64 } else { (pr - pl) / ncat as f64 };
+        let g = p.gap as f64 / 100.0;
+        let base_v = if ax.0 > 0.0 { ax.0 } else if ax.1 < 0.0 { ax.1 } else { 0.0 };
+        if p.standard3d && !horizontal {
+            let bw = slot / (1.0 + g);
+            for (j, s) in ser.iter().enumerate().rev() {
+                let (ox, oy) = (ddx * j as f64, -ddy * j as f64);
+                for i in 0..ncat {
+                    let v = match s.vals.get(i).copied().flatten() {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    let x0 = pl + (i as f64 + 0.5) * slot - bw / 2.0 + ox + ddx * 0.1;
+                    let (p0, p1) = (vmap(base_v, ax) + oy, vmap(v, ax) + oy);
+                    prism(cr, x0, p0.min(p1), bw * 0.8, (p1 - p0).abs(), ddx * 0.8, ddy * 0.8, s.color);
+                    if s.labels {
+                        labels.push((self.fmt_label(v, fmt), x0 + bw * 0.4, p1.min(p0) - ddy - 2.0));
+                    }
+                }
+            }
+            return;
+        }
+        let n = ser.len().max(1) as f64;
+        let stacked = p.group != Group::Clustered;
+        let bw = if stacked { slot / (1.0 + g) } else { slot / (n + g) };
+        let order: Vec<usize> = if horizontal { (0..ncat).rev().collect() } else { (0..ncat).collect() };
+        for i in order {
+            let center = if horizontal { pb - (i as f64 + 0.5) * slot } else { pl + (i as f64 + 0.5) * slot };
+            let start = center - if stacked { bw / 2.0 } else { bw * n / 2.0 };
+            let tot: f64 = ser.iter().map(|s| s.vals.get(i).copied().flatten().unwrap_or(0.0).abs()).sum();
+            let (mut pos, mut neg) = (0.0, 0.0);
+            for (j, s) in ser.iter().enumerate() {
+                let v = match s.vals.get(i).copied().flatten() {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let v2 = if p.group == Group::Percent && tot > 0.0 { v / tot } else { v };
+                let (a, bb) = if stacked {
+                    if v2 >= 0.0 { let a = pos; pos += v2; (a, pos) } else { let a = neg; neg += v2; (a, neg) }
+                } else {
+                    (base_v, v2)
+                };
+                let off = if stacked { 0.0 } else { j as f64 * bw };
+                let (p0, p1) = (vmap(a, ax), vmap(bb, ax));
+                if horizontal {
+                    let y0 = start + if stacked { 0.0 } else { (n - 1.0) * bw - off };
+                    prism(cr, p0.min(p1), y0 + ddy * 0.2, (p1 - p0).abs(), bw * 0.8, ddx * 0.8, ddy * 0.8, s.color);
+                    if s.labels {
+                        labels.push((self.fmt_label(v, fmt), p1.max(p0) + ddx + 12.0, y0 + bw / 2.0 + 6.0));
+                    }
+                } else {
+                    let x0 = start + off;
+                    prism(cr, x0, p0.min(p1), bw * 0.9, (p1 - p0).abs(), ddx * 0.8, ddy * 0.8, s.color);
+                    if s.labels {
+                        labels.push((self.fmt_label(v, fmt), x0 + bw / 2.0, if stacked { (p0 + p1) / 2.0 + 6.0 } else { p1.min(p0) - ddy - 2.0 }));
+                    }
+                }
+            }
+        }
+    }
+
+    /// 3-D lines (ribbons, one row per series) and 3-D areas (slabs; a row per series when not stacked).
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn paint_lines_3d(&self, p: &Plot, ser: &[SerData], ncat: usize, ax: (f64, f64, f64, bool), pl: f64, pr: f64,
+                             cr: *mut cairo_t, vmap: &dyn Fn(f64, (f64, f64, f64, bool)) -> f64, z: f64, (ddx, ddy): (f64, f64), rows: bool) {
+        let stacked = p.group != Group::Clustered;
+        let area = p.kind == Kind::Area;
+        let tot: Vec<f64> = (0..ncat).map(|i| ser.iter().map(|s| s.vals.get(i).copied().flatten().unwrap_or(0.0).abs()).sum()).collect();
+        let base_v = if ax.0 > 0.0 { ax.0 } else if ax.1 < 0.0 { ax.1 } else { 0.0 };
+        let xs: Vec<f64> = if area {
+            (0..ncat).map(|i| if ncat == 1 { (pl + pr) / 2.0 } else { pl + i as f64 * (pr - pl) / (ncat - 1) as f64 }).collect()
+        } else {
+            let slot = (pr - pl) / ncat as f64;
+            (0..ncat).map(|i| pl + (i as f64 + 0.5) * slot).collect()
+        };
+        // the tops (and bottoms) of each series
+        let mut below = vec![0.0f64; ncat];
+        let mut layers: Vec<(Vec<f64>, Vec<f64>, u32)> = Vec::new();
+        for s in ser {
+            let top: Vec<f64> = (0..ncat).map(|i| {
+                let v = s.vals.get(i).copied().flatten().unwrap_or(0.0);
+                let v = if p.group == Group::Percent && tot[i] > 0.0 { v / tot[i] } else { v };
+                if stacked { below[i] + v } else { v }
+            }).collect();
+            let bot: Vec<f64> = if stacked { below.clone() } else { vec![base_v; ncat] };
+            if stacked {
+                below = top.clone();
+            }
+            layers.push((top, bot, s.color));
+        }
+        let depth = if rows { 0.75 } else { 1.0 };
+        let (rdx, rdy) = (ddx * depth, ddy * depth);
+        // back rows first; the first series stands at the front
+        let order: Vec<usize> = if rows { (0..layers.len()).rev().collect() } else { (0..layers.len()).collect() };
+        for j in order {
+            let (top, bot, c) = &layers[j];
+            let (ox, oy) = if rows { (ddx * j as f64, -ddy * j as f64) } else { (0.0, 0.0) };
+            let pt_of = |i: usize, v: f64| (xs[i] + ox, vmap(v, ax) + oy);
+            if area {
+                // the top surface, strip by strip, then the right end and the front
+                for i in 0..ncat.saturating_sub(1) {
+                    let (a, b) = (pt_of(i, top[i]), pt_of(i + 1, top[i + 1]));
+                    rgb(cr, lighten(*c, 0.25));
+                    cairo_move_to(cr, a.0, a.1);
+                    cairo_line_to(cr, b.0, b.1);
+                    cairo_line_to(cr, b.0 + rdx, b.1 - rdy);
+                    cairo_line_to(cr, a.0 + rdx, a.1 - rdy);
+                    cairo_close_path(cr);
+                    cairo_fill(cr);
+                }
+                let (e1, e0) = (pt_of(ncat - 1, top[ncat - 1]), pt_of(ncat - 1, bot[ncat - 1]));
+                rgb(cr, shade(*c, 0.3));
+                cairo_move_to(cr, e1.0, e1.1);
+                cairo_line_to(cr, e1.0 + rdx, e1.1 - rdy);
+                cairo_line_to(cr, e0.0 + rdx, e0.1 - rdy);
+                cairo_line_to(cr, e0.0, e0.1);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+                rgb(cr, *c);
+                cairo_new_path(cr);
+                for i in 0..ncat {
+                    let q = pt_of(i, top[i]);
+                    if i == 0 { cairo_move_to(cr, q.0, q.1) } else { cairo_line_to(cr, q.0, q.1) }
+                }
+                for i in (0..ncat).rev() {
+                    let q = pt_of(i, bot[i]);
+                    cairo_line_to(cr, q.0, q.1);
+                }
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            } else {
+                // a ribbon: each segment as a band going back, its front edge darker
+                for i in 0..ncat.saturating_sub(1) {
+                    let (a, b) = (pt_of(i, top[i]), pt_of(i + 1, top[i + 1]));
+                    rgb(cr, if b.1 < a.1 { lighten(*c, 0.15) } else { *c });
+                    cairo_move_to(cr, a.0, a.1);
+                    cairo_line_to(cr, b.0, b.1);
+                    cairo_line_to(cr, b.0 + rdx, b.1 - rdy);
+                    cairo_line_to(cr, a.0 + rdx, a.1 - rdy);
+                    cairo_close_path(cr);
+                    cairo_fill(cr);
+                    rgb(cr, shade(*c, 0.3));
+                    cairo_set_line_width(cr, z.max(1.0));
+                    cairo_move_to(cr, a.0, a.1);
+                    cairo_line_to(cr, b.0, b.1);
+                    cairo_stroke(cr);
                 }
             }
         }

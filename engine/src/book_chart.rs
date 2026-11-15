@@ -32,6 +32,8 @@ pub struct SeriesSpec {
     pub name: String,
     pub cat: String,
     pub val: String,
+    /// bubble charts: the bubble sizes
+    pub size: String,
     /// for combo charts: col, line, area
     pub kind: String,
     pub secondary: bool,
@@ -49,7 +51,22 @@ pub fn kind_name(ch: &Chart) -> String {
     match ch.special() {
         Some("radarChart") => return if p.hole == 1 { "radar-filled".into() } else if p.markers { "radar-markers".into() } else { "radar".into() },
         Some("stockChart") => return "stock".into(),
-        Some("surfaceChart") => return "contour".into(),
+        Some("surfaceChart") => return if p.wire { "contour-wire".into() } else { "contour".into() },
+        Some("surface3DChart") => return if p.wire { "surface3d-wire".into() } else { "surface3d".into() },
+        Some("bubbleChart") => return if p.bubble3d { "bubble3d".into() } else { "bubble".into() },
+        Some("ofPieChart") => return if p.of_bar { "bar-of-pie".into() } else { "pie-of-pie".into() },
+        Some("pie3DChart") => return "pie3d".into(),
+        Some("line3DChart") => return "line3d".into(),
+        Some("area3DChart") => return match p.group { Group::Stacked => "area3d-stacked".into(), Group::Percent => "area3d-percent".into(), _ => "area3d".into() },
+        Some("bar3DChart") => {
+            let base = if p.horizontal { "bar3d" } else { "col3d" };
+            return match (p.standard3d, p.group) {
+                (true, _) if !p.horizontal => "col3d".into(),
+                (_, Group::Stacked) => format!("{}-stacked", base),
+                (_, Group::Percent) => format!("{}-percent", base),
+                _ => format!("{}-clustered", base),
+            };
+        }
         _ => {}
     }
     let base = match p.kind {
@@ -137,6 +154,7 @@ impl Book {
                     name: src_text(&se.name),
                     cat: src_text(&se.cat),
                     val: src_text(&se.val),
+                    size: src_text(&se.size),
                     kind: match p.kind {
                         Kind::Line => "line".into(),
                         Kind::Area => "area".into(),
@@ -169,7 +187,7 @@ impl Book {
             if val.is_none() {
                 continue;
             }
-            for (what, t) in [("values", &ss.val), ("categories", &ss.cat)] {
+            for (what, t) in [("values", &ss.val), ("categories", &ss.cat), ("bubble sizes", &ss.size)] {
                 if let Some(Src { f: Some(f), .. }) = text_src(t) {
                     if self.chart_ref_areas(&f).is_none() {
                         return Err(format!("The {} of series {} must be a reference to cells.", what, k + 1));
@@ -180,6 +198,7 @@ impl Book {
                 name: text_src(&ss.name),
                 cat: text_src(&ss.cat),
                 val,
+                size: text_src(&ss.size),
                 color: ss.color,
                 labels: spec.labels,
                 smooth: spec.kind == "scatter-smooth",
@@ -522,7 +541,7 @@ impl Book {
             let mut out = Vec::new();
             for p in &tmp.plots {
                 for se in &p.series {
-                    out.push(SeriesSpec { name: src_text(&se.name), cat: src_text(&se.cat), val: src_text(&se.val), kind: "col".into(), secondary: false, color: None });
+                    out.push(SeriesSpec { name: src_text(&se.name), cat: src_text(&se.cat), val: src_text(&se.val), size: src_text(&se.size), kind: "col".into(), secondary: false, color: None });
                 }
             }
             let _ = b;

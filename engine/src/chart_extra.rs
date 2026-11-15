@@ -8,6 +8,10 @@ use std::f64::consts::PI;
 const TEXT: u32 = 0x595959;
 const LINE: u32 = 0xD9D9D9;
 
+fn shade_line(c: u32) -> u32 {
+    crate::render::mix_pub(c, 0x000000, 0.25)
+}
+
 unsafe fn rgb(cr: *mut cairo_t, c: u32) {
     cairo_set_source_rgb(cr, ((c >> 16) & 255) as f64 / 255.0, ((c >> 8) & 255) as f64 / 255.0, (c & 255) as f64 / 255.0);
 }
@@ -34,7 +38,7 @@ impl Book {
         let (lo, hi) = if all.is_empty() { (0.0, 1.0) } else { (lo, hi) };
         // the legend along the bottom: the series, or a contour's value bands
         let mut entries: Vec<(String, u32)> = series.iter().map(|s| (s.0.clone(), s.2)).collect();
-        if tag == "surfaceChart" {
+        if tag == "surfaceChart" || tag == "surface3DChart" {
             let (amin, amax, step) = crate::chart_render::nice_axis(lo, hi, 6.0, false);
             entries.clear();
             let mut v = amin;
@@ -155,6 +159,76 @@ impl Book {
                     }
                 }
             }
+            "surface3DChart" => {
+                // a 3-D surface: categories across, series going back, height by value, coloured bands
+                let (amin, amax, step) = crate::chart_render::nice_axis(lo, hi, 6.0, false);
+                let bands = (((amax - amin) / step).round() as usize).max(1);
+                let band_color = |v: f64| auto_color(&theme, 0, (((v - amin) / step).floor().max(0.0) as usize).min(bands - 1));
+                let nc = cats.len().max(2);
+                let ns = series.len().max(1);
+                let rows = ns.max(2);
+                let v = |kk: usize, ii: usize| series.get(kk.min(ns - 1)).and_then(|s| s.1.get(ii).copied().flatten()).unwrap_or(amin);
+                let lab_w = 40.0 * z;
+                let (w, h) = (r - l - lab_w, b - t - 16.0 * z);
+                let (bx, by) = (l + lab_w, b - 16.0 * z);
+                let (deep_x, deep_y) = (w * 0.28, h * 0.28);
+                let across = w - deep_x;
+                let up = h - deep_y;
+                let proj = |ci: f64, si: f64, val: f64| -> (f64, f64) {
+                    let fx = ci / (nc - 1) as f64;
+                    let fy = si / (rows - 1) as f64;
+                    let fz = ((val - amin) / (amax - amin)).clamp(0.0, 1.0);
+                    (bx + fx * across + fy * deep_x, by - fy * deep_y - fz * up)
+                };
+                // the walls and the value scale
+                cairo_set_line_width(cr, 1.0);
+                let mut vv = amin;
+                while vv <= amax + step * 1e-6 {
+                    let (x0, y0) = proj(0.0, 0.0, vv);
+                    let (x1, y1) = proj(0.0, (rows - 1) as f64, vv);
+                    let (x2, y2) = proj((nc - 1) as f64, (rows - 1) as f64, vv);
+                    rgb(cr, LINE);
+                    cairo_move_to(cr, x0, y0);
+                    cairo_line_to(cr, x1, y1);
+                    cairo_line_to(cr, x2, y2);
+                    cairo_stroke(cr);
+                    let txt = crate::numfmt::num_to_text((vv * 1e9).round() / 1e9);
+                    let (tw, th) = pen.set(&txt, &small, z, None);
+                    rgb(cr, TEXT);
+                    pen.show(cr, x0 - tw - 4.0 * z, y0 - th / 2.0);
+                    vv += step;
+                }
+                // the surface, from the back row forward
+                for k in (0..rows - 1).rev() {
+                    for i in 0..nc - 1 {
+                        let corners = [(i, k), (i + 1, k), (i + 1, k + 1), (i, k + 1)];
+                        let avg = corners.iter().map(|(ci, si)| v(*si, *ci)).sum::<f64>() / 4.0;
+                        cairo_new_path(cr);
+                        for (n, (ci, si)) in corners.iter().enumerate() {
+                            let (x, y) = proj(*ci as f64, *si as f64, v(*si, *ci));
+                            if n == 0 { cairo_move_to(cr, x, y) } else { cairo_line_to(cr, x, y) }
+                        }
+                        cairo_close_path(cr);
+                        if p.wire {
+                            rgb(cr, band_color(avg));
+                            cairo_set_line_width(cr, 1.0 * z);
+                            cairo_stroke(cr);
+                        } else {
+                            rgb(cr, band_color(avg));
+                            cairo_fill_preserve(cr);
+                            rgb(cr, shade_line(band_color(avg)));
+                            cairo_set_line_width(cr, 0.5 * z);
+                            cairo_stroke(cr);
+                        }
+                    }
+                }
+                for (i, c) in cats.iter().enumerate() {
+                    let (x, y) = proj(i as f64, 0.0, amin);
+                    let (tw, _) = pen.set(c, &small, z, None);
+                    rgb(cr, TEXT);
+                    pen.show(cr, x - tw / 2.0, y + 2.0 * z);
+                }
+            }
             _ => {
                 // contour: categories across, series down, colour bands by value
                 let (amin, amax, step) = crate::chart_render::nice_axis(lo, hi, 6.0, false);
@@ -167,7 +241,7 @@ impl Book {
                 let rh = (pb - pt) / ns as f64;
                 let band_color = |v: f64| auto_color(&theme, 0, (((v - amin) / step).floor().max(0.0) as usize).min(bands - 1));
                 // each cell of the grid, split finely, coloured by the value there (bilinear)
-                let fine = 8;
+                let fine = if p.wire { 24 } else { 8 };
                 for k in 0..ns {
                     for i in 0..nc - 1 {
                         let v = |kk: usize, ii: usize| series.get(kk.min(ns - 1)).and_then(|s| s.1.get(ii).copied().flatten()).unwrap_or(amin);
@@ -176,9 +250,21 @@ impl Book {
                             for fx in 0..fine {
                                 let (u, w) = ((fx as f64 + 0.5) / fine as f64, (fy as f64 + 0.5) / fine as f64);
                                 let val = a * (1.0 - u) * (1.0 - w) + bb * u * (1.0 - w) + c * (1.0 - u) * w + d * u * w;
+                                let (x0, y0) = (pl + cw * (i as f64 + fx as f64 / fine as f64), pb - rh * (k as f64 + (fy + 1) as f64 / fine as f64));
+                                if p.wire {
+                                    // wire frame: only where the band changes
+                                    let at = |uu: f64, ww: f64| a * (1.0 - uu) * (1.0 - ww) + bb * uu * (1.0 - ww) + c * (1.0 - uu) * ww + d * uu * ww;
+                                    let here = band_color(val);
+                                    let du = 1.0 / fine as f64;
+                                    if band_color(at((u + du).min(1.0), w)) != here || band_color(at(u, (w + du).min(1.0))) != here {
+                                        rgb(cr, here);
+                                        cairo_rectangle(cr, x0, y0, (cw / fine as f64).max(1.2 * z), (rh / fine as f64).max(1.2 * z));
+                                        cairo_fill(cr);
+                                    }
+                                    continue;
+                                }
                                 rgb(cr, band_color(val));
-                                cairo_rectangle(cr, pl + cw * (i as f64 + fx as f64 / fine as f64), pb - rh * (k as f64 + (fy + 1) as f64 / fine as f64),
-                                                cw / fine as f64 + 0.6, rh / fine as f64 + 0.6);
+                                cairo_rectangle(cr, x0, y0, cw / fine as f64 + 0.6, rh / fine as f64 + 0.6);
                                 cairo_fill(cr);
                             }
                         }

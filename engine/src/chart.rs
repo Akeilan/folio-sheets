@@ -45,6 +45,8 @@ pub struct Series {
     pub name: Option<Src>,
     pub cat: Option<Src>,
     pub val: Option<Src>,
+    /// bubble charts: the bubble sizes
+    pub size: Option<Src>,
     pub color: Option<u32>,
     pub labels: bool,
     pub smooth: bool,
@@ -67,6 +69,15 @@ pub struct Plot {
     pub series: Vec<Series>,
     /// the element the file used when it isn't the plain one (bar3DChart...)
     pub file_tag: Option<String>,
+    /// 3-D column with the series one behind another (grouping "standard")
+    pub standard3d: bool,
+    /// surface charts drawn as wire frames
+    pub wire: bool,
+    /// bubbles drawn shaded as spheres
+    pub bubble3d: bool,
+    /// bar-of-pie (pie-of-pie when false) and how many of the last points go to the second plot
+    pub of_bar: bool,
+    pub split: u32,
 }
 
 impl Plot {
@@ -85,9 +96,23 @@ impl Plot {
             first_angle: 0,
             series: Vec::new(),
             file_tag: None,
+            standard3d: false,
+            wire: false,
+            bubble3d: false,
+            of_bar: false,
+            split: 0,
         }
     }
+
+    /// The plot is one of the 3-D kinds (drawn with depth).
+    pub fn is_3d(&self) -> bool {
+        matches!(self.file_tag.as_deref(), Some("bar3DChart") | Some("line3DChart") | Some("area3DChart") | Some("pie3DChart") | Some("surface3DChart"))
+    }
 }
+
+/// The chart elements this program draws and writes itself (beyond the plain ones).
+pub const NATIVE_TAGS: [&str; 10] = ["radarChart", "stockChart", "surfaceChart", "surface3DChart", "bubbleChart", "ofPieChart",
+                                     "pie3DChart", "bar3DChart", "line3DChart", "area3DChart"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Title {
@@ -367,7 +392,8 @@ impl Book {
         if d.r1 > d.r2 || d.c1 > d.c2 {
             return Err("Select the data for the chart first.".into());
         }
-        let by_rows = kind != "scatter" && (d.c2 - d.c1) > (d.r2 - d.r1);
+        let xy = kind.starts_with("scatter") || kind.starts_with("bubble");
+        let by_rows = !xy && (d.c2 - d.c1) > (d.r2 - d.r1);
         Ok(self.chart_from_parts(s, rc, d, header_row, header_col, by_rows, kind))
     }
 
@@ -379,22 +405,32 @@ impl Book {
         };
         let src = |f: String| Some(Src { f: Some(f), cache: vec![], fmt: None });
         let mut series = Vec::new();
-        if kind == "scatter" {
-            // the first column (or row) holds the x values
+        if kind.starts_with("scatter") || kind.starts_with("bubble") {
+            let bubble = kind.starts_with("bubble");
+            // the first column (or row) holds the x values; when it holds text there are no
+            // x values and the points are numbered 1, 2, 3 (as the original does)
+            let min_rest = if bubble { 2 } else { 1 };
             let (xs, rest): (Option<String>, Vec<u32>) = if !by_rows {
-                if d.c2 > d.c1 { (Some(a(d.r1, d.c1, d.r2, d.c1)), (d.c1 + 1..=d.c2).collect()) } else { (None, vec![d.c1]) }
-            } else if d.r2 > d.r1 {
+                if header_col || d.c2 - d.c1 + 1 <= min_rest { (None, (d.c1..=d.c2).collect()) } else { (Some(a(d.r1, d.c1, d.r2, d.c1)), (d.c1 + 1..=d.c2).collect()) }
+            } else if d.r2 - d.r1 + 1 > min_rest {
                 (Some(a(d.r1, d.c1, d.r1, d.c2)), (d.r1 + 1..=d.r2).collect())
             } else {
-                (None, vec![d.r1])
+                (None, (d.r1..=d.r2).collect())
             };
-            for k in rest {
-                let (name, val) = if !by_rows {
-                    (if header_row { src(a(rc.r1, k, rc.r1, k)) } else { None }, a(d.r1, k, d.r2, k))
-                } else {
-                    (if header_col { src(a(k, rc.c1, k, rc.c1)) } else { None }, a(k, d.c1, k, d.c2))
-                };
-                series.push(Series { name, cat: xs.clone().and_then(src), val: src(val), ..Default::default() });
+            let step = if bubble { 2 } else { 1 };
+            let mut i = 0;
+            while i < rest.len() {
+                let k = rest[i];
+                let line = |k: u32| if !by_rows { a(d.r1, k, d.r2, k) } else { a(k, d.c1, k, d.c2) };
+                let name = if !by_rows {
+                    if header_row { src(a(rc.r1, k, rc.r1, k)) } else { None }
+                } else if header_col { src(a(k, rc.c1, k, rc.c1)) } else { None };
+                let size = if bubble { rest.get(i + 1).map(|&k2| line(k2)).and_then(src) } else { None };
+                if bubble && size.is_none() && i > 0 {
+                    break;
+                }
+                series.push(Series { name, cat: xs.clone().and_then(src), val: src(line(k)), size, ..Default::default() });
+                i += step;
             }
         } else if !by_rows {
             for c in d.c1..=d.c2 {
@@ -470,6 +506,53 @@ fn split_top(s: &str) -> Vec<&str> {
 pub fn plots_for(kind: &str, mut series: Vec<Series>) -> Vec<Plot> {
     let group = if kind.contains("-percent") { Group::Percent } else if kind.contains("-stacked") { Group::Stacked } else { Group::Clustered };
     let base = kind.split('-').next().unwrap_or("col");
+    let tagged = |k: Kind, tag: &str, series: Vec<Series>| -> Plot {
+        let mut p = Plot::new(k);
+        p.file_tag = Some(tag.into());
+        p.series = series;
+        p
+    };
+    match kind {
+        "pie-of-pie" | "bar-of-pie" => {
+            let mut p = tagged(Kind::Pie, "ofPieChart", series.into_iter().take(1).collect());
+            p.of_bar = kind == "bar-of-pie";
+            p.vary = true;
+            p.gap = 100;
+            return vec![p];
+        }
+        "bubble" | "bubble3d" => {
+            let mut p = tagged(Kind::Scatter, "bubbleChart", series);
+            p.bubble3d = kind == "bubble3d";
+            p.markers = true;
+            return vec![p];
+        }
+        "pie3d" => {
+            let mut p = tagged(Kind::Pie, "pie3DChart", series.into_iter().take(1).collect());
+            p.vary = true;
+            return vec![p];
+        }
+        "surface3d" | "surface3d-wire" | "contour-wire" => {
+            let mut p = tagged(Kind::Line, if kind == "contour-wire" { "surfaceChart" } else { "surface3DChart" }, series);
+            p.wire = kind.ends_with("-wire");
+            return vec![p];
+        }
+        "line3d" => return vec![tagged(Kind::Line, "line3DChart", series)],
+        _ => {}
+    }
+    if base == "area3d" {
+        let mut p = tagged(Kind::Area, "area3DChart", series);
+        p.group = group;
+        return vec![p];
+    }
+    if base == "col3d" || base == "bar3d" {
+        let mut p = tagged(Kind::Bar, "bar3DChart", series);
+        p.horizontal = base == "bar3d";
+        p.group = group;
+        p.standard3d = kind == "col3d";
+        p.gap = 150;
+        p.overlap = if group != Group::Clustered { 100 } else { 0 };
+        return vec![p];
+    }
     let mut p = match base {
         "bar" => {
             let mut p = Plot::new(Kind::Bar);
@@ -737,6 +820,11 @@ impl Chart {
             if tag == "radarChart" && val_attr(p, "radarStyle").as_deref() == Some("filled") {
                 pl.hole = 1;
             }
+            pl.wire = on(p, "wireframe", false);
+            pl.of_bar = val_attr(p, "ofPieType").as_deref() == Some("bar");
+            pl.split = val_attr(p, "splitPos").and_then(|v| v.parse::<f64>().ok()).map(|v| v.max(0.0) as u32).unwrap_or(0);
+            pl.bubble3d = on(p, "bubble3D", false) || p.elems_named("ser").any(|s| on(s, "bubble3D", false));
+            pl.standard3d = tag == "bar3DChart" && val_attr(p, "grouping").as_deref() == Some("standard");
             pl.horizontal = val_attr(p, "barDir").as_deref() == Some("bar");
             pl.group = match val_attr(p, "grouping").as_deref() {
                 Some("stacked") => Group::Stacked,
@@ -767,6 +855,7 @@ impl Chart {
                 if kind == Kind::Scatter {
                     ser.cat = s.child("xVal").and_then(read_src);
                     ser.val = s.child("yVal").and_then(read_src);
+                    ser.size = s.child("bubbleSize").and_then(read_src);
                 } else {
                     ser.cat = s.child("cat").and_then(read_src);
                     ser.val = s.child("val").and_then(read_src);
@@ -855,6 +944,7 @@ impl Chart {
                 fix(&mut s.name);
                 fix(&mut s.cat);
                 fix(&mut s.val);
+                fix(&mut s.size);
             }
         }
         if let Title::Ref(src) = &mut self.title {
@@ -874,9 +964,9 @@ impl Chart {
         self.plots.iter().any(|p| p.file_tag.is_some() && !self.native_special())
     }
 
-    /// Radar, stock (high-low-close) and contour charts: drawn and written here.
+    /// Radar, stock, surface, bubble, pie-of-pie and the 3-D kinds: drawn and written here.
     pub fn native_special(&self) -> bool {
-        self.plots.len() == 1 && matches!(self.plots[0].file_tag.as_deref(), Some("radarChart") | Some("stockChart") | Some("surfaceChart"))
+        self.plots.len() == 1 && self.plots[0].file_tag.as_deref().map(|t| NATIVE_TAGS.contains(&t)).unwrap_or(false)
     }
 
     pub fn special(&self) -> Option<&str> {
@@ -885,6 +975,15 @@ impl Chart {
 }
 
 // ---------------------------------------------------------------------- writing
+
+/// How many of the last points a pie-of-pie or bar-of-pie moves to its second plot.
+pub fn of_split(p: &Plot, n: usize) -> usize {
+    if n < 2 {
+        return 0;
+    }
+    let k = if p.split > 0 { p.split as usize } else { ((n as f64) / 3.0).round().max(1.0) as usize };
+    k.min(n - 1)
+}
 
 fn esc(t: &str) -> String {
     xml::escape_text(t)
@@ -1012,6 +1111,7 @@ impl Chart {
                 refs.push(s.name.as_ref().and_then(|x| x.f.clone()));
                 refs.push(s.cat.as_ref().and_then(|x| x.f.clone()));
                 refs.push(s.val.as_ref().and_then(|x| x.f.clone()));
+                refs.push(s.size.as_ref().and_then(|x| x.f.clone()));
             }
         }
         let mut k = 0;
@@ -1039,7 +1139,7 @@ impl Chart {
                 if s.local() != "ser" {
                     continue;
                 }
-                let tags: [&str; 3] = if scatter { ["tx", "xVal", "yVal"] } else { ["tx", "cat", "val"] };
+                let tags: [&str; 4] = if scatter { ["tx", "xVal", "yVal", "bubbleSize"] } else { ["tx", "cat", "val", "-"] };
                 for t in tags {
                     let nf = refs.get(k).cloned().flatten();
                     k += 1;
@@ -1082,8 +1182,12 @@ impl Chart {
                 o.push_str(&format!("<c:overlay val=\"0\"/>{}</c:title><c:autoTitleDeleted val=\"0\"/>", txpr(14, false)));
             }
         }
-        if self.special() == Some("surfaceChart") {
-            o.push_str("<c:view3D><c:rotX val=\"90\"/><c:rotY val=\"0\"/><c:rAngAx val=\"0\"/><c:perspective val=\"0\"/></c:view3D>");
+        match self.special() {
+            Some("surfaceChart") => o.push_str("<c:view3D><c:rotX val=\"90\"/><c:rotY val=\"0\"/><c:rAngAx val=\"0\"/><c:perspective val=\"0\"/></c:view3D>"),
+            Some("surface3DChart") => o.push_str("<c:view3D><c:rotX val=\"15\"/><c:rotY val=\"20\"/><c:rAngAx val=\"0\"/><c:perspective val=\"30\"/></c:view3D>"),
+            Some("pie3DChart") => o.push_str("<c:view3D><c:rotX val=\"30\"/><c:rotY val=\"0\"/><c:rAngAx val=\"0\"/></c:view3D>"),
+            Some("bar3DChart") | Some("line3DChart") | Some("area3DChart") => o.push_str("<c:view3D><c:rotX val=\"15\"/><c:rotY val=\"20\"/><c:depthPercent val=\"100\"/><c:rAngAx val=\"1\"/></c:view3D>"),
+            _ => {}
         }
         o.push_str("<c:plotArea><c:layout/>");
         let pie_only = self.plots.iter().all(|p| matches!(p.kind, Kind::Pie | Kind::Doughnut));
@@ -1099,12 +1203,21 @@ impl Chart {
                 (Kind::Bar, _) => "clustered",
                 _ => "standard",
             };
-            let tag = p.file_tag.as_deref().filter(|t| matches!(*t, "radarChart" | "stockChart" | "surfaceChart"));
+            let tag = p.file_tag.as_deref().filter(|t| NATIVE_TAGS.contains(t));
+            let surface = matches!(tag, Some("surfaceChart") | Some("surface3DChart"));
             match tag {
                 Some("radarChart") => o.push_str(&format!("<c:radarChart><c:radarStyle val=\"{}\"/><c:varyColors val=\"0\"/>", if p.hole == 1 { "filled" } else { "marker" })),
                 Some("stockChart") => o.push_str("<c:stockChart>"),
-                Some(_) => o.push_str("<c:surfaceChart><c:wireframe val=\"0\"/>"),
-                None => {}
+                Some("surfaceChart") => o.push_str(&format!("<c:surfaceChart><c:wireframe val=\"{}\"/>", p.wire as u8)),
+                Some("surface3DChart") => o.push_str(&format!("<c:surface3DChart><c:wireframe val=\"{}\"/>", p.wire as u8)),
+                Some("bubbleChart") => o.push_str("<c:bubbleChart><c:varyColors val=\"0\"/>"),
+                Some("ofPieChart") => o.push_str(&format!("<c:ofPieChart><c:ofPieType val=\"{}\"/><c:varyColors val=\"1\"/>", if p.of_bar { "bar" } else { "pie" })),
+                Some("pie3DChart") => o.push_str("<c:pie3DChart><c:varyColors val=\"1\"/>"),
+                Some("bar3DChart") => o.push_str(&format!("<c:bar3DChart><c:barDir val=\"{}\"/><c:grouping val=\"{}\"/><c:varyColors val=\"0\"/>",
+                    if p.horizontal { "bar" } else { "col" }, if p.standard3d { "standard" } else { grouping })),
+                Some("line3DChart") => o.push_str("<c:line3DChart><c:grouping val=\"standard\"/><c:varyColors val=\"0\"/>"),
+                Some("area3DChart") => o.push_str(&format!("<c:area3DChart><c:grouping val=\"{}\"/><c:varyColors val=\"0\"/>", grouping)),
+                _ => {}
             }
             if tag.is_none() { match p.kind {
                 Kind::Bar => o.push_str(&format!("<c:barChart><c:barDir val=\"{}\"/><c:grouping val=\"{}\"/><c:varyColors val=\"{}\"/>", if p.horizontal { "bar" } else { "col" }, grouping, p.vary as u8)),
@@ -1122,7 +1235,13 @@ impl Chart {
                     write_src(book, "tx", n, false, &mut o);
                 }
                 match p.kind {
-                    _ if tag == Some("surfaceChart") || (tag == Some("radarChart") && p.hole == 1) => {
+                    _ if tag == Some("bubbleChart") => {
+                        o.push_str(&format!("<c:spPr>{}<a:ln w=\"9525\">{}</a:ln></c:spPr><c:invertIfNegative val=\"0\"/>", solid(color), solid(0xFFFFFF)));
+                    }
+                    _ if tag == Some("line3DChart") => {
+                        o.push_str(&format!("<c:spPr>{}<a:ln><a:noFill/></a:ln></c:spPr>", solid(color)));
+                    }
+                    _ if surface || (tag == Some("radarChart") && p.hole == 1) => {
                         o.push_str(&format!("<c:spPr>{}<a:ln><a:noFill/></a:ln></c:spPr>", solid(color)));
                     }
                     _ if tag == Some("stockChart") => {
@@ -1167,6 +1286,12 @@ impl Chart {
                 if let Some(v) = &s.val {
                     write_src(book, vt, v, true, &mut o);
                 }
+                if tag == Some("bubbleChart") {
+                    if let Some(sz) = &s.size {
+                        write_src(book, "bubbleSize", sz, true, &mut o);
+                    }
+                    o.push_str(&format!("<c:bubble3D val=\"{}\"/>", p.bubble3d as u8));
+                }
                 if matches!(p.kind, Kind::Line | Kind::Scatter) && tag.is_none() || tag == Some("stockChart") {
                     o.push_str(&format!("<c:smooth val=\"{}\"/>", s.smooth as u8));
                 }
@@ -1176,8 +1301,17 @@ impl Chart {
             match tag {
                 Some("radarChart") => o.push_str(&format!("<c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:radarChart>", a1, a2)),
                 Some("stockChart") => o.push_str(&format!("<c:hiLowLines><c:spPr><a:ln w=\"9525\">{}</a:ln></c:spPr></c:hiLowLines><c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:stockChart>", solid(0x404040), a1, a2)),
-                Some(_) => o.push_str(&format!("<c:bandFmts/><c:axId val=\"{}\"/><c:axId val=\"{}\"/><c:axId val=\"5\"/></c:surfaceChart>", a1, a2)),
-                None => {}
+                Some(t @ ("surfaceChart" | "surface3DChart")) => o.push_str(&format!("<c:bandFmts/><c:axId val=\"{}\"/><c:axId val=\"{}\"/><c:axId val=\"5\"/></c:{}>", a1, a2, t)),
+                Some("bubbleChart") => o.push_str(&format!("<c:bubbleScale val=\"100\"/><c:showNegBubbles val=\"0\"/><c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:bubbleChart>", a1, a2)),
+                Some("ofPieChart") => {
+                    let n = p.series.first().and_then(|s| s.val.as_ref()).map(|v| book.chart_values(v).len()).unwrap_or(0);
+                    o.push_str(&format!("<c:gapWidth val=\"{}\"/><c:splitType val=\"pos\"/><c:splitPos val=\"{}\"/><c:secondPieSize val=\"75\"/><c:serLines><c:spPr><a:ln w=\"9525\">{}</a:ln></c:spPr></c:serLines></c:ofPieChart>",
+                        p.gap, of_split(p, n), solid(0xA6A6A6)));
+                }
+                Some("pie3DChart") => o.push_str("</c:pie3DChart>"),
+                Some("bar3DChart") => o.push_str(&format!("<c:gapWidth val=\"{}\"/><c:shape val=\"box\"/><c:axId val=\"{}\"/><c:axId val=\"{}\"/><c:axId val=\"5\"/></c:bar3DChart>", p.gap, a1, a2)),
+                Some(t @ ("line3DChart" | "area3DChart")) => o.push_str(&format!("<c:axId val=\"{}\"/><c:axId val=\"{}\"/><c:axId val=\"5\"/></c:{}>", a1, a2, t)),
+                _ => {}
             }
             if tag.is_none() { match p.kind {
                 Kind::Bar => o.push_str(&format!("<c:gapWidth val=\"{}\"/><c:overlap val=\"{}\"/><c:axId val=\"{}\"/><c:axId val=\"{}\"/></c:barChart>", p.gap, p.overlap, a1, a2)),
@@ -1211,8 +1345,11 @@ impl Chart {
                 if scatter { "l" } else { val_pos }, if self.gridlines { grid.as_str() } else { "" },
                 title(&if horizontal && !scatter { self.x_title.clone() } else { self.y_title.clone() }, !(horizontal && !scatter)),
                 if percent { "0%".to_string() } else { esc(&fmt) }, (!percent) as u8, txpr(9, false), if scatter { "midCat" } else { "between" }));
-            if self.special() == Some("surfaceChart") {
-                o.push_str("<c:serAx><c:axId val=\"5\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"1\"/><c:axPos val=\"b\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"2\"/><c:crosses val=\"autoZero\"/></c:serAx>");
+            if let Some(t) = self.special().filter(|t| matches!(*t, "surfaceChart" | "surface3DChart" | "bar3DChart" | "line3DChart" | "area3DChart")) {
+                // the depth (series) axis: shown where the series stand one behind another
+                let p0 = &self.plots[0];
+                let shown = t == "surface3DChart" || t == "line3DChart" || (t == "bar3DChart" && p0.standard3d) || (t == "area3DChart" && p0.group == Group::Clustered);
+                o.push_str(&format!("<c:serAx><c:axId val=\"5\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"{}\"/><c:axPos val=\"b\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"2\"/><c:crosses val=\"autoZero\"/></c:serAx>", (!shown) as u8));
             }
             if has_secondary {
                 o.push_str("<c:catAx><c:axId val=\"3\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"1\"/><c:axPos val=\"b\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"4\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>");

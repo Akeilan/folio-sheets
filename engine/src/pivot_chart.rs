@@ -45,6 +45,7 @@ impl Book {
             name: if r0 > t.r1 { cell(r0 - 1, c) } else { String::new() },
             cat: if has_rows { range(r0, r1, label_col) } else { String::new() },
             val: range(r0, r1, c),
+            size: String::new(),
             kind: "col".into(),
             secondary: false,
             color: None,

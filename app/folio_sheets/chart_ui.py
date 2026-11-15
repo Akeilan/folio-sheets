@@ -6,16 +6,21 @@ from gi.repository import Gtk
 
 # (page, [(label, kind)])
 PAGES = [
-    ("Column", [("Clustered Column", "col"), ("Stacked Column", "col-stacked"), ("100% Stacked Column", "col-percent")]),
-    ("Bar", [("Clustered Bar", "bar"), ("Stacked Bar", "bar-stacked"), ("100% Stacked Bar", "bar-percent")]),
+    ("Column", [("Clustered Column", "col"), ("Stacked Column", "col-stacked"), ("100% Stacked Column", "col-percent"),
+                ("3-D Clustered Column", "col3d-clustered"), ("3-D Stacked Column", "col3d-stacked"),
+                ("3-D 100% Stacked Column", "col3d-percent"), ("3-D Column", "col3d")]),
+    ("Bar", [("Clustered Bar", "bar"), ("Stacked Bar", "bar-stacked"), ("100% Stacked Bar", "bar-percent"),
+             ("3-D Clustered Bar", "bar3d-clustered"), ("3-D Stacked Bar", "bar3d-stacked"), ("3-D 100% Stacked Bar", "bar3d-percent")]),
     ("Line", [("Line", "line"), ("Stacked Line", "line-stacked"), ("100% Stacked Line", "line-percent"),
-              ("Line with Markers", "line-markers")]),
-    ("Pie", [("Pie", "pie"), ("Doughnut", "doughnut")]),
-    ("Area", [("Area", "area"), ("Stacked Area", "area-stacked"), ("100% Stacked Area", "area-percent")]),
+              ("Line with Markers", "line-markers"), ("3-D Line", "line3d")]),
+    ("Pie", [("Pie", "pie"), ("3-D Pie", "pie3d"), ("Pie of Pie", "pie-of-pie"), ("Bar of Pie", "bar-of-pie"), ("Doughnut", "doughnut")]),
+    ("Area", [("Area", "area"), ("Stacked Area", "area-stacked"), ("100% Stacked Area", "area-percent"),
+              ("3-D Area", "area3d"), ("3-D Stacked Area", "area3d-stacked"), ("3-D 100% Stacked Area", "area3d-percent")]),
     ("X Y (Scatter)", [("Scatter", "scatter"), ("Scatter with Smooth Lines", "scatter-smooth"),
-                       ("Scatter with Straight Lines", "scatter-lines")]),
+                       ("Scatter with Straight Lines", "scatter-lines"), ("Bubble", "bubble"), ("3-D Bubble", "bubble3d")]),
     ("Stock", [("High-Low-Close", "stock")]),
-    ("Surface", [("Contour", "contour")]),
+    ("Surface", [("3-D Surface", "surface3d"), ("Wireframe 3-D Surface", "surface3d-wire"), ("Contour", "contour"),
+                 ("Wireframe Contour", "contour-wire")]),
     ("Radar", [("Radar", "radar"), ("Radar with Markers", "radar-markers"), ("Filled Radar", "radar-filled")]),
     ("Combo", [("Clustered Column - Line", "combo"), ("Clustered Column - Line on Secondary Axis", "combo-secondary")]),
 ]
@@ -58,6 +63,15 @@ def recommended(win, rg):
         if k not in seen:
             seen.append(k)
     return seen
+
+
+def xy_kind(kind):
+    return kind.startswith("scatter") or kind.startswith("bubble")
+
+
+def spec_for(win, rg, kind):
+    """The series a new chart of this kind takes from the block."""
+    return win.book.range_spec(win.grid.sheet, rg, kind if xy_kind(kind) else "col")
 
 
 def _apply_kind(spec, kind):
@@ -173,7 +187,11 @@ class ChartTypeDialog:
 
     def set_kind(self, kind):
         self.kind = kind
-        self.spec = _apply_kind(self.spec, kind)
+        if self.rg is not None and self.index is None:
+            # X Y and bubble charts read the block differently (x values, then y and sizes)
+            self.spec = _apply_kind(spec_for(self.win, self.rg, kind), kind)
+        else:
+            self.spec = _apply_kind(self.spec, kind)
         self.title_lab.set_text(KIND_LABELS.get(kind, kind))
         self.sync_combo()
         self.preview.queue_draw()
@@ -269,7 +287,7 @@ def insert_chart(win, kind=None, page=None):
         if spec is None:
             return False
     else:
-        spec = _apply_kind(b.range_spec(g.sheet, rg, "scatter" if kind.startswith("scatter") else "col"), kind)
+        spec = _apply_kind(spec_for(win, rg, kind), kind)
     x, y = _visible_center(win)
     try:
         i = b.add_chart_spec(g.sheet, spec, x, y)

@@ -352,6 +352,59 @@ check("S6-33: Distributed runs the last line edge to edge", lastline and max(las
       (min(lastline or [0]), max(lastline or [0]), dx0, dx1))
 print("NOTE drawing picture at %s" % _png)
 
+# ------------------------------------------------------------------ S6-34 charts
+win.new_book()
+pump(0.1)
+b = win.book
+g = win.grid
+for r, row in enumerate([["", "North", "South"], ["Q1", 12, 7], ["Q2", 15, 9], ["Q3", 9, 12], ["Q4", 18, 10]]):
+    for c, v in enumerate(row):
+        if v != "":
+            b.set_input(0, r, c, str(v))
+for r, row in enumerate([["X", "Y", "Size"], [1, 4, 10], [2, 7, 30], [3, 3, 5]]):
+    for c, v in enumerate(row):
+        b.set_input(0, r, 5 + c, str(v))
+NEW = ["col3d-clustered", "col3d-stacked", "col3d-percent", "col3d", "bar3d-clustered", "bar3d-stacked", "bar3d-percent",
+       "line3d", "area3d", "area3d-stacked", "area3d-percent", "pie3d", "pie-of-pie", "bar-of-pie",
+       "surface3d", "surface3d-wire", "contour-wire", "bubble", "bubble3d"]
+CMD = {"col3": "chart-column", "bar3": "chart-column", "line": "chart-line", "area": "chart-line", "pie3": "chart-pie",
+       "pie-": "chart-pie", "bar-": "chart-pie", "surf": "chart-column", "cont": "chart-column", "bubb": "chart-scatter"}
+made = []
+for k in NEW:
+    g.select_range((0, 5, 3, 7) if k.startswith("bubble") else (0, 0, 4, 2))
+    n0 = len(b.objects(0))
+    win.run("%s:%s" % (CMD[k[:4]], k))
+    pump(0.05)
+    if len(b.objects(0)) > n0:
+        made.append(b.chart_spec(0, len(b.objects(0)) - 1)["kind"])
+    g.clear_object_selection() if hasattr(g, "clear_object_selection") else None
+check("S6-34: every new chart kind inserts from the ribbon", made == NEW, [x for x in NEW if x not in made])
+bs = b.chart_spec(0, NEW.index("bubble"))
+check("S6-34: a bubble chart takes X, Y and size from the columns",
+      len(bs["series"]) == 1 and bs["series"][0]["cat"].endswith("$F$2:$F$4") and bs["series"][0]["size"].endswith("$H$2:$H$4"), bs["series"])
+cx = os.path.join(TMP, "charts.xlsx")
+win.save_to(cx)
+reb = _Book.open(cx)
+back = [reb.chart_spec(0, i)["kind"] for i in range(len(NEW))]
+check("S6-34: they save as themselves and open again as the same kinds", back == NEW, back)
+names = zipfile.ZipFile(cx).read("xl/charts/chart13.xml").decode() if "xl/charts/chart13.xml" in zipfile.ZipFile(cx).namelist() else ""
+check("S6-34: pie-of-pie is written as an ofPie chart", "<c:ofPieChart>" in names and 'ofPieType val="pie"' in names, names[:200])
+sp = b.range_spec(0, (0, 0, 4, 2), "scatter")
+check("S6-34: a scatter of a block whose first column is text numbers the points (no X values)",
+      all(x["cat"] == "" for x in sp["series"]) and len(sp["series"]) == 2, sp["series"])
+import cairo as _cairo
+_img = _cairo.ImageSurface(_cairo.FORMAT_ARGB32, 300, 200)
+_ok = True
+for k in NEW:
+    s2 = b.range_spec(0, (0, 5, 3, 7) if k.startswith("bubble") else (0, 0, 4, 2), k if k.startswith("bubble") else "col")
+    s2["kind"] = k
+    try:
+        b.render_spec(0, _cairo.Context(_img), 300, 200, s2)
+    except Exception as e:
+        _ok = False
+        print("render", k, e)
+check("S6-34: every new kind draws", _ok)
+
 # ------------------------------------------------------------------ END
 print("%d checks, %d failed" % (len(checks), sum(1 for _, ok in checks if not ok)), flush=True)
 print("ERRORS IN CALLBACKS: %d" % len(ERRORS))
