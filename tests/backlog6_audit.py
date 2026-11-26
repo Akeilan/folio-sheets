@@ -156,7 +156,7 @@ check("S6-30: an empty password removes it; the file saves as a plain workbook",
       win.book.open_password is None and zipfile.is_zipfile(plain))
 
 # the older Standard encryption (Excel 2007), written straight from the specification
-sys.path.insert(0, os.path.dirname(os.path.abspath("tests/standard_enc.py")))
+sys.path.insert(0, os.path.dirname(os.path.abspath(os.environ.get("FOLIO_TEST_SCRIPT") or "tests/backlog6_audit.py")))
 from standard_enc import standard
 theirs = os.path.join(TMP, "standard.xlsx")
 open(theirs, "wb").write(standard(open(plain, "rb").read(), "Other1", encryption.write_streams))
