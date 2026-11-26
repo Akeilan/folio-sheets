@@ -156,7 +156,9 @@ check("S6-30: an empty password removes it; the file saves as a plain workbook",
       win.book.open_password is None and zipfile.is_zipfile(plain))
 
 # the older Standard encryption (Excel 2007), written straight from the specification
-sys.path.insert(0, os.path.dirname(os.path.abspath(os.environ.get("FOLIO_TEST_SCRIPT") or "tests/backlog6_audit.py")))
+# this file's folder, wherever the audit is run from
+HERE = os.path.dirname(os.path.abspath(os.environ.get("FOLIO_TEST_SCRIPT") or "tests/backlog6_audit.py"))
+sys.path.insert(0, HERE)
 from standard_enc import standard
 theirs = os.path.join(TMP, "standard.xlsx")
 open(theirs, "wb").write(standard(open(plain, "rb").read(), "Other1", encryption.write_streams))
@@ -166,7 +168,7 @@ undo()
 check("S6-30: a workbook in Excel 2007's Standard encryption opens", win.book.display(0, 0, 0) == "Secret value")
 # files that Microsoft Office encrypted (2007: Standard; 2010 and 2013: Agile) and LibreOffice's own
 import glob as _glob
-for _f in sorted(_glob.glob("tests/data/encrypted/Encrypted_*_abc.docx")):
+for _f in sorted(_glob.glob(os.path.join(HERE, "data/encrypted/Encrypted_*_abc.docx"))):
     _d = open(_f, "rb").read()
     try:
         _x = encryption.decrypt(_d, "abc")
@@ -319,7 +321,7 @@ regional.apply(regional.detect({"FOLIO_SHEET_REGION": "default"}))
 # ------------------------------------------------------------------ S6-33 drawing cell formats
 import cairo
 from folio_sheets.core import Book as _Book
-_d = _Book.open(os.path.abspath("tests/data/drawing_s633.xlsx"))
+_d = _Book.open(os.path.join(HERE, "data/drawing_s633.xlsx"))
 _png = os.path.join(TMP, "s633.png")
 _d.render_png(0, _png, {"width": 520, "height": 420, "zoom": 1.0})
 _img = cairo.ImageSurface.create_from_png(_png)
