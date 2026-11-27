@@ -79,7 +79,10 @@ pub static DEFS: &[Def] = &[
     d!("INFO", 1, 1, |ev, a| {
         let t = tri!(text(ev, &a[0])).to_lowercase();
         Res::V(match t.as_str() {
-            "directory" => Value::string(std::env::var("HOME").unwrap_or_default() + "/"),
+            "directory" => Value::string(
+                std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default()
+                    + std::path::MAIN_SEPARATOR_STR,
+            ),
             "numfile" => Value::num(ev.ctx.sheet_count() as f64),
             "origin" => Value::str("$A:$A$1"),
             "osversion" => Value::str("Linux"),

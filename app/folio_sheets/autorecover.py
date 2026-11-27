@@ -20,11 +20,8 @@ def folder():
 
 
 def _alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ValueError):
-        return False
+    from . import folio_os
+    return folio_os.process_alive(pid)
 
 
 class AutoRecover:

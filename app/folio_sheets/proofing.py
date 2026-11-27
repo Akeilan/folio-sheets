@@ -13,6 +13,9 @@ from gi.repository import Gtk
 
 DICT_DIRS = ["/usr/share/hunspell", "/usr/share/myspell", "/usr/share/myspell/dicts"]
 THES_DIRS = ["/usr/share/mythes", "/usr/share/myspell/dicts"]
+if os.environ.get("FOLIO_ROOT"):          # Windows: the dictionaries that ship with the suite
+    DICT_DIRS = [os.path.join(os.environ["FOLIO_ROOT"], "share", d) for d in ("hunspell", "myspell")] + DICT_DIRS
+    THES_DIRS = [os.path.join(os.environ["FOLIO_ROOT"], "share", "mythes")] + THES_DIRS
 WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
 NOT_FOUND = ("No dictionary for checking spelling was found. Install a Hunspell dictionary (for example "
              "the hunspell-en-us package) and try again.")

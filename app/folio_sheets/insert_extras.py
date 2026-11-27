@@ -418,7 +418,8 @@ NEW_OBJECT_KINDS = [
 def _template_path(pkg, leaf):
     """The blank template of another Folio app, wherever it is installed."""
     here = os.path.dirname(__file__)
-    for p in (os.path.join("/usr/share", pkg, "templates", leaf),
+    for p in (os.path.join(os.environ.get("FOLIO_ROOT") or "/nonexistent", "share", pkg, "templates", leaf),
+              os.path.join("/usr/share", pkg, "templates", leaf),
               os.path.join("/usr/local/share", pkg, "templates", leaf),
               os.path.join(here, "..", "..", "..", pkg.replace("folio-page", "folio-writer")
                            .replace("folio-show", "folio-deliver").replace("folio-sheet", "folio-sheets"),
@@ -577,7 +578,9 @@ def open_object(win, i, run=True):
             win.dialogs.message("The linked file isn't there: %s" % linked, "Object")
             return None
         try:
-            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            from . import folio_os
+            if not folio_os.open_path(path):
+                raise OSError("nothing opens it")
         except OSError:
             win.dialogs.message("There is no program here to open %s." % name, "Object")
     return path

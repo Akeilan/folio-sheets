@@ -2,7 +2,7 @@
 import os
 import shutil
 
-VERSION = "0.23.0"
+VERSION = "0.24.0"
 APP_NAME = "Folio Sheet"
 APP_ID = "org.folio.Sheet"
 
@@ -12,6 +12,8 @@ def _share():
     if env:
         return env
     tree = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "packaging", "root", "usr", "share")
+    if os.environ.get("FOLIO_ROOT"):          # Windows: beside the program
+        return os.path.join(os.environ["FOLIO_ROOT"], "share", "folio-sheet")
     for d in ("/usr/share/folio-sheet", "/usr/share/folio-sheets", os.path.join(tree, "folio-sheet")):
         if os.path.isdir(d):
             return d

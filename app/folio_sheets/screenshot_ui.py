@@ -4,7 +4,8 @@ of the screen (Screen Clipping), put on the sheet as a picture.
 On X11 the windows are listed from the window manager and Screen Clipping hides the workbook,
 greys the screen and lets you drag out the part you want, as in the desktop spreadsheet. Where the
 desktop doesn't allow pictures of the screen to be taken directly (Wayland), Screen Clipping asks
-the desktop's own screenshot tool, and Available Windows is empty."""
+the desktop's own screenshot tool, and Available Windows is empty. On Windows Screen Clipping works
+as on X11; Available Windows is empty there too."""
 import ctypes
 import ctypes.util
 import os
@@ -276,7 +277,9 @@ class ClipWindow(Gtk.Window):
 
 
 def screen_clipping(win):
-    if is_x11():
+    import sys
+    if is_x11() or sys.platform == "win32":
+        # GDK takes the picture of the screen itself on X11 and on Windows
         return _clip_x11(win)
     return _clip_portal(win)
 

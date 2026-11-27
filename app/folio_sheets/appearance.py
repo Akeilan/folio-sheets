@@ -6,6 +6,7 @@ name. FOLIO_THEME=dark or FOLIO_THEME=light overrides it. Changes on the desktop
 """
 
 import os
+import sys
 
 import gi
 
@@ -59,6 +60,17 @@ def _gnome_scheme():
         return None
 
 
+def _windows_dark():
+    """Windows: Settings > Personalisation > Colours > "Choose your app mode"."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return int(winreg.QueryValueEx(k, "AppsUseLightTheme")[0]) == 0
+    except OSError:
+        return False
+
+
 def system_prefers_dark():
     env = os.environ.get("FOLIO_THEME", "").strip().lower()
     if env in ("dark", "black"):
@@ -68,6 +80,8 @@ def system_prefers_dark():
     gt = os.environ.get("GTK_THEME", "").lower()
     if gt:
         return "dark" in gt
+    if sys.platform == "win32":
+        return _windows_dark()
     p = _portal_scheme()
     if p in (1, 2):
         return p == 1
@@ -123,6 +137,10 @@ def _watch():
         return
     _watching = True
     if os.environ.get("FOLIO_THEME"):
+        return
+    if sys.platform == "win32":
+        # Windows says nothing to GTK when the app mode changes: look every few seconds
+        GLib.timeout_add_seconds(4, lambda: (refresh(), True)[1])
         return
     try:
         if _proxy is None:

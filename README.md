@@ -12,6 +12,10 @@ Build:
     engine/build.sh          # Rust tests + release build -> engine/out/folio_sheets_core.so
     ./build-deb.sh [outdir]  # the .deb (uses engine/out unless FOLIO_SHEETS_ENGINE is set)
 
+## 0.24.0 — Windows
+
+- Runs on Windows as part of Folio Studio's MSI: the engine as a Windows module, mail through the default mail program, Screen Clipping, and light or dark as Windows is set.
+
 ## 0.17.0 — Backlog 2: nothing left "not available yet"
 
 - Move or Copy > Create a copy (and Ctrl+drag a sheet tab): everything on the sheet comes along;

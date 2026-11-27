@@ -1,6 +1,7 @@
 """More local data sources for Get Data (S3-06, S4-01): XML, JSON, PDF tables, SQLite files and
 ODBC sources on this computer, and From Table/Range in this workbook. Each source lists its tables
 (items) for the Navigator and reads one into a Result."""
+from . import folio_os
 import json
 import os
 import sqlite3
@@ -367,7 +368,7 @@ def _poppler():
 
 def pdf_items(path):
     P = _poppler()
-    doc = P.Document.new_from_file("file://" + os.path.abspath(path), None)
+    doc = P.Document.new_from_file(folio_os.file_uri(path), None)
     items = []
     for i in range(doc.get_n_pages()):
         for k, _t in enumerate(_pdf_tables(doc.get_page(i))):
@@ -379,7 +380,7 @@ def pdf_items(path):
 
 def read_pdf(q):
     P = _poppler()
-    doc = P.Document.new_from_file("file://" + os.path.abspath(q["path"]), None)
+    doc = P.Document.new_from_file(folio_os.file_uri(q["path"]), None)
     pi, k = q["item"].split(":")
     page = doc.get_page(int(pi))
     if k == "page":
